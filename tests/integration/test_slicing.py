@@ -256,3 +256,55 @@ def test_the_filament_weight_is_computed_not_read(tmp_path, overhanging_part):
     assert toolpath.filament_mm > 0, "the header states a length even when weight is zero"
     assert toolpath.grams() > 0.5, "a 20 mm cube with an arm weighs more than half a gram"
     assert toolpath.flush.slots > 0, "the flush matrix should be present for the AMS comparison"
+
+
+@slicer_required
+def test_a_real_slice_draws_as_a_toolpath(tmp_path, overhanging_part):
+    """The print preview, against a genuine file.
+
+    Builds the geometry the viewport would draw, without rasterising it, and
+    checks the three things that would make the view wrong rather than merely
+    ugly: the right number of lines, real feature colours, and the whole thing
+    sitting on the build plate in millimetres.
+    """
+    from modelpop.printing import VirtualPrint
+    from modelpop.rendering.print_view import DEFAULT_COLOUR, to_lines
+
+    model = tmp_path / "part.stl"
+    TrimeshIO().save(overhanging_part, model)
+    report = (
+        BambuSlicer()
+        .slice(
+            SliceJob(
+                model_path=model,
+                printer=PrinterProfile.p2s(),
+                output_dir=tmp_path / "out",
+                supports=SupportType.TREE_AUTO,
+            )
+        )
+        .unwrap()
+    )
+
+    play = VirtualPrint.read(report.gcode_path)
+    laid = play.extruded_by(play.total_seconds)
+    poly = to_lines(laid)
+
+    assert poly.n_cells == len(laid)
+    assert poly.n_cells > 500
+
+    # real output carries several named features, not one undifferentiated blob
+    features = {s.feature for s in laid if s.feature}
+    assert len(features) >= 3, f"only saw {features}"
+
+    colours = {tuple(row) for row in poly.cell_data["feature"]}
+    assert len(colours) >= 2, "a real print should not be drawn in one colour"
+
+    default = tuple(int(DEFAULT_COLOUR[i : i + 2], 16) for i in (1, 3, 5))
+    unrecognised = sum(1 for row in poly.cell_data["feature"] if tuple(row) == default)
+    assert unrecognised < poly.n_cells * 0.6, (
+        f"most moves fell back to the default colour; the feature table is stale. Saw {features}"
+    )
+
+    # drawn on the plate, in millimetres
+    assert poly.bounds[0] >= 0 and poly.bounds[1] <= 256
+    assert poly.bounds[4] >= 0

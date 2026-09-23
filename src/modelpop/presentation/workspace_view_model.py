@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from modelpop.application.ai_ports import AiSettings
 from modelpop.application.workspace import Workspace, WorkspaceState
-from modelpop.domain.printer import SupportType
+from modelpop.domain.printer import PrinterProfile, SupportType
 from modelpop.domain.readiness import Severity
 from modelpop.domain.result import Result
 from modelpop.domain.units import Length
@@ -80,6 +80,16 @@ class WorkspaceViewModel:
         self._state_listeners: list[Callable[[WorkspaceState], None]] = []
         self._busy_listeners: list[Callable[[bool], None]] = []
         self._notification_listeners: list[Callable[[Notification], None]] = []
+
+    @property
+    def printer(self) -> PrinterProfile:
+        """The machine everything is assessed against.
+
+        Exposed because the print preview draws the build volume, and reaching
+        past the view-model into the workspace for it would put the UI back in
+        touch with the layer this exists to keep it away from.
+        """
+        return self._workspace.printer
 
     @property
     def ai_settings(self) -> AiSettings:

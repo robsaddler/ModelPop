@@ -178,6 +178,16 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        print_menu = self.menuBar().addMenu("&Print")
+        slice_action = QAction("&Slice...", self)
+        slice_action.triggered.connect(self._slice)
+        print_menu.addAction(slice_action)
+
+        self._watch_action = QAction("&Watch it print...", self)
+        self._watch_action.setEnabled(False)
+        self._watch_action.triggered.connect(self._watch_print)
+        print_menu.addAction(self._watch_action)
+
         view_menu = self.menuBar().addMenu("&View")
         for label, name, shortcut in (
             ("&Isometric", "iso", "Ctrl+1"),
@@ -265,6 +275,24 @@ class MainWindow(QMainWindow):
         self._view_model.open(download.path)
         self.statusBar().showMessage(f"From {download.attribution}", 15000)
 
+    def _watch_print(self) -> None:
+        """Play back the last slice.
+
+        Only offered once something has been sliced, because the toolpath is
+        the only thing there is to watch - a mesh cannot say where the head
+        goes or when.
+        """
+        from modelpop.ui.print_window import PrintWindow
+
+        report = self._view_model.state.last_slice
+        if report is None or report.gcode_path is None:
+            QMessageBox.information(
+                self, "ModelPop", "Slice the model first, then you can watch it print."
+            )
+            return
+
+        PrintWindow(report.gcode_path, self._view_model.printer, self).exec()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._secrets, self._ai_settings, self)
         if dialog.exec():
@@ -338,6 +366,8 @@ class MainWindow(QMainWindow):
         self._slice_button.setEnabled(self._view_model.can_slice)
         self._generate_button.setEnabled(not self._view_model.is_busy)
         self._edit_button.setEnabled(self._view_model.can_edit_by_description)
+        sliced = state.last_slice
+        self._watch_action.setEnabled(sliced is not None and sliced.gcode_path is not None)
 
     def _on_notification(self, notification: Notification) -> None:
         self.statusBar().showMessage(notification.message, 8000)

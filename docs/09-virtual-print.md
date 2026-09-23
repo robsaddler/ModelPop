@@ -79,3 +79,64 @@ no grams, and without grams there is no comparison. Fix it in Phase 2.
 New port: `IPrinterProfile` describing the machine, its toolhead and gantry geometry, and the attached
 AMS units with their loaded filaments. The virtual printer and the real one share it, so what you
 simulate is what you print.
+
+---
+
+## What was actually built
+
+Shipped as `modelpop.printing.simulate` (the timeline), `modelpop.rendering.print_view` (the
+drawing) and `modelpop.ui.print_window` (the scrubber). Reachable from **Print > Watch it print**
+once something has been sliced.
+
+### The clock is the slicer's own, not a reconstruction
+
+This is the part worth recording, because the obvious approach is wrong and more work.
+
+Bambu states its estimate **twice**: as a total in the header, and as an `M73 P<percent>
+R<minutes>` ladder running through the whole file - 112 rungs in a twelve-minute print. Interpolating
+that ladder is both more accurate than anything reconstructed from feedrates *and* far simpler,
+because it already accounts for acceleration, cooling waits, tool changes and every other thing a
+naive kinematic model gets wrong.
+
+Verified exactly: the parser reads **746 seconds** from a file whose header says **12m 26s**.
+
+A trapezoidal velocity model using the machine limits the file states (`M201`/`M203`/`M205`) is kept
+as a fallback for files with no ladder. It is approximate, and `VirtualPrint.clock` says which clock
+was used so nothing downstream has to guess, and so the interface can be honest about it.
+
+### Drawn as lines, coloured by the slicer's own feature names
+
+A 300-layer print is a few hundred thousand segments, and sweeping a tube along each one turns a
+scrub into a stutter. Measured on a real slice: **6,675 lines built in 6 ms**, and eleven full scrubs
+of the whole print redrawn in **71 ms**.
+
+Colours come from the `; FEATURE:` names, so the preview and the slicer's telemetry agree and the
+user learns the vocabulary the slicer already uses. Matching takes the **longest** name that fits, a
+bug a test caught: "Internal Bridge infill" contains both "bridge" and "internal bridge", and taking
+whichever came first coloured an internal bridge as an external one - a distinction that matters,
+because one is a visible surface and the other is not.
+
+### Collisions: only the one that is real
+
+Section 2 above said the nozzle cannot strike the model in ordinary bottom-up printing. That is
+implemented as written: the only collision check is for **sequential, by-object printing**, where a
+finished object stands full height while the head works on the next one. It is detected from the
+shape of the toolpath rather than from a setting - in a by-object print the Z height returns to the
+first layer partway through - and it reports a blocker when an object is taller than the gantry
+clears, a warning when it is merely taller than the clearance under the toolhead.
+
+### Still to come: the AMS comparison
+
+Section 3's arithmetic is now **unblocked**, because the two inputs it needs are in hand:
+
+- `flush_volumes_matrix` is parsed from the G-code. On this profile it is **280 mm3 per change**
+  between any two slots - that is the "poop", stated by the slicer rather than guessed.
+- **The filament weight bug is solved.** Bambu's P2S profile sets `filament_density = 0`, so the
+  header's own weight line reads `0.00` for every print, which is why grams came back as zero. Weight
+  is now computed from the stated length and diameter: a 30x30x20 mm box is 7.42 g, not nothing.
+  (Also: the header's volume line is labelled `cm^3` and carries cubic millimetres. It is not used.)
+
+The remaining piece is a multi-colour model to slice, which needs the part-splitting work in Phase 8.
+When it lands, the comparison should be made **by slicing both ways and reading the slicer's own
+numbers**, not by modelling the cost of a tool change - the slicer already prices that, and an
+invented per-change constant would look measured without being measured.
