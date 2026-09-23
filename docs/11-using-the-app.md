@@ -63,9 +63,25 @@ Then choose what to do with it:
 - **Give it thickness** — a bracket, a gasket, a nameplate, anything with a constant cross-section.
 - **Spin it round** — a vase, a knob, a wheel, a bottle. The corners become *radius from the axis*
   and *height*, and the axis is the dashed line down the left of the preview.
+- **Push it along a path** — a grab handle, a cable channel, a length of trim, a bent tube.
+  Anything with a constant cross-section that does *not* run in a straight line. The corners are
+  the cross-section; a second box takes the path, three numbers a line. The cross-section is placed
+  square to the start of the path automatically, so there is no plane to choose.
+- **Blend it into another** — a tapered pot, a funnel, a square duct meeting a round one. Anything
+  whose cross-section *changes* on the way up. Here the corners take three numbers too: the corner,
+  then the height its outline sits at. Every line sharing a height belongs to the same outline.
+
+Whichever you pick, the hint under the box says what the numbers mean, and a preview shows the
+shape before you commit to it. A blend shows all its outlines at once, on one scale, because the
+whole question there is how the shape changes between them.
+
+**About the bend radius on a sweep.** A mitred corner is not a sharp corner, it is a solid folded
+through itself — measured here at less than half the volume it should be, with no error anywhere.
+So there is always some bend, and it is quietly eased to whatever the straight runs between the
+corners can actually give up. The app says so when it does that.
 
 Either way the finished shape is centred on the origin. The corners describe the shape, not where
-it sits; use the position fields or a move to place it.
+it sits; use the position fields, a move, or a drag to place it.
 
 ### Changing what is there
 
@@ -109,6 +125,36 @@ usually the real questions.
 You can still orbit the model while measuring — drags belong to the camera, only clicks count. A
 click that misses the model is ignored rather than throwing the measurement away, and a third click
 starts the next one.
+
+---
+
+## Seeing inside it
+
+**View → Cut it open** (Ctrl+K) slices the *view* through the model so you can see the cavity and
+how thick the wall around it came out. Choose which way the cut faces, drag it through the part,
+swap to the other half.
+
+This is the only way to check a hollow by looking. The outside of a hollowed box is identical to
+the outside of a solid one, so "did that wall come out at 2 mm" was otherwise answerable only by
+slicing it or by trusting the number you typed.
+
+It cuts the view and nothing else. Nothing here changes what is exported, sliced or saved, and the
+cut travels across the *model* rather than the build plate, so a small part gets a slider that is
+all useful rather than one where every position is a hair's breadth from the middle.
+
+---
+
+## Moving it by hand
+
+**View → Drag it about** (Ctrl+D) puts handles on the part: an arrow to move it, a ring to turn it.
+
+A drag is not a special case. It ends as the same **move** and **rotate** steps the toolbar emits,
+so it joins the feature tree, reads back as a sentence and undoes in one step.
+
+It only works on a part with a feature tree — an imported mesh has nowhere to put the steps, and
+the app says so rather than letting you drag something that springs back. A twist about two axes at
+once is refused rather than rounded to the nearest one, because rounding would put the part
+somewhere you did not ask for; turn about one axis at a time.
 
 ---
 
@@ -159,6 +205,26 @@ layer by layer, so you can see the order it builds in and where it collides with
 already laid down. It also compares **one plate with an AMS** against **several plates with one
 spool**, with the time saved on one side and the purged filament on the other.
 
+**Print → Send it to the printer** puts the sliced job on the printer over your own network — no
+Bambu account, no server in the middle. It needs three things from the printer's own network screen:
+its address, its serial, and its access code. Put them in **File → Settings**.
+
+Two switches guard it, and both start off:
+
+- **"Really send jobs to this printer"**, in Settings. Until you tick it, ModelPop describes what it
+  would send and sends nothing. It goes back to off every time the app starts.
+- **Start it now**, asked when you send. The default button is *send the file only* — the file
+  lands on the printer and you start it from the printer's screen. Uploading is reversible; a print
+  is not, and nothing in ModelPop can stop one once it is going.
+
+Starting a print remotely needs one optional extra (`uv sync --extra printer`). Without it the file
+still gets there and the app says to start it from the printer.
+
+**Print → What is the printer doing?** opens a panel that keeps asking: what it is printing, how far
+through, how hot. It backs off if the printer stops answering, gives up after a few tries, and stops
+by itself when the print ends. It only reads — pausing and cancelling are the printer's own screen,
+which is where you would be standing anyway if something had gone wrong.
+
 For a two-colour part, **Split into two colours...** writes the body and the raised lettering as
 separate files. Worth knowing before you do: lettering is usually a fraction of a percent of the
 part, and each filament change purges about 280 mm³ — so an AMS print of a small logo can waste
@@ -178,13 +244,15 @@ Save the project if you might want to change it. Export the mesh when you are do
 
 ## What it does not do yet
 
-- No drag handles in the viewport. Positions are typed.
 - No sketch constraints. The profile dialog is the useful nine tenths of a sketcher and is honest
   about being it.
-- No sweep or loft.
-- No multi-photo reconstruction — one picture makes one model; photogrammetry from several is
-  Phase 7's remaining half.
-- No section view, so you cannot yet see inside a hollow part.
+- No multi-photo reconstruction — one picture makes one model; photogrammetry from several needs
+  COLMAP and OpenMVS, and is Phase 7's remaining half.
+- No detail rescue: the fine texture on a generated model still vanishes when it is sliced.
+  Genuinely unsolved, by anyone.
 - Text cannot be turned straight into a mesh. Describe a part instead, or make a picture first.
+- The viewport draws on integrated graphics on a laptop with a discrete card, and nothing in here
+  can change that — only your graphics driver's control panel can. It is fast enough that it does
+  not matter; **File → Settings** says which card you have got.
 
 See `docs/00-plan.md` for what is built and what is coming.
