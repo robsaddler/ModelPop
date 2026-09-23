@@ -146,4 +146,12 @@ disallow_untyped_calls = false
 disallow_any_explicit = false
 # Tests build fixtures straight from trimesh and from literal JSON payloads,
 # both of which are loosely typed by nature. Relaxed here only, never in src.
-disable_error_code = ["attr-defined", "index"]
+disable_error_code = [
+    "attr-defined",   # fixtures come straight from loosely typed trimesh objects
+    "index",          # literal JSON payloads are dicts of Any by nature
+    "var-annotated",  # `collected = []` in a test needs no ceremony
+    "union-attr",     # a test that asserts a value is not None then uses it
+    "unreachable",    # narrowing gets confused by deliberate None-state assertions
+    "type-arg",       # bare `list` in a local collector is fine
+    "arg-type",       # fakes are structural, not nominal, by design
+]

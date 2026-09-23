@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -36,7 +38,7 @@ from modelpop.domain.printer import SupportType
 from modelpop.domain.result import Result, failure, success
 from modelpop.domain.units import Length
 
-__all__ = ["BambuSlicer", "parse_result_json"]
+__all__ = ["BambuSlicer", "parse_result_json", "read_slice_info"]
 
 _DEFAULT_EXE = Path(r"C:\Program Files\Bambu Studio\bambu-studio.exe")
 _PROFILE_ROOT = Path(r"C:\Program Files\Bambu Studio\resources\profiles\BBL")
@@ -119,7 +121,11 @@ def parse_result_json(payload: dict[str, Any]) -> SliceReport:
         layer_height=Length.mm(float(payload.get("layer_height", 0.0))),
         wall_loops=int(payload.get("wall_loops", 0)),
         infill_density=float(payload.get("sparse_infill_density", 0.0)),
-        supports_generated=float(plate.get("generate_support_material_time", 0)) > 0,
+        # Deliberately not derived from generate_support_material_time: that
+        # field is always non-zero because it times the support *stage*, which
+        # runs even when no supports are produced. The authoritative answer
+        # lives in the sliced project file; see read_slice_info.
+        supports_generated=False,
         filament_change_count=int(plate.get("filament_change_times", 0)),
         grams_used=used,
         # total minus main is what the tool changes purged: the "poop".
@@ -131,6 +137,24 @@ def parse_result_json(payload: dict[str, Any]) -> SliceReport:
         },
         warnings=warnings,
     )
+
+
+def read_slice_info(project: Path) -> dict[str, str]:
+    """Read ``Metadata/slice_info.config`` out of a sliced 3MF.
+
+    This is the slicer's own record of what it actually did, and it is the only
+    reliable source for some facts. In particular ``support_used`` is correct
+    here, whereas ``result.json``'s support timing is not.
+
+    Returns an empty mapping if anything at all goes wrong: this is extra
+    information, never a reason to fail a slice that otherwise succeeded.
+    """
+    try:
+        with zipfile.ZipFile(project) as archive:
+            text = archive.read("Metadata/slice_info.config").decode("utf-8", "replace")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return {}
+    return dict(re.findall(r'key="([^"]+)"\s+value="([^"]*)"', text))
 
 
 class BambuSlicer:
@@ -233,13 +257,38 @@ class BambuSlicer:
         if not report.succeeded:
             return failure("Slicing failed", report.message)
 
+        project = self._find_output(job.output_dir, ".3mf")
+        supports, grams = self._facts_from_project(project)
         return success(
             replace(
                 report,
                 gcode_path=self._find_output(job.output_dir, ".gcode"),
-                project_path=self._find_output(job.output_dir, ".3mf"),
+                project_path=project,
+                supports_generated=supports,
+                grams_used=grams if grams > 0 else report.grams_used,
             )
         )
+
+    @staticmethod
+    def _facts_from_project(project: Path | None) -> tuple[bool, float]:
+        """Pull the facts ``result.json`` gets wrong out of the sliced project.
+
+        Returns whether supports were actually used, and the reported weight in
+        grams - zero when the slicer left it blank, which it does while the
+        filament-binding issue persists.
+        """
+        if project is None:
+            return (False, 0.0)
+        info = read_slice_info(project)
+        if not info:
+            return (False, 0.0)
+
+        supports = info.get("support_used", "").lower() == "true"
+        try:
+            grams = float(info.get("weight", "") or 0.0)
+        except ValueError:
+            grams = 0.0
+        return (supports, grams)
 
     def _build_command(self, job: SliceJob, machine: Path, process: Path) -> list[str]:
         """Assemble the argument list.

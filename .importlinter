@@ -13,8 +13,8 @@ name = Layers point inwards only
 type = layers
 layers =
     modelpop.ui
-    modelpop.presentation
     modelpop.rendering
+    modelpop.presentation
     modelpop.cad | modelpop.mesh | modelpop.printing | modelpop.ai | modelpop.generation | modelpop.vision | modelpop.repositories
     modelpop.application
     modelpop.domain
@@ -59,13 +59,19 @@ forbidden_modules =
     pyvista
     vtk
 
+# Rendering sits ABOVE presentation, not below it: a viewport is a UI concern and
+# pulls in Qt through pyvistaqt. View-models must stay drivable without any of it.
 [importlinter:contract:presentation-has-no-ui-framework]
-name = View-models import no UI framework
+name = View-models import no UI framework and no viewport
 type = forbidden
 source_modules = modelpop.presentation
 forbidden_modules =
     PySide6
     pyvistaqt
+    pyvista
+    vtk
+    modelpop.rendering
+    modelpop.ui
 
 [importlinter:contract:ai-sdks-are-contained]
 name = Nothing outside modelpop.ai imports an AI SDK

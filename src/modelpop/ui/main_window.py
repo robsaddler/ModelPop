@@ -1,0 +1,213 @@
+"""The main window.
+
+Thin by design: it wires widgets to the view-model and does no work of its own.
+Everything it calls is testable without a display.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
+)
+from pyvistaqt import QtInteractor
+
+from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, WorkspaceState
+from modelpop.domain.readiness import Severity
+from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
+from modelpop.rendering.viewport import ViewportScene
+
+__all__ = ["MainWindow"]
+
+_SEVERITY_COLOURS = {
+    Severity.INFO: "#27AE60",
+    Severity.WARNING: "#E67E22",
+    Severity.BLOCKER: "#C0392B",
+}
+
+
+class MainWindow(QMainWindow):
+    """Open a model, see it, and learn whether it will print."""
+
+    def __init__(self, workspace: Workspace) -> None:
+        """Build the window around a workspace."""
+        super().__init__()
+        # Work runs inline for now: the operations in Phase 1 are fast enough
+        # that a worker thread would add risk without adding responsiveness.
+        # The seam exists, so swapping in the threaded runner is a one-line change.
+        self._view_model = WorkspaceViewModel(workspace)
+        self._printer = workspace.printer
+
+        self.setWindowTitle("ModelPop")
+        self.resize(1400, 900)
+
+        self._viewport = QtInteractor(self)
+        self._scene = ViewportScene(self._viewport, self._printer)
+        self._findings = QListWidget()
+        self._summary = QLabel("Open a model to begin.")
+        self._summary.setWordWrap(True)
+
+        self._build_layout()
+        self._build_menu()
+        self._connect()
+
+    # ------------------------------------------------------------------ build
+
+    def _build_layout(self) -> None:
+        side = QVBoxLayout()
+        side.addWidget(QLabel("<b>Print readiness</b>"))
+        side.addWidget(self._summary)
+        side.addWidget(self._findings, stretch=1)
+
+        self._repair_button = QPushButton("Repair")
+        self._prepare_button = QPushButton("Place on bed")
+        self._simplify_button = QPushButton(f"Simplify to {DEFAULT_TRIANGLE_BUDGET // 1000}k")
+        self._slice_button = QPushButton("Slice")
+        for button in (
+            self._repair_button,
+            self._prepare_button,
+            self._simplify_button,
+            self._slice_button,
+        ):
+            button.setEnabled(False)
+            side.addWidget(button)
+
+        panel = QWidget()
+        panel.setLayout(side)
+        panel.setFixedWidth(340)
+
+        layout = QHBoxLayout()
+        layout.addWidget(self._viewport.interactor, stretch=1)
+        layout.addWidget(panel)
+
+        central = QWidget()
+        central.setLayout(layout)
+        self.setCentralWidget(central)
+        self.setStatusBar(QStatusBar())
+        self.statusBar().showMessage("Ready.")
+
+    def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+        open_action = QAction("&Open...", self)
+        open_action.setShortcut(QKeySequence.StandardKey.Open)
+        open_action.triggered.connect(self._choose_file)
+        file_menu.addAction(open_action)
+
+        save_action = QAction("&Save as...", self)
+        save_action.setShortcut(QKeySequence.StandardKey.SaveAs)
+        save_action.triggered.connect(self._choose_save_path)
+        file_menu.addAction(save_action)
+        file_menu.addSeparator()
+
+        quit_action = QAction("&Quit", self)
+        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
+        view_menu = self.menuBar().addMenu("&View")
+        for label, name, shortcut in (
+            ("&Isometric", "iso", "Ctrl+1"),
+            ("&Top", "top", "Ctrl+2"),
+            ("&Front", "front", "Ctrl+3"),
+            ("&Right", "right", "Ctrl+4"),
+        ):
+            action = QAction(label, self)
+            action.setShortcut(QKeySequence(shortcut))
+            action.triggered.connect(lambda _=False, n=name: self._scene.set_view(n))
+            view_menu.addAction(action)
+
+        frame_action = QAction("&Fit to model", self)
+        frame_action.setShortcut(QKeySequence("Ctrl+0"))
+        frame_action.triggered.connect(self._scene.frame_model)
+        view_menu.addAction(frame_action)
+
+    def _connect(self) -> None:
+        self._view_model.on_state_changed(self._on_state_changed)
+        self._view_model.on_notification(self._on_notification)
+        self._view_model.on_busy_changed(self._on_busy_changed)
+
+        self._repair_button.clicked.connect(self._view_model.repair)
+        self._prepare_button.clicked.connect(self._view_model.prepare_for_bed)
+        self._simplify_button.clicked.connect(
+            lambda: self._view_model.simplify(DEFAULT_TRIANGLE_BUDGET)
+        )
+        self._slice_button.clicked.connect(self._slice)
+
+    # ---------------------------------------------------------------- actions
+
+    def _choose_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open a model", "", "3D models (*.stl *.obj *.3mf *.ply *.glb *.off)"
+        )
+        if path:
+            self._view_model.open(Path(path))
+
+    def _choose_save_path(self) -> None:
+        if not self._view_model.state.has_model:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save the model", "", "3D models (*.stl *.3mf *.obj *.ply)"
+        )
+        if path:
+            self._view_model.save_as(Path(path))
+
+    def _slice(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "Where should the G-code go?")
+        if directory:
+            self._view_model.slice(Path(directory))
+
+    # --------------------------------------------------------------- updating
+
+    def _on_state_changed(self, state: WorkspaceState) -> None:
+        report = state.readiness
+        has_problems = report is not None and not report.is_printable
+        self._scene.show_mesh(state.mesh, has_problems=has_problems)
+        self._scene.frame_model()
+
+        self.setWindowTitle(f"ModelPop - {state.title}")
+        self.statusBar().showMessage(state.describe())
+
+        self._findings.clear()
+        if report is None:
+            self._summary.setText("Open a model to begin.")
+        else:
+            self._summary.setText(report.summary())
+            self._summary.setStyleSheet(
+                f"color: {_SEVERITY_COLOURS[report.verdict]}; font-weight: bold;"
+            )
+            for finding in report.findings:
+                item = QListWidgetItem(f"{finding.message}\n    {finding.remedy}")
+                item.setForeground(
+                    Qt.GlobalColor.darkRed
+                    if finding.severity is Severity.BLOCKER
+                    else Qt.GlobalColor.darkYellow
+                )
+                self._findings.addItem(item)
+
+        self._repair_button.setEnabled(self._view_model.can_repair)
+        self._prepare_button.setEnabled(state.has_model)
+        self._simplify_button.setEnabled(state.has_model)
+        self._slice_button.setEnabled(self._view_model.can_slice)
+
+    def _on_notification(self, notification: Notification) -> None:
+        self.statusBar().showMessage(notification.message, 8000)
+        if notification.is_error:
+            QMessageBox.warning(
+                self, "ModelPop", f"{notification.message}\n\n{notification.detail}"
+            )
+
+    def _on_busy_changed(self, busy: bool) -> None:
+        self.setCursor(Qt.CursorShape.WaitCursor if busy else Qt.CursorShape.ArrowCursor)

@@ -103,6 +103,7 @@ class TrimeshOps:
             degenerate_face_count=self._degenerate_face_count(body),
             duplicate_vertex_count=self._duplicate_vertex_count(body),
             thinnest_wall=walls,
+            overhang_area_fraction=self._overhang_fraction(body),
             bed_contact_area_mm2=self._bed_contact_area(body, scale),
         )
 
@@ -142,6 +143,36 @@ class TrimeshOps:
             return max(0, len(body.vertices) - len(merged.vertices))
         except Exception:
             return 0
+
+    @staticmethod
+    def _overhang_fraction(body: trimesh.Trimesh, threshold_degrees: float = 30.0) -> float:
+        """Fraction of the surface that overhangs beyond the support threshold.
+
+        A face needs support when it points downwards steeply enough that the
+        layer below cannot hold it up. Measured as the angle between the face
+        normal and straight down: at 0 degrees the face is perfectly horizontal
+        and facing the bed, which is the worst case.
+
+        Faces already lying on the bed are excluded - they rest on the plate,
+        not on air.
+        """
+        try:
+            normals = body.face_normals
+            areas = body.area_faces
+            total = float(areas.sum())
+            if total <= 0:
+                return 0.0
+
+            # cos of the angle from straight down; 1.0 means facing the bed
+            downwardness = -normals[:, 2]
+            limit = float(np.cos(np.radians(90.0 - threshold_degrees)))
+            overhanging = downwardness > limit
+
+            lowest = float(body.vertices[:, 2].min())
+            on_bed = np.all(np.isclose(body.triangles[:, :, 2], lowest, atol=1e-6), axis=1)
+            return float(areas[overhanging & ~on_bed].sum() / total)
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _bed_contact_area(body: trimesh.Trimesh, scale: float) -> float:

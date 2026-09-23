@@ -8,6 +8,7 @@ from modelpop.application.ports import (
     Slicer,
     SliceReport,
 )
+from modelpop.application.workspace import Workspace, WorkspaceState
 
 __all__ = [
     "MeshIO",
@@ -16,4 +17,6 @@ __all__ = [
     "SliceObject",
     "SliceReport",
     "Slicer",
+    "Workspace",
+    "WorkspaceState",
 ]

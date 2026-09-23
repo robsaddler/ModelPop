@@ -23,6 +23,7 @@ from modelpop.domain.units import Length
 __all__ = [
     "Finding",
     "MeshFacts",
+    "Overhangs",
     "PrintRule",
     "ReadinessReport",
     "Severity",
@@ -358,6 +359,28 @@ class TriangleBudget:
 
 
 @dataclass(frozen=True, slots=True)
+class Overhangs:
+    """Steep overhangs need supports, and supports cost time and filament."""
+
+    name: str = "overhangs"
+    notable_fraction: float = 0.02
+
+    def check(self, facts: MeshFacts, printer: PrinterProfile) -> Finding | None:
+        """Report that supports will be needed, and roughly how much."""
+        if facts.mesh.is_empty or facts.overhang_area_fraction < self.notable_fraction:
+            return None
+        percent = facts.overhang_area_fraction * 100
+        return Finding(
+            self.name,
+            Severity.INFO,
+            f"About {percent:.0f}% of the surface overhangs beyond "
+            f"{printer.support_threshold_degrees:.0f} degrees, so supports will be used.",
+            "Re-orienting the model often removes most of the overhang.",
+            fix_stage="orient",
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TipOverRisk:
     """A tall model on a small footprint falls over mid-print."""
 
@@ -394,6 +417,7 @@ def standard_rules() -> tuple[PrintRule, ...]:
         SingleShell(),
         NoSelfIntersections(),
         WallThickness(),
+        Overhangs(),
         TipOverRisk(),
         DegenerateFaces(),
         TriangleBudget(),

@@ -68,15 +68,15 @@ class TestSuccessfulSlice:
         assert report.wall_loops == 2
         assert report.infill_density == pytest.approx(20.0)
 
-    def test_knows_whether_supports_actually_ran(self):
-        assert parse_result_json(SUCCESS).supports_generated
+    def test_does_not_infer_supports_from_the_support_stage_timing(self):
+        """`generate_support_material_time` is always non-zero and means nothing.
 
-    def test_reports_no_supports_when_none_were_generated(self):
-        payload = {
-            **SUCCESS,
-            "sliced_plates": [{**SUCCESS["sliced_plates"][0], "generate_support_material_time": 0}],
-        }
-        assert not parse_result_json(payload).supports_generated
+        It times the support *stage*, which runs whether or not supports are
+        produced: measured at 3 for a plain cube with supports off, and 3 again
+        with them on. Believing it made us report supports on a model that had
+        none. The authoritative answer is `support_used` in the sliced project.
+        """
+        assert not parse_result_json(SUCCESS).supports_generated
 
     def test_formats_the_predicted_duration_for_humans(self):
         assert parse_result_json(SUCCESS).predicted_duration == "10m"
