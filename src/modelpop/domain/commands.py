@@ -133,9 +133,16 @@ class Command(ABC):
     def name(self) -> str:
         """A stable identifier, such as ``"fillet"``. Used in the history."""
 
+    @property
     @abstractmethod
     def parameters(self) -> dict[str, Any]:
-        """The command's arguments, as JSON-serialisable values."""
+        """The command's arguments, as JSON-serialisable values.
+
+        A property, to match ``name``. It was a method originally, and the
+        asymmetry caught the first subclass written against it: calling
+        ``self.parameters()`` on one that made it a property fails with "dict
+        object is not callable", which names neither the class nor the mistake.
+        """
 
     def describe(self) -> str:
         """A short human-readable label for the undo stack and the history panel."""
@@ -143,7 +150,7 @@ class Command(ABC):
 
     def to_feature(self, origin: Origin = Origin.USER) -> Feature:
         """Record this command as a feature."""
-        return Feature(name=self.name, parameters=self.parameters(), origin=origin)
+        return Feature(name=self.name, parameters=self.parameters, origin=origin)
 
     def apply(self, document: Document, origin: Origin = Origin.USER) -> Document:
         """Return a new document with this command appended.
@@ -323,6 +330,7 @@ class GenericCommand(Command):
         """The command identifier."""
         return self.command_name
 
+    @property
     def parameters(self) -> dict[str, Any]:
         """The arguments."""
         return dict(self.args)

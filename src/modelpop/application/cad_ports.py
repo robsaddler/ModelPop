@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from modelpop.domain.commands import Document
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.result import Result
 from modelpop.domain.units import Length
@@ -19,6 +20,7 @@ __all__ = [
     "CadKernel",
     "Dimension",
     "DimensionTable",
+    "FeatureCompiler",
     "ScriptResult",
     "SolidMeasurements",
 ]
@@ -134,4 +136,33 @@ class CadKernel(Protocol):
         A script that fails to compile, produces nothing, or times out is an
         expected outcome: it is how the generate-and-correct loop learns.
         """
+        ...
+
+
+@runtime_checkable
+class FeatureCompiler(Protocol):
+    """Rebuilding a feature tree into geometry.
+
+    A separate port from ``CadKernel`` because it answers a different question.
+    The kernel runs a script someone else wrote; this turns a *document* - the
+    recorded intent of ADR-0001 - into the solid that intent describes.
+
+    A rebuild replays the whole tree, which is what makes the model parametric:
+    change an early feature and everything after it follows.
+    """
+
+    def is_available(self) -> bool:
+        """Whether a rebuild can run right now."""
+        ...
+
+    def script_for(self, document: Document) -> Result[str]:
+        """The source this document compiles to, without running it.
+
+        Exposed so the user can read what their model actually is. A model you
+        cannot inspect is one you cannot trust.
+        """
+        ...
+
+    def build(self, document: Document, timeout_seconds: float = 60.0) -> Result[ScriptResult]:
+        """Rebuild the whole tree and return the solid."""
         ...

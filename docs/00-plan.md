@@ -49,7 +49,7 @@ Phase 2b Verify the G-code ── DONE  unsupported islands and first-layer area
 Phase 2.5 Find something   ── DONE  repository search, ranked gallery, licence tick (ADR-0008)
 
 Phase 3   Generate a mesh   ─ generation venv, TRELLIS.2, GPU lease
-Phase 5   Edit it properly  ─ sketches, features, feature tree, gizmos
+Phase 5   Edit it properly  ─ feature tree and CAD commands DONE; sketches and gizmos to come
 Phase 7   Photos → replica  ─ COLMAP/OpenMVS, ArUco scale
 Phase 8   Make it delightful─ detail rescue, hollowing, multi-colour, printer comms
 ```

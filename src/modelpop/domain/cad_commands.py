@@ -1,0 +1,471 @@
+"""The CAD vocabulary: every way a model may be changed.
+
+This is the other half of ADR-0001. The command bus says *how* a change is
+applied and recorded; this says *what* changes exist. Three actors emit these -
+the user through the toolbar, a language model responding to a prompt, and
+replay - and all three are confined to exactly this list.
+
+That confinement is the point. A model that can only emit ``Fillet(radius=2.0,
+edges=TOP)`` cannot emit anything else, which is a security boundary as much as
+a quality one. It is also why every command validates and **clamps** its
+parameters at construction: a value arriving from a language model is untrusted
+data, and a fillet radius of ten million should become a refusal or a sane
+number here, not an OCCT crash three layers down.
+
+Nothing in this module knows what a kernel is. A command carries intent;
+turning intent into geometry is the job of a compiler in the adapter layer,
+which is what keeps the domain free of OCCT.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+from modelpop.domain.commands import Command, Feature
+from modelpop.domain.units import Length
+
+__all__ = [
+    "Chamfer",
+    "CreateBox",
+    "CreateCylinder",
+    "CreateSphere",
+    "EdgeSelector",
+    "Face",
+    "Fillet",
+    "Hollow",
+    "Move",
+    "Rotate",
+    "ScaleTo",
+    "TextOnSurface",
+    "command_from",
+    "known_commands",
+]
+
+# Nothing on a P2S can be bigger than its build volume, and a value larger than
+# this is a mistake or a hallucination rather than a request. Clamping rather
+# than refusing keeps a near-miss usable; the UI shows what was applied.
+MAX_MM = 1000.0
+MIN_MM = 0.01
+
+# A fillet larger than the feature it rounds fails inside OCCT with an error
+# nobody can act on. This bound is generous and still catches the absurd.
+MAX_RADIUS_MM = 200.0
+
+MAX_TEXT = 80
+
+
+def _clamp(value: float, low: float = MIN_MM, high: float = MAX_MM) -> float:
+    """Force a number into a range a kernel can survive.
+
+    Not defensive programming for its own sake: these numbers arrive from a
+    language model, and an unclamped one reaches OCCT as a crash rather than a
+    message.
+    """
+    if value != value:  # NaN, which compares unequal to itself
+        return low
+    return max(low, min(high, float(value)))
+
+
+class EdgeSelector(Enum):
+    """Which edges an operation applies to.
+
+    A named set rather than indices. Edge numbering is not stable across a
+    rebuild, so a feature that said "edge 7" would round a different edge after
+    the operation before it changed - the classic parametric CAD failure.
+    """
+
+    ALL = "all"
+    TOP = "top"
+    BOTTOM = "bottom"
+    VERTICAL = "vertical"
+    HORIZONTAL = "horizontal"
+
+    @property
+    def describe(self) -> str:
+        """A phrase for the feature tree."""
+        return {
+            EdgeSelector.ALL: "all edges",
+            EdgeSelector.TOP: "the top edges",
+            EdgeSelector.BOTTOM: "the bottom edges",
+            EdgeSelector.VERTICAL: "the vertical edges",
+            EdgeSelector.HORIZONTAL: "the horizontal edges",
+        }[self]
+
+
+class Face(Enum):
+    """A named face, for operations that need one."""
+
+    TOP = "top"
+    BOTTOM = "bottom"
+    FRONT = "front"
+    BACK = "back"
+    LEFT = "left"
+    RIGHT = "right"
+
+
+@dataclass(frozen=True, slots=True)
+class CreateBox(Command):
+    """A rectangular block."""
+
+    width: float
+    depth: float
+    height: float
+
+    def __post_init__(self) -> None:
+        """Clamp every dimension into something a kernel can build."""
+        object.__setattr__(self, "width", _clamp(self.width))
+        object.__setattr__(self, "depth", _clamp(self.depth))
+        object.__setattr__(self, "height", _clamp(self.height))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "create-box"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"width": self.width, "depth": self.depth, "height": self.height}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Box {self.width:g} x {self.depth:g} x {self.height:g} mm"
+
+
+@dataclass(frozen=True, slots=True)
+class CreateCylinder(Command):
+    """A cylinder standing on the plate."""
+
+    radius: float
+    height: float
+
+    def __post_init__(self) -> None:
+        """Clamp the dimensions."""
+        object.__setattr__(self, "radius", _clamp(self.radius))
+        object.__setattr__(self, "height", _clamp(self.height))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "create-cylinder"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"radius": self.radius, "height": self.height}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Cylinder radius {self.radius:g} mm, {self.height:g} mm tall"
+
+
+@dataclass(frozen=True, slots=True)
+class CreateSphere(Command):
+    """A sphere."""
+
+    radius: float
+
+    def __post_init__(self) -> None:
+        """Clamp the radius."""
+        object.__setattr__(self, "radius", _clamp(self.radius))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "create-sphere"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"radius": self.radius}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Sphere radius {self.radius:g} mm"
+
+
+@dataclass(frozen=True, slots=True)
+class Fillet(Command):
+    """Round edges."""
+
+    radius: float
+    edges: EdgeSelector = EdgeSelector.ALL
+
+    def __post_init__(self) -> None:
+        """Clamp the radius to something OCCT will attempt."""
+        object.__setattr__(self, "radius", _clamp(self.radius, MIN_MM, MAX_RADIUS_MM))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "fillet"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"radius": self.radius, "edges": self.edges.value}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Round {self.edges.describe} by {self.radius:g} mm"
+
+
+@dataclass(frozen=True, slots=True)
+class Chamfer(Command):
+    """Cut a flat bevel on edges."""
+
+    distance: float
+    edges: EdgeSelector = EdgeSelector.ALL
+
+    def __post_init__(self) -> None:
+        """Clamp the distance."""
+        object.__setattr__(self, "distance", _clamp(self.distance, MIN_MM, MAX_RADIUS_MM))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "chamfer"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"distance": self.distance, "edges": self.edges.value}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Chamfer {self.edges.describe} by {self.distance:g} mm"
+
+
+@dataclass(frozen=True, slots=True)
+class Hollow(Command):
+    """Hollow the part out, leaving a wall.
+
+    "A hollow core", which is one of the two things Rob asked for by name. Also
+    the single most effective way to cut print time and filament on a large
+    model, so it earns its place in the toolbar rather than a menu.
+    """
+
+    wall_thickness: float
+    opening: Face | None = None
+    """Which face to leave open, so the inside can drain. ``None`` seals it."""
+
+    def __post_init__(self) -> None:
+        """Clamp the wall to something printable.
+
+        Below about half a nozzle width the wall does not exist in the slice, so
+        a hollow with a 0.05 mm wall is a hollow with no wall.
+        """
+        object.__setattr__(self, "wall_thickness", _clamp(self.wall_thickness, 0.4, 50.0))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "hollow"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {
+            "wall_thickness": self.wall_thickness,
+            "opening": self.opening.value if self.opening else None,
+        }
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        where = f", open at the {self.opening.value}" if self.opening else ""
+        return f"Hollow to a {self.wall_thickness:g} mm wall{where}"
+
+
+@dataclass(frozen=True, slots=True)
+class Move(Command):
+    """Shift the part."""
+
+    dx: float = 0.0
+    dy: float = 0.0
+    dz: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Clamp each offset; a translation may be negative."""
+        for axis in ("dx", "dy", "dz"):
+            object.__setattr__(self, axis, _clamp(getattr(self, axis), -MAX_MM, MAX_MM))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "move"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"dx": self.dx, "dy": self.dy, "dz": self.dz}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Move by ({self.dx:g}, {self.dy:g}, {self.dz:g}) mm"
+
+
+@dataclass(frozen=True, slots=True)
+class Rotate(Command):
+    """Turn the part about an axis, in degrees."""
+
+    degrees: float
+    axis: str = "Z"
+
+    def __post_init__(self) -> None:
+        """Normalise the angle and the axis name."""
+        object.__setattr__(self, "degrees", float(self.degrees) % 360.0)
+        letter = str(self.axis).upper()[:1]
+        object.__setattr__(self, "axis", letter if letter in "XYZ" else "Z")
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "rotate"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"degrees": self.degrees, "axis": self.axis}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Rotate {self.degrees:g} degrees about {self.axis}"
+
+
+@dataclass(frozen=True, slots=True)
+class ScaleTo(Command):
+    """Resize the part so its tallest dimension is a stated size.
+
+    Scaling *to a size* rather than *by a factor*, because that is how people
+    ask: "about six inches tall", not "times 3.7".
+    """
+
+    height: Length
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "scale-to"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"height_mm": _clamp(self.height.millimetres)}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Scale to {self.height.format()} tall"
+
+
+@dataclass(frozen=True, slots=True)
+class TextOnSurface(Command):
+    """Emboss or deboss text on a face.
+
+    The other thing Rob asked for by name - "MSI in grey across his front" - and
+    one of the most-wanted edits for a printed model. Raised text in a second
+    colour is a single filament change on an AMS.
+    """
+
+    text: str
+    face: Face = Face.FRONT
+    size: float = 10.0
+    depth: float = 1.0
+    raised: bool = True
+
+    def __post_init__(self) -> None:
+        """Trim the text and clamp the geometry.
+
+        The text is length-limited because it arrives from a prompt and a
+        thousand-character string would take minutes to tessellate and produce
+        something unprintable.
+        """
+        object.__setattr__(self, "text", str(self.text).strip()[:MAX_TEXT])
+        object.__setattr__(self, "size", _clamp(self.size, 1.0, 200.0))
+        object.__setattr__(self, "depth", _clamp(self.depth, 0.2, 20.0))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "text-on-surface"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {
+            "text": self.text,
+            "face": self.face.value,
+            "size": self.size,
+            "depth": self.depth,
+            "raised": self.raised,
+        }
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        how = "Emboss" if self.raised else "Engrave"
+        return f'{how} "{self.text}" on the {self.face.value} at {self.size:g} mm'
+
+
+# --------------------------------------------------------------- rebuilding
+
+_BY_NAME: dict[str, Any] = {
+    "create-box": CreateBox,
+    "create-cylinder": CreateCylinder,
+    "create-sphere": CreateSphere,
+    "fillet": Fillet,
+    "chamfer": Chamfer,
+    "hollow": Hollow,
+    "move": Move,
+    "rotate": Rotate,
+    "scale-to": ScaleTo,
+    "text-on-surface": TextOnSurface,
+}
+
+
+def command_from(feature: Feature) -> Command | None:
+    """Rebuild a command from a recorded feature.
+
+    Returns ``None`` for a name this build does not know, rather than raising.
+    A document saved by a newer version must open in an older one with the
+    unknown feature skipped and *said out loud*, not refuse to open at all.
+    """
+    factory = _BY_NAME.get(feature.name)
+    if factory is None:
+        return None
+    try:
+        return _construct(factory, feature.parameters)
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _construct(factory: Any, parameters: dict[str, Any]) -> Command:
+    """Build one command from its recorded parameters."""
+    if factory is Fillet:
+        return Fillet(parameters["radius"], EdgeSelector(parameters.get("edges", "all")))
+    if factory is Chamfer:
+        return Chamfer(parameters["distance"], EdgeSelector(parameters.get("edges", "all")))
+    if factory is Hollow:
+        opening = parameters.get("opening")
+        return Hollow(parameters["wall_thickness"], Face(opening) if opening else None)
+    if factory is ScaleTo:
+        return ScaleTo(Length.mm(parameters["height_mm"]))
+    if factory is TextOnSurface:
+        return TextOnSurface(
+            parameters["text"],
+            Face(parameters.get("face", "front")),
+            parameters.get("size", 10.0),
+            parameters.get("depth", 1.0),
+            bool(parameters.get("raised", True)),
+        )
+    result: Command = factory(**parameters)
+    return result
+
+
+def known_commands() -> tuple[str, ...]:
+    """Every command name this build understands.
+
+    The vocabulary handed to a language model, and the list a document loader
+    checks against.
+    """
+    return tuple(sorted(_BY_NAME))
