@@ -8,7 +8,8 @@ can be wrong.
 import json
 
 from modelpop.domain.licensing import CLAUSE_VERSION, Acceptance
-from modelpop.repositories.acceptance import JsonAcceptanceStore, app_data_dir
+from modelpop.paths import app_data_dir
+from modelpop.repositories.acceptance import JsonAcceptanceStore
 
 
 class TestRoundTrip:

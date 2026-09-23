@@ -6,7 +6,7 @@ sanctioned APIs, nothing cached to disk, no network request to MakerWorld at
 all, and Thangs dropped.
 """
 
-from modelpop.repositories.acceptance import JsonAcceptanceStore, app_data_dir
+from modelpop.repositories.acceptance import JsonAcceptanceStore
 from modelpop.repositories.http import HttpClient, RateLimit
 from modelpop.repositories.myminifactory import MyMiniFactoryRepository
 from modelpop.repositories.thingiverse import ACCESS_WARNING, ThingiverseRepository
@@ -25,5 +25,4 @@ __all__ = [
     "MyMiniFactoryRepository",
     "RateLimit",
     "ThingiverseRepository",
-    "app_data_dir",
 ]

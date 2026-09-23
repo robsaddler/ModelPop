@@ -14,42 +14,17 @@ far worse for something this trivial.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from modelpop.domain.licensing import Acceptance
 from modelpop.domain.result import Result, failure, success
+from modelpop.paths import app_data_dir
 
-__all__ = ["JsonAcceptanceStore", "app_data_dir"]
+__all__ = ["JsonAcceptanceStore"]
 
 _FILE = "licence-acceptance.json"
-
-
-def app_data_dir(windows: bool | None = None) -> Path:
-    """Where ModelPop keeps per-user data.
-
-    ``LOCALAPPDATA`` on Windows, ``XDG_DATA_HOME`` or its documented default
-    elsewhere. Resolved at call time rather than at import so a test can point
-    it somewhere harmless.
-
-    Args:
-        windows: which convention to follow. Detected from the platform when
-            not given. It is a parameter because patching ``os.name`` for a
-            test also changes which ``Path`` subclass gets built, which fails
-            the test for a reason that has nothing to do with the code.
-    """
-    on_windows = os.name == "nt" if windows is None else windows
-    if on_windows:
-        base = os.environ.get("LOCALAPPDATA")
-        if base:
-            return Path(base) / "ModelPop"
-    else:
-        xdg = os.environ.get("XDG_DATA_HOME")
-        if xdg:
-            return Path(xdg) / "modelpop"
-    return Path.home() / ".local" / "share" / "modelpop"
 
 
 @dataclass(frozen=True, slots=True)

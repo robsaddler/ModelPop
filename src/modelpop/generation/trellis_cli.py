@@ -40,6 +40,7 @@ from modelpop.application.mesh_generation_ports import (
 )
 from modelpop.domain.result import Result, failure, success
 from modelpop.generation.gpu_lease import GpuBusyError, GpuLease
+from modelpop.paths import app_data_dir
 
 if TYPE_CHECKING:
     from modelpop.application.mesh_generation_ports import Progress
@@ -90,8 +91,6 @@ def find_trellis_cli() -> Path | None:
         candidate = Path(stated)
         return candidate if candidate.exists() else None
 
-    from modelpop.repositories.acceptance import app_data_dir
-
     name = "trellis-cli.exe" if os.name == "nt" else "trellis-cli"
     for relative in (f"trellis/runtime/{name}", f"trellis/{name}"):
         candidate = app_data_dir() / relative
@@ -108,8 +107,6 @@ def find_weights() -> Path | None:
     if stated:
         candidate = Path(stated)
         return candidate if candidate.is_dir() else None
-
-    from modelpop.repositories.acceptance import app_data_dir
 
     for base in (
         app_data_dir() / "trellis" / "models",
@@ -132,8 +129,6 @@ class TrellisCliGenerator:
     def __post_init__(self) -> None:
         """Give the lease a home if one was not supplied."""
         if self.lease is None:
-            from modelpop.repositories.acceptance import app_data_dir
-
             self.lease = GpuLease.beside(app_data_dir())
 
     # ----------------------------------------------------------- availability

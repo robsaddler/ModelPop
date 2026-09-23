@@ -57,11 +57,11 @@ def picture(tmp_path):
 def test_a_picture_becomes_a_printable_solid(picture, tmp_path):
     """The whole point. Slow: it loads ten gigabytes and runs a diffusion model."""
     stages: list[tuple[float, str]] = []
-    result = generator().from_image(
-        picture,
-        GenerationOptions(detail=Detail.DRAFT, seed=42),
-        stages.append,
-    )
+
+    def note(fraction: float, message: str) -> None:
+        stages.append((fraction, message))
+
+    result = generator().from_image(picture, GenerationOptions(detail=Detail.DRAFT, seed=42), note)
 
     assert result.ok, getattr(result, "error", "") + " " + getattr(result, "detail", "")
     generated = result.unwrap()
