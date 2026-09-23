@@ -20,12 +20,14 @@ import pyvista as pv
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.units import Unit
+from modelpop.presentation.sectioning import SectionPlane
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 __all__ = [
     "BUILD_PLATE_COLOUR",
+    "INTERIOR_COLOUR",
     "MEASURE_COLOUR",
     "MODEL_COLOUR",
     "PROBLEM_COLOUR",
@@ -49,8 +51,18 @@ MEASURE_COLOUR = "#F2C14E"
 # Big enough to see against a model, small enough not to hide the feature
 # being measured. In millimetres, because everything here is.
 MEASURE_POINT_MM = 0.8
+# The colour of a cut surface. Warm against the model's blue, so the inside
+# of a sectioned part is unmistakably the inside.
+INTERIOR_COLOUR = "#C9A227"
+
 BACKGROUND_TOP = "#2B3038"
 BACKGROUND_BOTTOM = "#171A1F"
+
+
+def _as_fraction(colour: str) -> tuple[float, float, float]:
+    """A hex colour as the three fractions VTK wants."""
+    value = colour.lstrip("#")
+    return tuple(int(value[i : i + 2], 16) / 255 for i in (0, 2, 4))  # type: ignore[return-value]
 
 
 def to_polydata(mesh: Mesh) -> pv.PolyData:
@@ -144,6 +156,7 @@ class ViewportScene:
             name="model",
             show_edges=False,
         )
+        self._show_the_inside(self._model_actor)
         self._locator = None  # invalidated: it belongs to the old geometry
 
     def clear_model(self) -> None:
@@ -170,6 +183,52 @@ class ViewportScene:
         action = views.get(name.lower())
         if action is not None:
             action()
+
+    # ---------------------------------------------------------- section view
+
+    def set_section(self, plane: SectionPlane | None) -> None:
+        """Cut the view open along a plane, or show the whole model again.
+
+        Clipping is applied to the **mapper**, not by filtering the geometry.
+        Nothing is re-meshed, so dragging the plane across a 900,000 triangle
+        model costs nothing, and the mesh the rest of the app holds is
+        untouched - which matters, because what is exported and what is sliced
+        must not depend on how the view happens to be set up.
+
+        The cut is left open rather than capped. A capped section looks more
+        like an engineering drawing and hides the very thing somebody cutting a
+        part open wants to see: the cavity, and how thick the wall around it
+        came out.
+        """
+        if self._model_actor is None:
+            return
+
+        mapper = self._model_actor.GetMapper()
+        mapper.RemoveAllClippingPlanes()
+        if plane is None:
+            return
+
+        import vtk
+
+        cutter = vtk.vtkPlane()
+        cutter.SetOrigin(*plane.origin)
+        cutter.SetNormal(*plane.normal)
+        mapper.AddClippingPlane(cutter)
+
+    def _show_the_inside(self, actor: Any) -> None:
+        """Light the inside surfaces, so a cut part reads as one.
+
+        Without this the interior is drawn in the same colour as the outside
+        and lit from behind, and a hollow part cut open looks like a solid one
+        with a strangely dark face. The back faces are what a section is *for*.
+        """
+        import vtk
+
+        inside = vtk.vtkProperty()
+        inside.SetColor(*_as_fraction(INTERIOR_COLOUR))
+        inside.SetSpecular(0.1)
+        actor.SetBackfaceProperty(inside)
+        actor.GetProperty().SetBackfaceCulling(False)
 
     def set_wireframe(self, enabled: bool) -> None:
         """Show the model as a wireframe, which makes bad topology visible."""

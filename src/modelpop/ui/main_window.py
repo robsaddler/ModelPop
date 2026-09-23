@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from modelpop.application.repository_ports import Download
 
 from modelpop.presentation.measuring import MeasuringTool
+from modelpop.presentation.sectioning import SectionTool
 from modelpop.ui.cad_panel import CadPanel, ThreadedRebuilder
 from modelpop.ui.dialogs import (
     EditDialog,
@@ -54,6 +55,7 @@ from modelpop.ui.dialogs import (
     RunLogDialog,
     SettingsDialog,
 )
+from modelpop.ui.section_dialog import SectionDialog
 
 __all__ = ["MainWindow"]
 
@@ -123,6 +125,8 @@ class MainWindow(QMainWindow):
         self._viewport = QtInteractor(self)
         self._scene = ViewportScene(self._viewport, self._printer)
         self._measuring = MeasuringTool()
+        self._section = SectionTool()
+        self._section_panel: SectionDialog | None = None
         self._pressed_at: QPoint | None = None
         self._findings = QListWidget()
         self._summary = QLabel("Open a model to begin.")
@@ -276,6 +280,12 @@ class MainWindow(QMainWindow):
         self._measure_action.toggled.connect(self._set_measuring)
         view_menu.addAction(self._measure_action)
 
+        self._section_action = QAction("&Cut it open", self)
+        self._section_action.setCheckable(True)
+        self._section_action.setShortcut(QKeySequence("Ctrl+K"))
+        self._section_action.toggled.connect(self._set_section)
+        view_menu.addAction(self._section_action)
+
     # -------------------------------------------------------------- measuring
 
     def _set_measuring(self, on: bool) -> None:
@@ -295,6 +305,45 @@ class MainWindow(QMainWindow):
             self._scene.clear_measurement()
             self._viewport.render()
         self.statusBar().showMessage(self._measuring.describe())
+
+    # --------------------------------------------------------------- section
+
+    def _set_section(self, on: bool) -> None:
+        """Cut the view open, or put it back together.
+
+        The controls open beside the window rather than over it, because the
+        point of a section is to drag it through the part and watch. Closing
+        them switches the cut off, so there is no way to leave the view sliced
+        with nothing on screen saying why.
+        """
+        if not on:
+            self._section.turn_off()
+            self._apply_section()
+            if self._section_panel is not None:
+                self._section_panel.hide()
+            self.statusBar().showMessage(self._section.describe())
+            return
+
+        mesh = self._view_model.state.mesh
+        self._section.fits(None if mesh is None else mesh.bounds)
+        self._section.turn_on()
+
+        if self._section_panel is None:
+            self._section_panel = SectionDialog(self._section, self)
+            self._section_panel.changed.connect(self._apply_section)
+            # Unchecking the menu item is what switches the cut off, so the
+            # panel closing has to go through it rather than round it.
+            self._section_panel.finished.connect(lambda _: self._section_action.setChecked(False))
+        self._section_panel.refresh()
+        self._section_panel.show()
+        self._apply_section()
+
+    def _apply_section(self) -> None:
+        """Push the current plane at the viewport and redraw."""
+        self._scene.set_section(self._section.plane)
+        self._viewport.render()
+        if self._section.is_on:
+            self.statusBar().showMessage(self._section.describe())
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         """Take clicks in the viewport as measurement points.
@@ -554,6 +603,14 @@ class MainWindow(QMainWindow):
         has_problems = report is not None and not report.is_printable
         self._scene.show_mesh(state.mesh, has_problems=has_problems)
         self._scene.frame_model()
+
+        # A new model is a new range for the cut, and a new actor with no
+        # clipping on it. Both have to be reapplied or the section silently
+        # stops working on everything opened after the first one.
+        self._section.fits(None if state.mesh is None else state.mesh.bounds)
+        if self._section_panel is not None:
+            self._section_panel.refresh()
+        self._scene.set_section(self._section.plane)
 
         self.setWindowTitle(f"ModelPop - {state.title}")
         self.statusBar().showMessage(state.describe())

@@ -90,6 +90,13 @@ Tests that would fail without the change; `ruff` and `mypy --strict` clean; `imp
    signal.
 8. **VTK does not fail on a GPU-less runner, it takes the process down** with an access violation.
    Hence the `renders` marker, deselected in CI.
+9. **Off-screen `Plotter.screenshot()` hands back the previous buffer** after a change that does not
+   dirty the scene graph - a clipping plane, for one. The picture never appears to move and the
+   feature looks broken when it is not. Call `render()` first, every time.
+10. **Measure a rendered change between two screenshots, not against the background.** The viewport
+   background is a gradient, so "differs from the top-left pixel" counts most of the sky as drawn
+   and swamps the model. That reading cost an hour and nearly bought a mapper swap that fixed
+   nothing - PyVista's default `vtkDataSetMapper` honours clipping planes perfectly well.
 
 ## Style
 

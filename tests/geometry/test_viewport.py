@@ -17,6 +17,7 @@ import pyvista as pv
 
 from modelpop.domain import Length, Mesh, Unit
 from modelpop.domain.printer import PrinterProfile
+from modelpop.presentation.sectioning import Axis, SectionPlane
 from modelpop.rendering import ViewportScene, to_polydata
 
 from .strategies import unit_cube
@@ -124,6 +125,42 @@ class TestRendering:
         background = image[0, 0].astype(int)
         drawn = int((np.abs(image.astype(int) - background).sum(axis=2) > 20).sum())
         assert drawn > 5_000, "the viewport rendered nothing recognisable"
+
+    @pytest.mark.renders
+    def test_a_section_actually_changes_the_picture(self, plotter):
+        """Clipping that reaches the mapper but not the screen looks identical.
+
+        The API test next door proves the plane is attached; this proves it
+        does something, which is a different claim.
+
+        Two traps live in these six lines, and both were paid for here.
+        Screenshots are compared against *each other*, not against the
+        background, because the background is a gradient and measuring from
+        one corner of it counts most of the sky as drawn. And every screenshot
+        is preceded by an explicit ``render()``: off-screen, PyVista hands back
+        the previous buffer after a clipping change, so without it the picture
+        never appears to move and the feature looks broken when it is not.
+        """
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(80).dropped_to_bed())
+        scene.set_view("front")
+        scene.frame_model()
+
+        def shot():
+            plotter.render()
+            return plotter.screenshot(return_img=True).copy()
+
+        whole = shot()
+        scene.set_section(SectionPlane(Axis.X, 0.0))
+        halved = shot()
+        scene.set_section(None)
+        restored = shot()
+
+        def differing(one, two) -> int:
+            return int((np.abs(one.astype(int) - two.astype(int)).sum(axis=2) > 20).sum())
+
+        assert differing(whole, halved) > 1_000, "the cut changed nothing on screen"
+        assert differing(whole, restored) == 0, "the model did not come back whole"
 
 
 class TestPicking:
@@ -258,3 +295,83 @@ class TestTheMeasurementOverlay:
         scene.show_measurement([(0.0, 0.0, 20.0), (10.0, 0.0, 20.0)])
 
         assert not plotter.renderer.actors["measure-point-0"].GetPickable()
+
+
+class TestSectioning:
+    """Cutting the view open, at the level where it becomes actual clipping.
+
+    Off-screen object work, so it belongs in the fast suite: nothing here
+    rasterises. What it proves is that the plane the tool produced reaches the
+    mapper, and that it comes off again - a clip left behind on a new model is
+    a part that looks half-missing for no visible reason.
+    """
+
+    def clipping_on(self, plotter) -> int:
+        return plotter.renderer.actors["model"].GetMapper().GetNumberOfClippingPlanes()
+
+    def test_a_model_starts_uncut(self, plotter):
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        assert self.clipping_on(plotter) == 0
+
+    def test_a_section_clips_the_model(self, plotter):
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        scene.set_section(SectionPlane(Axis.X, 0.0))
+
+        assert self.clipping_on(plotter) == 1
+
+    def test_turning_the_section_off_takes_the_clip_away(self, plotter):
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        scene.set_section(SectionPlane(Axis.X, 0.0))
+        scene.set_section(None)
+
+        assert self.clipping_on(plotter) == 0
+
+    def test_moving_the_section_does_not_stack_up_planes(self, plotter):
+        """Dragging the slider calls this on every step."""
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        for offset in range(-8, 8):
+            scene.set_section(SectionPlane(Axis.X, float(offset)))
+
+        assert self.clipping_on(plotter) == 1
+
+    def test_the_plane_reaches_vtk_where_it_was_asked_for(self, plotter):
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        scene.set_section(SectionPlane(Axis.Z, 7.5))
+
+        plane = plotter.renderer.actors["model"].GetMapper().GetClippingPlanes().GetItem(0)
+        assert plane.GetOrigin() == pytest.approx((0.0, 0.0, 7.5))
+        assert plane.GetNormal() == pytest.approx((0.0, 0.0, 1.0))
+
+    def test_flipping_the_section_reverses_the_normal_vtk_is_given(self, plotter):
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        scene.set_section(SectionPlane(Axis.Z, 0.0, flipped=True))
+
+        plane = plotter.renderer.actors["model"].GetMapper().GetClippingPlanes().GetItem(0)
+        assert plane.GetNormal() == pytest.approx((0.0, 0.0, -1.0))
+
+    def test_sectioning_with_no_model_is_ignored_rather_than_fatal(self, plotter):
+        ViewportScene(plotter).set_section(SectionPlane(Axis.X, 0.0))
+
+    def test_the_inside_of_a_cut_model_is_lit(self, plotter):
+        """Without this a hollow part cut open reads as a solid one."""
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        actor = plotter.renderer.actors["model"]
+
+        assert actor.GetBackfaceProperty() is not None
+        assert not actor.GetProperty().GetBackfaceCulling()
+
+    def test_a_new_model_comes_in_unclipped(self, plotter):
+        """The clip belongs to the old actor; the window reapplies it."""
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        scene.set_section(SectionPlane(Axis.X, 0.0))
+        scene.show_mesh(unit_cube(40))
+
+        assert self.clipping_on(plotter) == 0
