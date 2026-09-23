@@ -21,6 +21,7 @@ from modelpop.domain.printer import PrinterProfile
 from modelpop.generation import CadLoopGenerator
 from modelpop.mesh import TrimeshIO, TrimeshOps
 from modelpop.printing import BambuSlicer, ToolpathVerifier
+from modelpop.projects import JsonProjectStore
 from modelpop.repositories import (
     MYMINIFACTORY_KEY_NAME,
     THINGIVERSE_KEY_NAME,
@@ -82,7 +83,7 @@ def main() -> int:
     window = MainWindow(
         build_workspace(),
         lambda: build_discovery(secrets),
-        ModellingSession(Build123dCompiler(Build123dKernel())),
+        ModellingSession(Build123dCompiler(Build123dKernel()), JsonProjectStore()),
     )
     window.show()
     return app.exec()

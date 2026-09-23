@@ -35,6 +35,7 @@ from modelpop.domain.readiness import Severity
 from modelpop.generation import edit_by_description
 from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
+from modelpop.projects import EXTENSION as PROJECT_EXTENSION
 from modelpop.rendering.viewport import ViewportScene
 
 if TYPE_CHECKING:
@@ -198,10 +199,21 @@ class MainWindow(QMainWindow):
         find_action.triggered.connect(self._find_a_model)
         file_menu.addAction(find_action)
 
-        save_action = QAction("&Save as...", self)
+        save_action = QAction("Export the &mesh as...", self)
         save_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         save_action.triggered.connect(self._choose_save_path)
         file_menu.addAction(save_action)
+        file_menu.addSeparator()
+
+        open_project = QAction("Open a &project...", self)
+        open_project.triggered.connect(self._open_project)
+        file_menu.addAction(open_project)
+
+        self._save_project_action = QAction("Save the p&roject...", self)
+        self._save_project_action.setEnabled(False)
+        self._save_project_action.setShortcut(QKeySequence.StandardKey.Save)
+        self._save_project_action.triggered.connect(self._save_project)
+        file_menu.addAction(self._save_project_action)
         file_menu.addSeparator()
 
         settings_action = QAction("Se&ttings...", self)
@@ -312,6 +324,32 @@ class MainWindow(QMainWindow):
         self._view_model.open(download.path)
         self.statusBar().showMessage(f"From {download.attribution}", 15000)
 
+    def _open_project(self) -> None:
+        """Open a saved feature tree."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open a project", "", f"ModelPop projects (*{PROJECT_EXTENSION})"
+        )
+        if path:
+            self._modelling.open_from(Path(path))
+
+    def _save_project(self) -> None:
+        """Write the feature tree to a file.
+
+        Separate from exporting the mesh, and worded so in the menu: a project
+        is the steps and can still be changed, while an export is a shape and
+        cannot.
+        """
+        if not self._modelling.can_save:
+            QMessageBox.information(
+                self, "ModelPop", "There is no model yet. Start one in the CAD tools."
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save the project", "", f"ModelPop projects (*{PROJECT_EXTENSION})"
+        )
+        if path:
+            self._modelling.save_to(Path(path))
+
     def _watch_print(self) -> None:
         """Play back the last slice.
 
@@ -403,6 +441,7 @@ class MainWindow(QMainWindow):
         self._slice_button.setEnabled(self._view_model.can_slice)
         self._generate_button.setEnabled(not self._view_model.is_busy)
         self._edit_button.setEnabled(self._view_model.can_edit_by_description)
+        self._save_project_action.setEnabled(self._modelling.can_save)
         sliced = state.last_slice
         self._watch_action.setEnabled(sliced is not None and sliced.gcode_path is not None)
 
@@ -415,6 +454,9 @@ class MainWindow(QMainWindow):
         """
         message = f"{outcome.message}. {outcome.detail}" if outcome.detail else outcome.message
         self.statusBar().showMessage(message, 10000)
+        # The CAD tools can create a model without the workspace changing, so
+        # the menu has to be refreshed from here too.
+        self._save_project_action.setEnabled(self._modelling.can_save)
 
     def _on_notification(self, notification: Notification) -> None:
         self.statusBar().showMessage(notification.message, 8000)

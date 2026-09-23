@@ -37,6 +37,8 @@ from modelpop.domain.commands import Origin
 from modelpop.domain.result import Failure, Result
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from modelpop.domain.commands import Command
     from modelpop.domain.mesh import Mesh
     from modelpop.domain.units import Length
@@ -278,6 +280,27 @@ class ModellingViewModel:
     def redo(self) -> None:
         """Step forward again."""
         self._run("Redone", self._session.redo)
+
+    def save_to(self, path: Path) -> None:
+        """Write the model to a project file."""
+        outcome = self._session.save_to(path)
+        if isinstance(outcome, Failure):
+            self._announce(Outcome(outcome.reason, outcome.detail, refused=True))
+            return
+        self._announce(Outcome(f"Saved to {outcome.unwrap().name}."))
+
+    def open_from(self, path: Path) -> None:
+        """Read a project file and rebuild it.
+
+        Rebuilt on the worker like any other change, because opening a project
+        runs the whole tree and a large one takes as long as a rebuild does.
+        """
+        self._run(f"Opened {path.name}", lambda: self._session.open_from(path))
+
+    @property
+    def can_save(self) -> bool:
+        """Whether there is a model worth writing down."""
+        return not self.state.is_empty and not self._busy
 
     def clear(self) -> None:
         """Start a new model."""

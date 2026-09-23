@@ -15,7 +15,7 @@ layers =
     modelpop.ui
     modelpop.rendering
     modelpop.presentation
-    modelpop.cad | modelpop.mesh | modelpop.printing | modelpop.ai | modelpop.generation | modelpop.vision | modelpop.repositories
+    modelpop.cad | modelpop.mesh | modelpop.printing | modelpop.ai | modelpop.generation | modelpop.vision | modelpop.repositories | modelpop.projects
     modelpop.application
     modelpop.domain
 
@@ -51,6 +51,7 @@ forbidden_modules =
     modelpop.generation
     modelpop.vision
     modelpop.repositories
+    modelpop.projects
     modelpop.rendering
     modelpop.ui
     build123d

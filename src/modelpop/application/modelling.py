@@ -24,7 +24,10 @@ from modelpop.domain.commands import CommandBus, Document, DocumentHistory, Orig
 from modelpop.domain.result import Result, failure, success
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from modelpop.application.cad_ports import FeatureCompiler, SolidMeasurements
+    from modelpop.application.project_ports import ProjectStore
     from modelpop.domain.commands import Command, Feature
     from modelpop.domain.mesh import Mesh
 
@@ -119,15 +122,21 @@ class ModellingSession:
     caller could change underneath it.
     """
 
-    def __init__(self, compiler: FeatureCompiler | None = None) -> None:
-        """Wire the session to a compiler.
+    def __init__(
+        self,
+        compiler: FeatureCompiler | None = None,
+        projects: ProjectStore | None = None,
+    ) -> None:
+        """Wire the session to a compiler and a place to keep projects.
 
         Args:
             compiler: rebuilds the tree into geometry. Optional, so the app
                 still starts when the CAD kernel failed to load - the tree can
                 be read and edited, it just cannot be built.
+            projects: reads and writes project files.
         """
         self._compiler = compiler
+        self._projects = projects
         self._bus = CommandBus()
         self._state = ModelState()
 
@@ -183,6 +192,39 @@ class ModellingSession:
         self._bus = CommandBus()
         self._state = ModelState()
         return self._state
+
+    def save_to(self, path: Path) -> Result[Path]:
+        """Write the feature tree to a file.
+
+        The tree is the model, so this is the whole project. There is no
+        geometry in the file - it is rebuilt on opening, which is also how a
+        saved model picks up a later build's improvements to an operation.
+        """
+        if self._projects is None:
+            return failure("Saving is unavailable", "No project store was configured.")
+        if not self._bus.document.features:
+            return failure("There is nothing to save", "The model has no steps yet.")
+        return self._projects.save(self._bus.document, path)
+
+    def open_from(self, path: Path) -> Result[ModelState]:
+        """Read a project file and rebuild it."""
+        if self._projects is None:
+            return failure("Opening is unavailable", "No project store was configured.")
+
+        read = self._projects.load(path)
+        if not read.ok:
+            return read  # type: ignore[return-value]
+
+        saved = read.unwrap()
+        rebuilt = self.load(saved.document)
+        if rebuilt.ok and not saved.is_complete:
+            # Loaded, but not whole. Said rather than left for the user to
+            # notice that a step is missing from the shape.
+            return failure(
+                f"{path.name} opened, but {len(saved.unknown)} step(s) are not supported here",
+                f"Unsupported: {', '.join(saved.unknown)}. They are still in the file.",
+            )
+        return rebuilt
 
     def load(self, document: Document) -> Result[ModelState]:
         """Open a saved feature tree.
