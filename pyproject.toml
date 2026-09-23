@@ -128,7 +128,12 @@ files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
 # third-party packages without complete type information
-module = ["pyvista.*", "pyvistaqt.*", "trimesh.*", "manifold3d.*", "build123d.*", "vtk.*", "pymeshfix.*", "pymeshlab.*"]
+module = [
+    "pyvista.*", "pyvistaqt.*", "trimesh.*", "manifold3d.*", "build123d.*", "vtk.*",
+    "pymeshfix.*", "pymeshlab.*",
+    # optional extras: the app runs without them and says so
+    "anthropic.*", "keyring.*",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
