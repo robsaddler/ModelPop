@@ -263,6 +263,61 @@ class Workspace:
             )
         )
 
+    def edit_part(
+        self, state: WorkspaceState, instruction: str, table: DimensionTable | None = None
+    ) -> Result[WorkspaceState]:
+        """Change the open part by describing the change.
+
+        Only possible for a part this application generated: the edit rewrites
+        the script, and a model imported from a file has no script to rewrite.
+        """
+        run = state.last_generation
+        if run is None or run.best is None:
+            return failure(
+                "This part cannot be edited by description",
+                "only a generated part has a script to change. Generate one, or use "
+                "the geometry tools on an imported model.",
+            )
+        if self._cad is None or self._ai is None:
+            return failure(
+                "Editing needs the CAD kernel and an AI provider",
+                "Add an API key in Settings.",
+            )
+
+        # imported here rather than at module scope to avoid an import cycle
+        from modelpop.generation.cad_loop import edit_part as run_edit
+
+        outcome = run_edit(
+            script=run.best.script,
+            instruction=instruction,
+            provider=self._ai,
+            kernel=self._cad,
+            mesh_ops=self._ops,
+            table=table,
+            printer=self._printer,
+            settings=self._ai_settings,
+        )
+        if not outcome.ok:
+            return outcome  # type: ignore[return-value]
+
+        edited = outcome.unwrap()
+        if edited.best is None or edited.best.result is None:
+            return failure(
+                "The edit produced nothing usable",
+                edited.attempts[-1].error if edited.attempts else "no attempt ran",
+            )
+
+        mesh = edited.best.result.mesh
+        return success(
+            replace(
+                state,
+                mesh=mesh,
+                readiness=self._assess(mesh),
+                last_generation=edited,
+                last_slice=None,
+            )
+        )
+
     # ------------------------------------------------------------------ slice
 
     def slice(

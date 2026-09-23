@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from modelpop.application.cad_ports import DimensionTable
     from modelpop.domain.printer import PrinterProfile
 
-__all__ = ["SYSTEM_PROMPT", "build_request"]
+__all__ = ["SYSTEM_PROMPT", "build_edit", "build_request"]
 
 
 SYSTEM_PROMPT = """\
@@ -92,4 +92,28 @@ def build_request(
         )
 
     parts.append("Return only the code.")
+    return "\n\n".join(parts)
+
+
+def build_edit(script: str, instruction: str, table: DimensionTable | None = None) -> str:
+    """Compose a request to change an existing part.
+
+    The whole script goes back, not a description of it. A model asked to
+    modify code it cannot see invents the parts it has forgotten, and the
+    result is a part that no longer resembles the one on screen.
+    """
+    parts = [
+        "This is the script that produced the part currently open:",
+        f"```python\n{script}\n```",
+        f"Change it so that: {instruction}",
+        "Keep everything else exactly as it is. Change only what was asked for.",
+    ]
+
+    if table:
+        lines = "\n".join(
+            f"- {dimension.name}: {dimension.expected.format()}" for dimension in table.dimensions
+        )
+        parts.append(f"These dimensions must still hold:\n\n{lines}")
+
+    parts.append("Return the complete modified script, and only the code.")
     return "\n\n".join(parts)

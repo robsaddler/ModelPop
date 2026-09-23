@@ -31,7 +31,12 @@ from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, W
 from modelpop.domain.readiness import Severity
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
 from modelpop.rendering.viewport import ViewportScene
-from modelpop.ui.dialogs import GenerateDialog, RunLogDialog, SettingsDialog
+from modelpop.ui.dialogs import (
+    EditDialog,
+    GenerateDialog,
+    RunLogDialog,
+    SettingsDialog,
+)
 
 __all__ = ["MainWindow"]
 
@@ -93,6 +98,10 @@ class MainWindow(QMainWindow):
         self._generate_button = QPushButton("Generate a part...")
         self._generate_button.setStyleSheet("font-weight: 600; padding: 8px;")
         side.addWidget(self._generate_button)
+
+        self._edit_button = QPushButton("Change this part...")
+        self._edit_button.setEnabled(False)
+        side.addWidget(self._edit_button)
 
         self._how_button = QPushButton("How this part was made")
         self._how_button.setVisible(False)
@@ -171,6 +180,7 @@ class MainWindow(QMainWindow):
         self._view_model.on_busy_changed(self._on_busy_changed)
 
         self._generate_button.clicked.connect(self._generate)
+        self._edit_button.clicked.connect(self._edit_by_description)
         self._how_button.clicked.connect(self._show_run_log)
         self._repair_button.clicked.connect(self._view_model.repair)
         self._prepare_button.clicked.connect(self._view_model.prepare_for_bed)
@@ -215,6 +225,11 @@ class MainWindow(QMainWindow):
         dialog = GenerateDialog(self)
         if dialog.exec():
             self._view_model.generate_part(dialog.request())
+
+    def _edit_by_description(self) -> None:
+        dialog = EditDialog(self)
+        if dialog.exec():
+            self._view_model.edit_part(dialog.instruction())
 
     def _show_run_log(self) -> None:
         run = self._view_model.state.last_generation
@@ -263,6 +278,7 @@ class MainWindow(QMainWindow):
         self._simplify_button.setEnabled(state.has_model)
         self._slice_button.setEnabled(self._view_model.can_slice)
         self._generate_button.setEnabled(not self._view_model.is_busy)
+        self._edit_button.setEnabled(self._view_model.can_edit_by_description)
 
     def _on_notification(self, notification: Notification) -> None:
         self.statusBar().showMessage(notification.message, 8000)

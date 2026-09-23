@@ -137,13 +137,37 @@ class WorkspaceViewModel:
     @staticmethod
     def _describe_generation(state: WorkspaceState) -> str:
         """Report a generation run in the user's terms."""
+        return WorkspaceViewModel._describe_run(state, "Generated")
+
+    @staticmethod
+    def _describe_edit(state: WorkspaceState) -> str:
+        """Report an edit in the user's terms."""
+        return WorkspaceViewModel._describe_run(state, "Changed")
+
+    @staticmethod
+    def _describe_run(state: WorkspaceState, verb: str) -> str:
+        """How many attempts it took, whether it hit the spec, and what it cost."""
         run = state.last_generation
         if run is None:
-            return "Generated"
+            return verb
         attempts = len(run.attempts)
         tries = "first try" if attempts == 1 else f"{attempts} attempts"
         verdict = "as specified" if run.succeeded else "close, but not exact"
-        return f"Generated {verdict} in {tries}, about ${run.total_cost_usd:.2f}"
+        return f"{verb} {verdict} in {tries}, about ${run.total_cost_usd:.2f}"
+
+    @property
+    def can_edit_by_description(self) -> bool:
+        """Whether the open part has a script that can be rewritten."""
+        return self._state.last_generation is not None and self._workspace.can_generate
+
+    def edit_part(self, instruction: str, table: DimensionTable | None = None) -> None:
+        """Change the open part by describing the change."""
+        self._run(
+            lambda: self._workspace.edit_part(self._state, instruction, table),
+            done="Edited",
+            failed="Could not make that change",
+            describe_success=self._describe_edit,
+        )
 
     @property
     def can_slice(self) -> bool:

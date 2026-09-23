@@ -32,7 +32,7 @@ from modelpop.application.ai_ports import AiSettings, ModelChoice, ModelRole
 if TYPE_CHECKING:
     from modelpop.ai.secrets import LayeredSecretStore
 
-__all__ = ["GenerateDialog", "SettingsDialog"]
+__all__ = ["EditDialog", "GenerateDialog", "RunLogDialog", "SettingsDialog"]
 
 _MODELS = [
     "claude-opus-5",
@@ -285,3 +285,66 @@ class RunLogDialog(QDialog):
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+
+class EditDialog(QDialog):
+    """Describe a change to the part on screen."""
+
+    EXAMPLES = (
+        "make the walls 3 mm thick",
+        "round the vertical corners with a 4 mm radius",
+        "move the holes 10 mm further apart",
+        "add a 2 mm chamfer to the top edges",
+    )
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        """Build the dialog."""
+        super().__init__(parent)
+        self.setWindowTitle("Change this part")
+        self.setMinimumSize(560, 340)
+
+        layout = QVBoxLayout(self)
+
+        heading = QLabel("What should change?")
+        heading.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(heading)
+
+        note = QLabel(
+            "The script that produced this part is rewritten and re-checked, so "
+            "a change cannot quietly break the dimensions or stop it fitting the "
+            "printer. Undo is one step away if you do not like the result."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(_HINT_STYLE)
+        layout.addWidget(note)
+
+        self._instruction = QPlainTextEdit()
+        self._instruction.setPlaceholderText(self.EXAMPLES[0])
+        layout.addWidget(self._instruction, stretch=1)
+
+        for example in self.EXAMPLES:
+            button = QPushButton(example)
+            button.setStyleSheet("text-align: left; padding: 5px;")
+            button.clicked.connect(
+                lambda _=False, text=example: self._instruction.setPlainText(text)
+            )
+            layout.addWidget(button)
+
+        self._buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self._buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Change it")
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+        layout.addWidget(self._buttons)
+
+        self._instruction.textChanged.connect(self._update_enabled)
+        self._update_enabled()
+
+    def _update_enabled(self) -> None:
+        ok = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setEnabled(bool(self._instruction.toPlainText().strip()))
+
+    def instruction(self) -> str:
+        """The change the user described."""
+        return self._instruction.toPlainText().strip()

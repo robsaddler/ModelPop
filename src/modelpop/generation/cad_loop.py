@@ -37,13 +37,13 @@ from modelpop.application.cad_ports import DimensionTable
 from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.result import Result, failure, success
 from modelpop.generation.cad_gates import GateReport, evaluate
-from modelpop.generation.cad_prompt import SYSTEM_PROMPT, build_request
+from modelpop.generation.cad_prompt import SYSTEM_PROMPT, build_edit, build_request
 
 if TYPE_CHECKING:
     from modelpop.application.cad_ports import CadKernel, ScriptResult
     from modelpop.application.ports import MeshOps
 
-__all__ = ["Attempt", "CadGenerationRun", "generate_part"]
+__all__ = ["Attempt", "CadGenerationRun", "edit_part", "generate_part"]
 
 _CODE_FENCE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 
@@ -170,13 +170,29 @@ def generate_part(
         )
 
     config = settings or AiSettings()
-    choice = config.choice_for(ModelRole.CAD_CODEGEN)
-    budget = _Budget(config.spend_limit_usd)
-
     conversation = Conversation(
         system=SYSTEM_PROMPT,
         messages=(Message.user(build_request(request, table, printer)),),
     )
+    return _run_loop(conversation, provider, kernel, mesh_ops, table, printer, config)
+
+
+def _run_loop(
+    conversation: Conversation,
+    provider: ChatProvider,
+    kernel: CadKernel,
+    mesh_ops: MeshOps | None,
+    table: DimensionTable | None,
+    printer: PrinterProfile | None,
+    config: AiSettings,
+) -> Result[CadGenerationRun]:
+    """Run the attempt loop. Shared by generating and editing.
+
+    Kept in one place deliberately: an edit that skipped a gate the original
+    generation applied would let a change quietly break a part that was fine.
+    """
+    choice = config.choice_for(ModelRole.CAD_CODEGEN)
+    budget = _Budget(config.spend_limit_usd)
 
     attempts: list[Attempt] = []
     stopped = ""
@@ -258,3 +274,53 @@ def _correction(attempt: Attempt) -> str:
         "Fix that one problem and return the complete corrected script. "
         "Return only the code, in a single Python block."
     )
+
+
+def edit_part(
+    script: str,
+    instruction: str,
+    provider: ChatProvider,
+    kernel: CadKernel,
+    mesh_ops: MeshOps | None = None,
+    table: DimensionTable | None = None,
+    printer: PrinterProfile | None = None,
+    settings: AiSettings | None = None,
+) -> Result[CadGenerationRun]:
+    """Change an existing part by describing the change.
+
+    This is what makes a generated part editable rather than disposable. The
+    script is the document: an edit is a new script, put through exactly the
+    same gates, so "make the walls 3 mm" cannot quietly produce something that
+    no longer fits the printer or no longer measures what was asked for.
+
+    Args:
+        script: the script that produced the part on screen.
+        instruction: the change, in the user's words.
+        provider: the model that rewrites the script.
+        kernel: runs it and measures the result.
+        mesh_ops: used for the watertight gate.
+        table: dimensions that must still hold after the edit.
+        printer: the printer to check against.
+        settings: attempt and spend limits.
+    """
+    if not script.strip():
+        return failure("Nothing to edit", "this part was not generated from a script")
+    if not instruction.strip():
+        return failure("Nothing to change", "describe the change you want")
+    if not provider.is_configured():
+        return failure(
+            "No AI provider configured",
+            "Add an API key in Settings before editing a part.",
+        )
+    if not kernel.is_available():
+        return failure(
+            "The CAD kernel is unavailable",
+            "build123d could not be loaded. Reinstall the application's dependencies.",
+        )
+
+    config = settings or AiSettings()
+    conversation = Conversation(
+        system=SYSTEM_PROMPT,
+        messages=(Message.user(build_edit(script, instruction, table)),),
+    )
+    return _run_loop(conversation, provider, kernel, mesh_ops, table, printer, config)
