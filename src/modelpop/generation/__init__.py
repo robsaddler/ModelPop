@@ -4,6 +4,7 @@ from modelpop.generation.cad_gates import Gate, GateReport, GateResult, evaluate
 from modelpop.generation.cad_loop import (
     Attempt,
     CadGenerationRun,
+    CadLoopGenerator,
     edit_part,
     extract_script,
     generate_part,
@@ -14,6 +15,7 @@ __all__ = [
     "SYSTEM_PROMPT",
     "Attempt",
     "CadGenerationRun",
+    "CadLoopGenerator",
     "Gate",
     "GateReport",
     "GateResult",

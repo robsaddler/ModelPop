@@ -7,11 +7,13 @@ applied could quietly break a part that was fine.
 
 from modelpop.application.ai_ports import AiSettings
 from modelpop.application.cad_ports import Dimension, DimensionTable
+from modelpop.application.generation_ports import PartGenerator
 from modelpop.application.workspace import Workspace, WorkspaceState
 from modelpop.domain import Length
 from modelpop.domain.printer import PrinterProfile
+from modelpop.domain.result import failure
 from modelpop.generation import build_edit
-from modelpop.generation.cad_loop import edit_part
+from modelpop.generation.cad_loop import CadLoopGenerator, edit_part
 from modelpop.presentation import WorkspaceViewModel
 
 from .test_cad_loop import RIGHT, WRONG_SIZE, FakeKernel, FakeOps, ScriptedModel, code
@@ -97,8 +99,7 @@ class TestThroughTheWorkspace:
             FakeOps(),
             None,
             PrinterProfile.p2s(),
-            cad_kernel=FakeKernel(),
-            ai=model,
+            generator=CadLoopGenerator(model, FakeKernel(), FakeOps()),
         )
 
     def test_a_generated_part_can_be_edited(self):
@@ -144,8 +145,7 @@ class TestThroughTheViewModel:
                 FakeOps(),
                 None,
                 PrinterProfile.p2s(),
-                cad_kernel=FakeKernel(),
-                ai=model,
+                generator=CadLoopGenerator(model, FakeKernel(), FakeOps()),
             )
         )
 
@@ -190,3 +190,38 @@ class TestThroughTheViewModel:
         view_model.generate_part("a bracket")
 
         assert "2 attempts" in notes[-1].message
+
+
+class TestTheSettingsTheUserChose:
+    """Limits set in Settings must reach the loop that spends the money."""
+
+    class RecordingGenerator:
+        """Stands in for the real loop and remembers how it was called."""
+
+        def __init__(self) -> None:
+            self.settings: list[AiSettings | None] = []
+
+        def is_ready(self) -> bool:
+            return True
+
+        def generate(self, request, *, printer, table=None, settings=None):
+            self.settings.append(settings)
+            return failure("not today")
+
+        def edit(self, script, instruction, *, printer, table=None, settings=None):
+            self.settings.append(settings)
+            return failure("not today")
+
+    def test_the_view_models_limits_are_passed_to_generation(self):
+        generator = self.RecordingGenerator()
+        view_model = WorkspaceViewModel(
+            Workspace(FakeIO(), FakeOps(), None, PrinterProfile.p2s(), generator=generator)
+        )
+        view_model.ai_settings = AiSettings(max_attempts=7)
+        view_model.generate_part("a bracket")
+
+        assert generator.settings == [AiSettings(max_attempts=7)]
+
+    def test_a_recording_generator_satisfies_the_port(self):
+        """If this drifts, the fake above stops proving anything."""
+        assert isinstance(self.RecordingGenerator(), PartGenerator)

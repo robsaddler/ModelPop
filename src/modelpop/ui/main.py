@@ -15,8 +15,9 @@ from modelpop.ai import AnthropicProvider
 from modelpop.application.workspace import Workspace
 from modelpop.cad import Build123dKernel
 from modelpop.domain.printer import PrinterProfile
+from modelpop.generation import CadLoopGenerator
 from modelpop.mesh import TrimeshIO, TrimeshOps
-from modelpop.printing import BambuSlicer
+from modelpop.printing import BambuSlicer, ToolpathVerifier
 from modelpop.ui.main_window import MainWindow
 
 __all__ = ["main"]
@@ -30,13 +31,14 @@ def build_workspace() -> Workspace:
     else still works. Refusing to start because one thing is absent would be
     a poor trade.
     """
+    ops = TrimeshOps()
     return Workspace(
         mesh_io=TrimeshIO(),
-        mesh_ops=TrimeshOps(),
+        mesh_ops=ops,
         slicer=BambuSlicer(),
         printer=PrinterProfile.p2s(),
-        cad_kernel=Build123dKernel(),
-        ai=AnthropicProvider(),
+        generator=CadLoopGenerator(AnthropicProvider(), Build123dKernel(), ops),
+        gcode_verifier=ToolpathVerifier(),
     )
 
 

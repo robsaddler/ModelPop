@@ -73,9 +73,17 @@ forbidden_modules =
     modelpop.rendering
     modelpop.ui
 
+# `allow_indirect_imports` is deliberate, and narrows the rule to what it is
+# actually for: no module outside `modelpop.ai` may *use* the SDK. The
+# composition root has to name the concrete provider - that is what a
+# composition root is - so the chain ui -> modelpop.ai -> anthropic exists by
+# design and always will. Forbidding it would only push the wiring somewhere
+# less honest. A direct `import anthropic` anywhere below still fails, which is
+# the leak worth catching.
 [importlinter:contract:ai-sdks-are-contained]
 name = Nothing outside modelpop.ai imports an AI SDK
 type = forbidden
+allow_indirect_imports = True
 source_modules =
     modelpop.domain
     modelpop.application

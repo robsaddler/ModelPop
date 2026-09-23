@@ -17,11 +17,12 @@ from typing import Protocol, runtime_checkable
 
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.printer import PrinterProfile, SupportStyle, SupportType
-from modelpop.domain.readiness import MeshFacts
+from modelpop.domain.readiness import Finding, MeshFacts
 from modelpop.domain.result import Result
 from modelpop.domain.units import Length
 
 __all__ = [
+    "GcodeVerifier",
     "MeshIO",
     "MeshOps",
     "SliceJob",
@@ -185,5 +186,24 @@ class Slicer(Protocol):
 
         A slicer that refuses the model is an expected outcome, not an
         exception: it belongs in the ``Result``.
+        """
+        ...
+
+
+@runtime_checkable
+class GcodeVerifier(Protocol):
+    """Reading a toolpath back to see whether it will actually print.
+
+    A separate port from the slicer because it answers a different question.
+    The slicer says "here is the G-code"; this says "here is what will go wrong
+    when you run it", and only the toolpath can answer that - the mesh cannot.
+    """
+
+    def verify(self, gcode: Path, printer: PrinterProfile) -> tuple[Finding, ...]:
+        """Findings about the toolpath, or an empty tuple when all is well.
+
+        Must return empty rather than raising when the file cannot be read: a
+        slice that succeeded must not be reported as a failure because an extra
+        check could not run.
         """
         ...

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modelpop.application.ai_ports import AiSettings
 from modelpop.application.workspace import Workspace, WorkspaceState
 from modelpop.domain.printer import SupportType
 from modelpop.domain.readiness import Severity
@@ -73,11 +74,27 @@ class WorkspaceViewModel:
         """
         self._workspace = workspace
         self._runner = runner
+        self._ai_settings = AiSettings()
         self._state = WorkspaceState()
         self._busy = False
         self._state_listeners: list[Callable[[WorkspaceState], None]] = []
         self._busy_listeners: list[Callable[[bool], None]] = []
         self._notification_listeners: list[Callable[[Notification], None]] = []
+
+    @property
+    def ai_settings(self) -> AiSettings:
+        """The limits generation runs under."""
+        return self._ai_settings
+
+    @ai_settings.setter
+    def ai_settings(self, settings: AiSettings) -> None:
+        """Adopt limits the user changed in Settings.
+
+        These are held here rather than in the workspace because they are the
+        user's, not the application's: they change while the app is running, and
+        a limit the user raised must apply to the very next run.
+        """
+        self._ai_settings = settings
 
     # ------------------------------------------------------------- observing
 
@@ -128,7 +145,7 @@ class WorkspaceViewModel:
     def generate_part(self, request: str, table: DimensionTable | None = None) -> None:
         """Write a parametric part from a description."""
         self._run(
-            lambda: self._workspace.generate_part(request, table),
+            lambda: self._workspace.generate_part(request, table, self._ai_settings),
             done="Generated",
             failed="Could not generate the part",
             describe_success=self._describe_generation,
@@ -163,7 +180,7 @@ class WorkspaceViewModel:
     def edit_part(self, instruction: str, table: DimensionTable | None = None) -> None:
         """Change the open part by describing the change."""
         self._run(
-            lambda: self._workspace.edit_part(self._state, instruction, table),
+            lambda: self._workspace.edit_part(self._state, instruction, table, self._ai_settings),
             done="Edited",
             failed="Could not make that change",
             describe_success=self._describe_edit,

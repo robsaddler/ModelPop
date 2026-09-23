@@ -14,7 +14,7 @@ from modelpop.application.ports import SliceJob, SliceReport
 from modelpop.application.workspace import Workspace, WorkspaceState
 from modelpop.domain import Length, Mesh, Unit
 from modelpop.domain.printer import PrinterProfile, SupportType
-from modelpop.domain.readiness import MeshFacts
+from modelpop.domain.readiness import Finding, MeshFacts, Severity
 from modelpop.domain.result import Result, failure, success
 
 
@@ -126,6 +126,7 @@ class FakeSlicer:
     jobs: list[SliceJob] = field(default_factory=list)
     fail_with: str = ""
     fail_only_with_supports: bool = False
+    emits_gcode: bool = False
 
     def is_available(self) -> bool:
         return self.available
@@ -148,6 +149,7 @@ class FakeSlicer:
                 message="Success.",
                 predicted_seconds=600.0,
                 supports_generated=job.supports is not SupportType.NONE,
+                gcode_path=job.output_dir / "plate_1.gcode" if self.emits_gcode else None,
             )
         )
 
@@ -331,3 +333,98 @@ class TestUnits:
         state = workspace.adopt(in_inches)
         assert not state.readiness.is_printable
         assert any(f.rule == "fits-build-volume" for f in state.readiness.findings)
+
+
+@dataclass
+class FakeVerifier:
+    """A toolpath verifier that reports whatever the test asks for."""
+
+    findings: tuple[Finding, ...] = ()
+    calls: list[Path] = field(default_factory=list)
+
+    def verify(self, gcode: Path, printer: PrinterProfile) -> tuple[Finding, ...]:
+        self.calls.append(gcode)
+        return self.findings
+
+
+ISLAND = Finding(
+    "unsupported-island",
+    Severity.WARNING,
+    "Layer 40 at 8.00 mm starts about 300 mm2 of material in mid-air.",
+    "Turn supports on.",
+)
+
+
+class TestToolpathVerification:
+    """Slicing is the only moment the toolpath exists, so it is checked there."""
+
+    def workspace(self, verifier=None, slicer=None) -> Workspace:
+        return Workspace(
+            FakeIO(),
+            FakeOps(),
+            slicer or FakeSlicer(emits_gcode=True),
+            PrinterProfile.p2s(),
+            gcode_verifier=verifier,
+        )
+
+    def opened(self, ws: Workspace) -> WorkspaceState:
+        return ws.open(Path("part.stl")).unwrap()
+
+    def test_the_toolpath_is_read_back_after_a_slice(self, tmp_path):
+        verifier = FakeVerifier()
+        ws = self.workspace(verifier)
+        ws.slice(self.opened(ws), tmp_path)
+        assert verifier.calls, "the toolpath was never checked"
+
+    def test_a_toolpath_finding_reaches_the_readiness_report(self, tmp_path):
+        """Otherwise the check runs and the user never hears about it."""
+        ws = self.workspace(FakeVerifier(findings=(ISLAND,)))
+        state = ws.slice(self.opened(ws), tmp_path).unwrap()
+
+        assert state.readiness is not None
+        assert any(f.rule == "unsupported-island" for f in state.readiness.findings)
+
+    def test_a_clean_toolpath_leaves_the_report_alone(self, tmp_path):
+        ws = self.workspace(FakeVerifier())
+        before = self.opened(ws)
+        after = ws.slice(before, tmp_path).unwrap()
+        assert after.readiness == before.readiness
+
+    def test_slicing_twice_does_not_stack_the_same_complaint(self, tmp_path):
+        """A re-slice replaces the previous verdict; it does not append to it."""
+        ws = self.workspace(FakeVerifier(findings=(ISLAND,)))
+        once = ws.slice(self.opened(ws), tmp_path).unwrap()
+        twice = ws.slice(once, tmp_path).unwrap()
+
+        assert twice.readiness is not None
+        islands = [f for f in twice.readiness.findings if f.rule == "unsupported-island"]
+        assert len(islands) == 1
+
+    def test_mesh_findings_survive_a_slice(self, tmp_path):
+        """Verification adds to what is known; it must not erase it."""
+        ws = Workspace(
+            FakeIO(),
+            FakeOps(overhangs=0.4),  # enough to raise an overhang finding
+            FakeSlicer(emits_gcode=True),
+            PrinterProfile.p2s(),
+            gcode_verifier=FakeVerifier(findings=(ISLAND,)),
+        )
+        opened = self.opened(ws)
+        assert opened.readiness is not None and opened.readiness.findings
+        state = ws.slice(opened, tmp_path).unwrap()
+
+        assert state.readiness is not None
+        rules = {f.rule for f in state.readiness.findings}
+        assert "unsupported-island" in rules
+        assert len(rules) > 1, "the mesh findings were thrown away"
+
+    def test_a_slicer_that_produced_no_gcode_is_not_verified(self, tmp_path):
+        verifier = FakeVerifier()
+        ws = self.workspace(verifier, FakeSlicer(emits_gcode=False))
+        assert ws.slice(self.opened(ws), tmp_path).ok
+        assert verifier.calls == []
+
+    def test_without_a_verifier_slicing_still_works(self, tmp_path):
+        """An extra check that is absent must not turn a good slice into a failure."""
+        ws = self.workspace(verifier=None)
+        assert ws.slice(self.opened(ws), tmp_path).ok

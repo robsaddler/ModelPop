@@ -18,93 +18,12 @@ corrections than telling it one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
-
 from modelpop.application.cad_ports import DimensionTable, ScriptResult
+from modelpop.application.generation_ports import Gate, GateReport, GateResult
 from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.readiness import MeshFacts
 
 __all__ = ["Gate", "GateReport", "GateResult", "evaluate"]
-
-
-class Gate(Enum):
-    """The checks, in the order they are applied."""
-
-    EXECUTES = "executes"
-    HAS_VOLUME = "has-volume"
-    SINGLE_SOLID = "single-solid"
-    WATERTIGHT = "watertight"
-    DIMENSIONS = "dimensions"
-    FITS_PRINTER = "fits-printer"
-
-    @property
-    def description(self) -> str:
-        """What this gate is checking, for the UI and for logs."""
-        return {
-            Gate.EXECUTES: "the script runs",
-            Gate.HAS_VOLUME: "it produces a solid",
-            Gate.SINGLE_SOLID: "it produces one connected part",
-            Gate.WATERTIGHT: "the part is watertight",
-            Gate.DIMENSIONS: "the part measures what was asked for",
-            Gate.FITS_PRINTER: "the part fits the printer",
-        }[self]
-
-
-@dataclass(frozen=True, slots=True)
-class GateResult:
-    """Whether one gate passed, and what to say if it did not."""
-
-    gate: Gate
-    passed: bool
-    feedback: str = ""
-    """What to tell the model. Numeric and specific, never a vague complaint."""
-
-    def __str__(self) -> str:
-        mark = "pass" if self.passed else "FAIL"
-        return f"[{mark}] {self.gate.description}" + (
-            f" - {self.feedback}" if self.feedback else ""
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class GateReport:
-    """How a generated part fared."""
-
-    results: tuple[GateResult, ...] = ()
-
-    @property
-    def passed(self) -> bool:
-        """Whether every gate that ran was cleared."""
-        return bool(self.results) and all(r.passed for r in self.results)
-
-    @property
-    def first_failure(self) -> GateResult | None:
-        """The gate that stopped it, if any."""
-        return next((r for r in self.results if not r.passed), None)
-
-    @property
-    def feedback(self) -> str:
-        """The single correction to send back, or empty when all is well.
-
-        Deliberately one thing. A model given six simultaneous complaints
-        produces a worse next attempt than one given the most important.
-        """
-        failure = self.first_failure
-        return failure.feedback if failure else ""
-
-    @property
-    def score(self) -> float:
-        """Fraction of gates cleared, for ranking several attempts.
-
-        Best-of-N needs an ordering even when nothing passed outright.
-        """
-        if not self.results:
-            return 0.0
-        return sum(1 for r in self.results if r.passed) / len(self.results)
-
-    def __str__(self) -> str:
-        return "\n".join(str(r) for r in self.results)
 
 
 def evaluate(

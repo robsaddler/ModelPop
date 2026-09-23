@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modelpop.application.generation_ports import CadGenerationRun
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.printer import PrinterProfile, SupportType
 from modelpop.domain.readiness import ReadinessReport, assess
@@ -22,16 +23,27 @@ from modelpop.domain.result import Result, failure, success
 from modelpop.domain.units import Length
 
 if TYPE_CHECKING:
-    from modelpop.application.ai_ports import AiSettings, ChatProvider
-    from modelpop.application.cad_ports import CadKernel, DimensionTable
-    from modelpop.application.ports import MeshIO, MeshOps, Slicer, SliceReport
-    from modelpop.generation.cad_loop import CadGenerationRun
+    from modelpop.application.ai_ports import AiSettings
+    from modelpop.application.cad_ports import DimensionTable
+    from modelpop.application.generation_ports import PartGenerator
+    from modelpop.application.ports import (
+        GcodeVerifier,
+        MeshIO,
+        MeshOps,
+        Slicer,
+        SliceReport,
+    )
 
 __all__ = ["Workspace", "WorkspaceState"]
 
 # A print does not need more detail than this, and the viewport stops being
 # responsive well before it. See the triangle-budget readiness rule.
 DEFAULT_TRIANGLE_BUDGET = 300_000
+
+
+# The rules only a toolpath can raise. Named here so a re-slice can retire the
+# previous run's verdict instead of appending to it.
+_TOOLPATH_RULES = frozenset({"unsupported-island", "first-layer-adhesion"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +100,9 @@ class Workspace:
         mesh_ops: MeshOps,
         slicer: Slicer | None = None,
         printer: PrinterProfile | None = None,
-        cad_kernel: CadKernel | None = None,
-        ai: ChatProvider | None = None,
+        generator: PartGenerator | None = None,
         ai_settings: AiSettings | None = None,
+        gcode_verifier: GcodeVerifier | None = None,
     ) -> None:
         """Wire the workspace to its ports.
 
@@ -103,27 +115,22 @@ class Workspace:
             mesh_ops: geometry operations.
             slicer: turns a model into G-code.
             printer: the target printer; a P2S by default.
-            cad_kernel: runs generated CAD scripts.
-            ai: the model that writes those scripts.
-            ai_settings: attempt and spend limits.
+            generator: turns a description into a part.
+            ai_settings: default attempt and spend limits.
+            gcode_verifier: reads the toolpath back after slicing.
         """
         self._io = mesh_io
         self._ops = mesh_ops
         self._slicer = slicer
         self._printer = printer or PrinterProfile.p2s()
-        self._cad = cad_kernel
-        self._ai = ai
+        self._generator = generator
         self._ai_settings = ai_settings
+        self._verifier = gcode_verifier
 
     @property
     def can_generate(self) -> bool:
         """Whether both halves of the generation path are present."""
-        return (
-            self._cad is not None
-            and self._ai is not None
-            and self._ai.is_configured()
-            and self._cad.is_available()
-        )
+        return self._generator is not None and self._generator.is_ready()
 
     @property
     def printer(self) -> PrinterProfile:
@@ -213,35 +220,27 @@ class Workspace:
     # --------------------------------------------------------------- generate
 
     def generate_part(
-        self, request: str, table: DimensionTable | None = None
+        self,
+        request: str,
+        table: DimensionTable | None = None,
+        settings: AiSettings | None = None,
     ) -> Result[WorkspaceState]:
         """Write a parametric part from a description, and check it measures up.
 
         Returns the best attempt even when none fully passed: a part that is
         nearly right is something the user can edit, and nothing is not.
         """
-        if self._cad is None:
+        if self._generator is None:
             return failure(
-                "The CAD kernel is unavailable",
-                "build123d could not be loaded. Reinstall the application's dependencies.",
-            )
-        if self._ai is None:
-            return failure(
-                "No AI provider configured",
-                "Add an API key in Settings before generating a part.",
+                "Generating a part is unavailable",
+                "Add an API key in Settings, and check build123d is installed.",
             )
 
-        # imported here rather than at module scope to avoid an import cycle
-        from modelpop.generation.cad_loop import generate_part as run_loop
-
-        outcome = run_loop(
-            request=request,
-            provider=self._ai,
-            kernel=self._cad,
-            mesh_ops=self._ops,
-            table=table,
+        outcome = self._generator.generate(
+            request,
             printer=self._printer,
-            settings=self._ai_settings,
+            table=table,
+            settings=settings or self._ai_settings,
         )
         if not outcome.ok:
             return outcome  # type: ignore[return-value]
@@ -264,7 +263,11 @@ class Workspace:
         )
 
     def edit_part(
-        self, state: WorkspaceState, instruction: str, table: DimensionTable | None = None
+        self,
+        state: WorkspaceState,
+        instruction: str,
+        table: DimensionTable | None = None,
+        settings: AiSettings | None = None,
     ) -> Result[WorkspaceState]:
         """Change the open part by describing the change.
 
@@ -278,24 +281,18 @@ class Workspace:
                 "only a generated part has a script to change. Generate one, or use "
                 "the geometry tools on an imported model.",
             )
-        if self._cad is None or self._ai is None:
+        if self._generator is None:
             return failure(
-                "Editing needs the CAD kernel and an AI provider",
-                "Add an API key in Settings.",
+                "Editing by description is unavailable",
+                "Add an API key in Settings, and check build123d is installed.",
             )
 
-        # imported here rather than at module scope to avoid an import cycle
-        from modelpop.generation.cad_loop import edit_part as run_edit
-
-        outcome = run_edit(
-            script=run.best.script,
-            instruction=instruction,
-            provider=self._ai,
-            kernel=self._cad,
-            mesh_ops=self._ops,
-            table=table,
+        outcome = self._generator.edit(
+            run.best.script,
+            instruction,
             printer=self._printer,
-            settings=self._ai_settings,
+            table=table,
+            settings=settings or self._ai_settings,
         )
         if not outcome.ok:
             return outcome  # type: ignore[return-value]
@@ -386,11 +383,34 @@ class Workspace:
                         "the build plate. Scale it down slightly if you need them.",
                     ),
                 )
-                return success(replace(state, last_slice=report))
+                return success(self._with_slice(state, report))
 
         if not sliced.ok:
             return sliced  # type: ignore[return-value]
-        return success(replace(state, last_slice=sliced.unwrap()))
+        return success(self._with_slice(state, sliced.unwrap()))
+
+    def _with_slice(self, state: WorkspaceState, report: SliceReport) -> WorkspaceState:
+        """Record a slice, and read its toolpath back.
+
+        Verification happens here rather than in the slicer because it answers a
+        different question. The slicer says what it produced; this says what will
+        go wrong when it runs - and only the toolpath knows that.
+        """
+        if self._verifier is None or report.gcode_path is None:
+            return replace(state, last_slice=report)
+
+        findings = self._verifier.verify(report.gcode_path, self._printer)
+        base = state.readiness or ReadinessReport()
+
+        # Slicing twice must not stack two copies of the same complaint, so the
+        # previous run's toolpath findings are dropped before the new ones land.
+        kept = tuple(f for f in base.findings if f.rule not in _TOOLPATH_RULES)
+        merged = tuple(sorted((*kept, *findings), key=lambda f: f.severity, reverse=True))
+        return replace(
+            state,
+            last_slice=report,
+            readiness=replace(base, findings=merged),
+        )
 
     @staticmethod
     def _is_footprint_refusal(message: str) -> bool:

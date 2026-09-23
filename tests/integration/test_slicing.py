@@ -101,3 +101,88 @@ def test_cleans_up_after_itself(tmp_path, overhanging_part):
 
     after = set(Path(tempfile.gettempdir()).glob("modelpop-slice-*"))
     assert after <= before, "the slicer left a working directory behind"
+
+
+@slicer_required
+def test_the_toolpath_of_a_real_slice_can_be_read_back(tmp_path, overhanging_part):
+    """Proves the G-code dialect assumptions against the real slicer.
+
+    The synthetic fixtures in tests/application/test_gcode.py encode three
+    beliefs about Bambu's output: relative extrusion, CHANGE_LAYER markers, and
+    Z_HEIGHT comments. If any were wrong the parser would be quietly useless, so
+    one test reads a genuine file.
+    """
+    from modelpop.printing import verify_gcode
+
+    model = tmp_path / "part.stl"
+    TrimeshIO().save(overhanging_part, model)
+    report = (
+        BambuSlicer()
+        .slice(
+            SliceJob(
+                model_path=model,
+                printer=PrinterProfile.p2s(),
+                output_dir=tmp_path / "out",
+                supports=SupportType.TREE_AUTO,
+            )
+        )
+        .unwrap()
+    )
+
+    assert report.gcode_path is not None
+    verification = verify_gcode(report.gcode_path)
+
+    assert verification.was_read, "the parser could not read real Bambu output"
+    assert verification.layer_count > 10
+    assert verification.tallest_z > 1.0
+    assert verification.first_layer_area_mm2 > 0
+
+
+@slicer_required
+def test_a_floating_slab_is_caught_and_supports_fix_it(tmp_path):
+    """A table with no supports floats its top; with supports it does not.
+
+    This is the check that earns its place: it distinguishes a real printing
+    failure from a sound print, using only the toolpath.
+    """
+    from modelpop.printing import verify_gcode
+
+    legs = []
+    for dx, dy in ((-17, -17), (17, -17), (-17, 17), (17, 17)):
+        leg = trimesh.creation.box(extents=(6, 6, 25))
+        leg.apply_translation((dx, dy, 0))
+        legs.append(leg)
+    top = trimesh.creation.box(extents=(46, 46, 4))
+    top.apply_translation((0, 0, 14.5))
+    table = trimesh.util.concatenate([*legs, top])
+
+    mesh = (
+        Mesh(
+            np.asarray(table.vertices, dtype=np.float64),
+            np.asarray(table.faces, dtype=np.int32),
+        )
+        .dropped_to_bed()
+        .translated(128, 128, 0)
+    )
+
+    model = tmp_path / "table.stl"
+    TrimeshIO().save(mesh, model)
+
+    def slice_with(supports: SupportType, out: str):
+        report = BambuSlicer().slice(
+            SliceJob(
+                model_path=model,
+                printer=PrinterProfile.p2s(),
+                output_dir=tmp_path / out,
+                supports=supports,
+                auto_orient=False,  # orienting it flat would remove the overhang
+            )
+        )
+        assert report.ok, getattr(report, "error", "")
+        return verify_gcode(report.unwrap().gcode_path)
+
+    unsupported = slice_with(SupportType.NONE, "bare")
+    supported = slice_with(SupportType.TREE_AUTO, "propped")
+
+    assert unsupported.unsupported_layers >= 1, "the floating slab should be caught"
+    assert supported.unsupported_layers == 0, "supports should hold the slab up"

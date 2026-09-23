@@ -45,8 +45,8 @@ Phase 1  See a model       ── DONE  import, viewport, mesh ops, repair, read
 Phase 2  PRINT something   ── DONE  slicer, auto supports, telemetry   ◄── reached
 Phase 4  Generate a part   ── DONE  build123d codegen loop with gates
 Phase 6  Edit by prompt    ── DONE  for generated parts: the script is the document
+Phase 2b Verify the G-code ── DONE  unsupported islands and first-layer area, from the toolpath
 
-Phase 2b  Verify the G-code ─ unsupported islands, bridges, first-layer area
 Phase 2.5 Find something    ─ repository search, gallery, remix a base model
 Phase 3   Generate a mesh   ─ generation venv, TRELLIS.2, GPU lease
 Phase 5   Edit it properly  ─ sketches, features, feature tree, gizmos
@@ -94,7 +94,7 @@ comparison. Printer gateway over LAN mode, dry-run by default.
 **Done when:** a model goes from drag-and-drop to a physical print without leaving ModelPop.
 **Result:** reached. Supports are chosen by measuring overhangs rather than always-on, after
 discovering that enabling them enlarges the footprint enough to make a 152 mm cube stop fitting.
-G-code verification moved to Phase 2b; the rest shipped.
+G-code verification moved to Phase 2b, which has now shipped too.
 
 ### Phase 2.5 — Find something *(the cheapest useful app there is)*
 Repository search across Thingiverse, Printables, Thangs and MyMiniFactory behind the `ModelRepository` port,

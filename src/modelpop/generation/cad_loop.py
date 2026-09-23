@@ -34,70 +34,19 @@ from modelpop.application.ai_ports import (
     ModelRole,
 )
 from modelpop.application.cad_ports import DimensionTable
+from modelpop.application.generation_ports import Attempt, CadGenerationRun
 from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.result import Result, failure, success
-from modelpop.generation.cad_gates import GateReport, evaluate
+from modelpop.generation.cad_gates import evaluate
 from modelpop.generation.cad_prompt import SYSTEM_PROMPT, build_edit, build_request
 
 if TYPE_CHECKING:
-    from modelpop.application.cad_ports import CadKernel, ScriptResult
+    from modelpop.application.cad_ports import CadKernel
     from modelpop.application.ports import MeshOps
 
-__all__ = ["Attempt", "CadGenerationRun", "edit_part", "generate_part"]
+__all__ = ["Attempt", "CadGenerationRun", "CadLoopGenerator", "edit_part", "generate_part"]
 
 _CODE_FENCE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
-
-
-@dataclass(frozen=True, slots=True)
-class Attempt:
-    """One pass round the loop."""
-
-    number: int
-    script: str
-    report: GateReport | None = None
-    result: ScriptResult | None = None
-    error: str = ""
-    cost_usd: float = 0.0
-
-    @property
-    def succeeded(self) -> bool:
-        """Whether this attempt cleared every gate."""
-        return self.report is not None and self.report.passed
-
-    @property
-    def score(self) -> float:
-        """How close this attempt came, for picking the best of several."""
-        return self.report.score if self.report is not None else 0.0
-
-    def summarise(self) -> str:
-        """A line for the run log."""
-        if self.succeeded:
-            return f"Attempt {self.number}: passed"
-        problem = self.error or (self.report.feedback if self.report else "unknown")
-        return f"Attempt {self.number}: {problem[:120]}"
-
-
-@dataclass(frozen=True, slots=True)
-class CadGenerationRun:
-    """Everything that happened during one generation."""
-
-    attempts: tuple[Attempt, ...] = ()
-    best: Attempt | None = None
-    total_cost_usd: float = 0.0
-    stopped_because: str = ""
-
-    @property
-    def succeeded(self) -> bool:
-        """Whether a fully passing part was produced."""
-        return self.best is not None and self.best.succeeded
-
-    def log(self) -> str:
-        """The run, as a few readable lines."""
-        lines = [attempt.summarise() for attempt in self.attempts]
-        if self.stopped_because:
-            lines.append(self.stopped_because)
-        lines.append(f"Spent about ${self.total_cost_usd:.3f}")
-        return "\n".join(lines)
 
 
 def extract_script(reply: str) -> str:
@@ -324,3 +273,69 @@ def edit_part(
         messages=(Message.user(build_edit(script, instruction, table)),),
     )
     return _run_loop(conversation, provider, kernel, mesh_ops, table, printer, config)
+
+
+class CadLoopGenerator:
+    """Satisfies the ``PartGenerator`` port with the loop above.
+
+    Holds the model and the kernel so the application never sees either. The
+    kernel is optional so a machine with a broken OCCT install still starts:
+    generation reports itself unready rather than crashing at import.
+    """
+
+    def __init__(
+        self,
+        provider: ChatProvider,
+        kernel: CadKernel,
+        mesh_ops: MeshOps,
+        settings: AiSettings | None = None,
+    ) -> None:
+        """Wire the generator to the model, the kernel and the geometry ops."""
+        self._provider = provider
+        self._kernel = kernel
+        self._ops = mesh_ops
+        self._settings = settings
+
+    def is_ready(self) -> bool:
+        """Whether both halves of the path are present and configured."""
+        return self._provider.is_configured() and self._kernel.is_available()
+
+    def generate(
+        self,
+        request: str,
+        *,
+        printer: PrinterProfile,
+        table: DimensionTable | None = None,
+        settings: AiSettings | None = None,
+    ) -> Result[CadGenerationRun]:
+        """Produce a part from a description."""
+        return generate_part(
+            request=request,
+            provider=self._provider,
+            kernel=self._kernel,
+            mesh_ops=self._ops,
+            table=table,
+            printer=printer,
+            settings=settings or self._settings,
+        )
+
+    def edit(
+        self,
+        script: str,
+        instruction: str,
+        *,
+        printer: PrinterProfile,
+        table: DimensionTable | None = None,
+        settings: AiSettings | None = None,
+    ) -> Result[CadGenerationRun]:
+        """Change a part by describing the change."""
+        return edit_part(
+            script=script,
+            instruction=instruction,
+            provider=self._provider,
+            kernel=self._kernel,
+            mesh_ops=self._ops,
+            table=table,
+            printer=printer,
+            settings=settings or self._settings,
+        )

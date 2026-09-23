@@ -60,3 +60,54 @@ Phase 3 once the viewport is solid.
 
 Every red finding must link to the stage that can fix it and offer a one-click fix. A warning the user
 cannot act on is noise.
+
+---
+
+## What was actually built, and what real G-code taught us
+
+Shipped in Phase 2b as `modelpop.printing.gcode`, behind the `GcodeVerifier` port. Two of the checks
+above made the cut; the rest did not yet, and one was dropped on reflection.
+
+| Check | Status | Why |
+|---|---|---|
+| Unsupported islands | **Built** | The failure that actually happens. Proven against a real slice of a floating table top. |
+| First-layer contact area | **Built** | Cheap, and the "it fell over at layer 40" failure is preventable with a brim. |
+| Build volume | Not needed here | The slicer refuses the plate before any G-code exists, so this would never fire. |
+| Bridge spans, thin features, overhang exposure, air travel | Deferred | Each needs a material-dependent threshold we have no evidence for yet. A number invented today would be noise wearing a lab coat. |
+| Sequential-print collision | Still Bambu's | Unchanged from above, and unchanged by anything found since. |
+
+### Three things the real files decided
+
+The first parser was written from the generic G-code most tooling assumes, and it was **completely
+wrong** — a plain cube came back riddled with floating islands. Inspecting genuine Bambu output fixed
+three separate mistakes, each of which alone was enough to make the check useless:
+
+**Extrusion is relative.** The file emits `M83` once at the top. So an extruding move is one with a
+positive `E`, not one whose `E` exceeds the last. Read as absolute, *every* move looks like extrusion,
+every layer looks solid, and nothing is ever flagged — or everything is.
+
+**Layers are marked, not inferred.** `; CHANGE_LAYER` and `; Z_HEIGHT:` are authoritative. Splitting on
+Z changes instead — the obvious approach — manufactures a spurious layer for every travel z-hop, and a
+z-hop layer contains one stray point that is unsupported by construction.
+
+**Features are labelled.** `; FEATURE: Support` is the only way to tell support material from the model
+it is holding up.
+
+### How it is checked
+
+Each layer is rasterised onto a 1 mm occupancy grid. The accumulated material below is dilated by one
+cell — about a nozzle width — and anything in the new layer falling outside it is floating. Material
+**accumulates**: a layer is held up by everything printed so far, not just by the layer immediately
+below, which matters wherever a wall steps inwards and back out.
+
+Two constants encode judgement rather than physics: 6 mm² before a floating patch counts as a failure
+rather than a stray blob, and four findings before the panel stops listing them individually. Both are
+there to keep the check from crying wolf, which would be worse than not having it.
+
+### Proven against the real slicer
+
+Two integration tests do the work a synthetic fixture cannot. One reads back a genuine slice to check
+the dialect assumptions still hold. The other slices the same table twice, with and without supports,
+and requires the floating top to be caught the first time and clean the second — so the check is shown
+to **discriminate**, not merely to complain.
+

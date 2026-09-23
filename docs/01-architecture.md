@@ -81,7 +81,7 @@ tests/
 
 ---
 
-## The eleven ports
+## The thirteen ports
 
 Every external capability is one interface. Nothing else in the app knows the implementation exists.
 
@@ -95,6 +95,8 @@ Every external capability is one interface. Nothing else in the app knows the im
 | `ScaleEstimator` | pixels → millimetres | ArUco via OpenCV | known-object, metric depth |
 | `AiProvider` | chat, vision, tool-calling, streaming | Anthropic | OpenAI-compatible, Ollama |
 | `Slicer` | oriented 3MF → gcode + telemetry | Bambu Studio CLI **(proven)** | OrcaSlicer, PrusaSlicer |
+| `GcodeVerifier` | toolpath → what will go wrong when it runs | Bambu dialect reader **(proven)** | other slicer dialects |
+| `PartGenerator` | description → parametric part, and edits to one | build123d codegen loop **(proven)** | other kernels, other loops |
 | `PrinterGateway` | send job, query status | Bambu LAN mode (MQTT/FTPS) | — |
 | `PrinterProfile` | machine, toolhead/gantry geometry, AMS units and loaded filaments | P2S + AMS | other Bambu models |
 | `Viewport` | render, pick, gizmo, camera | PyVista / VTK (ADR-0007) | — |

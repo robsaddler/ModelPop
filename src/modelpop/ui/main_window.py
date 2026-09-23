@@ -211,6 +211,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self._secrets, self._ai_settings, self)
         if dialog.exec():
             self._ai_settings = dialog.settings()
+            self._view_model.ai_settings = self._ai_settings
             self.statusBar().showMessage("Settings saved.", 5000)
             self._refresh_buttons()
 
