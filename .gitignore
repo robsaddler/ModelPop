@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+htmlcov/
+.coverage
+coverage.xml
+
+# uv
+.uv/
+
+# Local data, models, caches, secrets
+models/
+cache/
+out/
+*.env
+.env.local
+secrets.json
+
+# Slicer scratch
+slice-out/
+result.json
+*.gcode
+*.gcode.3mf
+
+# Editors / OS
+.vs/
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
