@@ -10,10 +10,7 @@ import textwrap
 import pytest
 
 from modelpop.cad import Build123dKernel
-
-kernel_required = pytest.mark.skipif(
-    not Build123dKernel().is_available(), reason="build123d is not installed"
-)
+from tests.conftest import kernel_is_available, kernel_required  # noqa: F401
 
 
 def script(source: str) -> str:
@@ -238,7 +235,17 @@ class TestKernelCapabilities:
         assert produced.measurements.volume_mm3 == pytest.approx(expected, rel=1e-6)
 
 
+@pytest.mark.integration
 class TestAvailability:
+    """Marked integration because both of these start an interpreter.
+
+    That is the definition of the marker, and it is not a formality: between
+    them they cost seven seconds of a suite whose whole point is to be quick
+    enough to run after every change. The security checks below start nothing
+    and stay in the fast loop, which is where they belong - a tripwire that
+    only runs nightly is not a tripwire.
+    """
+
     def test_it_reports_whether_it_can_run(self, kernel):
         assert isinstance(kernel.is_available(), bool)
 

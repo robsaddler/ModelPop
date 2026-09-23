@@ -17,6 +17,7 @@ the slicer is missing, so a clean machine still passes.
 from __future__ import annotations
 
 import math
+from functools import cache
 
 import numpy as np
 import pytest
@@ -39,11 +40,24 @@ from modelpop.domain.cad_commands import (
 from modelpop.domain.printer import PrinterProfile, SupportType
 from modelpop.mesh import TrimeshIO
 from modelpop.printing import BambuSlicer, verify_gcode
+from tests.conftest import kernel_is_available  # noqa: F401  (used in the skipif below)
 
 pytestmark = pytest.mark.integration
 
+
+@cache
+def slicer_is_available() -> bool:
+    """Whether Bambu Studio is installed, asked once and lazily.
+
+    Same reason as the kernel check: a plain boolean condition here is
+    evaluated when this module is imported, so the *fast* suite pays for it
+    while collecting a file it then deselects.
+    """
+    return BambuSlicer().is_available()
+
+
 everything_required = pytest.mark.skipif(
-    not (Build123dKernel().is_available() and BambuSlicer().is_available()),
+    "not (kernel_is_available() and slicer_is_available())",
     reason="needs both the CAD kernel and Bambu Studio",
 )
 

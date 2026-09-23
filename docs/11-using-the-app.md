@@ -173,6 +173,25 @@ The note on the model then says it was *measured*, which means it can be checked
 A **seed** makes a run repeatable, which is the only way to iterate on a picture rather than gamble
 on it. It is not bit-identical — GPU arithmetic is not reproducible — but it gives the same shape.
 
+### Rescuing the detail
+
+A generated model carries its fine detail in *colour*, and a slicer cannot see colour. Left alone it
+prints as a smooth blob — which is what every consumer AI-3D tool does, and the single biggest
+reason their output disappoints.
+
+**Rescue the detail...** appears under the readiness panel for a model that has a texture. It reads
+the colour as height and pushes the surface in and out accordingly, so the detail becomes geometry
+the slicer can find. The mesh is made denser first, because a feature needs vertices either side of
+it to exist at all.
+
+The depth is yours to set, and the dialog says why: **colour is a guess at height**, not a
+measurement. A dark patch might be a groove or it might just be dark, and nothing can tell the
+difference. Try a number, look at it, try another. Reopening the file gets you back where you
+started.
+
+Relief shallower than one layer is quietly deepened — below that the mesh changes and the G-code
+comes out identical, which reads as the feature being broken.
+
 ---
 
 ## Finding something to start from
@@ -248,8 +267,6 @@ Save the project if you might want to change it. Export the mesh when you are do
   about being it.
 - No multi-photo reconstruction — one picture makes one model; photogrammetry from several needs
   COLMAP and OpenMVS, and is Phase 7's remaining half.
-- No detail rescue: the fine texture on a generated model still vanishes when it is sliced.
-  Genuinely unsolved, by anyone.
 - Text cannot be turned straight into a mesh. Describe a part instead, or make a picture first.
 - The viewport draws on integrated graphics on a laptop with a discrete card, and nothing in here
   can change that — only your graphics driver's control panel can. It is fast enough that it does

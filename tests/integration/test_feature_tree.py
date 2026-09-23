@@ -37,12 +37,9 @@ from modelpop.domain.cad_commands import (
     TextOnSurface,
 )
 from modelpop.domain.units import Length
+from tests.conftest import kernel_is_available, kernel_required  # noqa: F401
 
 pytestmark = pytest.mark.integration
-
-kernel_required = pytest.mark.skipif(
-    not Build123dKernel().is_available(), reason="build123d is not installed"
-)
 
 
 @pytest.fixture
