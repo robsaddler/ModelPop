@@ -7,7 +7,9 @@ the only reason that is possible, and an import-linter contract keeps it so.
 
 from modelpop.application.modelling import ModellingSession
 from modelpop.domain.cad_commands import EdgeSelector, Face, Fillet
+from modelpop.domain.result import failure, success
 from modelpop.domain.units import Length
+from modelpop.generation.command_loop import CommandEditRun
 from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
 
 from .test_modelling import FakeCompiler
@@ -193,3 +195,97 @@ class TestReadingTheModel:
         """Shown in a code panel, so it has to still look like source."""
         text = ModellingViewModel(ModellingSession(None)).script()
         assert text.startswith("#")
+
+
+class TestDescribingAChange:
+    """The AI edit path, with the model stubbed out entirely.
+
+    What matters here is not the model but the plumbing: a described change has
+    to land in the same tree, report honestly, and never leave the toolbar stuck.
+    """
+
+    def describing(self, outcome):
+        """A view-model whose described changes return a fixed outcome."""
+        session = ModellingSession(FakeCompiler())
+        session.apply(
+            __import__("modelpop.domain.cad_commands", fromlist=["CreateBox"]).CreateBox(10, 10, 10)
+        )
+        return ModellingViewModel(session, describe_change=lambda _: outcome)
+
+    def run(self, **kwargs):
+
+        return success(CommandEditRun(**kwargs))
+
+    def test_a_successful_change_is_reported_with_what_it_did(self):
+        seen: list[Outcome] = []
+        model = self.describing(self.run(applied=("Round all edges by 2 mm",)))
+        model.on_outcome(seen.append)
+        model.describe_a_change("round the corners")
+
+        assert "Round all edges" in seen[-1].message
+        assert not seen[-1].refused
+
+    def test_a_change_that_did_nothing_is_marked_as_refused(self):
+        """Saying "done" when nothing happened is the worst possible answer."""
+        seen: list[Outcome] = []
+        model = self.describing(self.run(discarded=("apply-chrome",)))
+        model.on_outcome(seen.append)
+        model.describe_a_change("make it chrome")
+
+        assert seen[-1].refused
+
+    def test_a_failure_from_the_model_is_reported_rather_than_raised(self):
+        seen: list[Outcome] = []
+        model = self.describing(failure("The service is down", "try later"))
+        model.on_outcome(seen.append)
+        model.describe_a_change("round it")
+
+        assert seen[-1].refused
+        assert "service is down" in seen[-1].message
+
+    def test_the_toolbar_is_released_afterwards(self):
+        """A stuck busy flag locks every button for the rest of the session."""
+        model = self.describing(self.run(applied=("something",)))
+        model.describe_a_change("round it")
+        assert not model.is_busy
+
+    def test_it_is_released_after_a_failure_too(self):
+        model = self.describing(failure("nope"))
+        model.describe_a_change("round it")
+        assert not model.is_busy
+
+    def test_an_empty_instruction_does_nothing_at_all(self):
+        asked: list[str] = []
+
+        def record(words: str):
+            asked.append(words)
+            return success(CommandEditRun())
+
+        session = ModellingSession(FakeCompiler())
+        model = ModellingViewModel(session, describe_change=record)
+        model.describe_a_change("   ")
+        assert asked == []
+
+    def test_without_a_provider_the_box_is_not_offered(self):
+        model = view()
+        model.add_box(10, 10, 10)
+        assert not model.can_describe_a_change
+
+    def test_with_a_provider_it_is_offered_once_there_is_a_shape(self):
+        model = self.describing(self.run())
+        assert model.can_describe_a_change
+
+    def test_it_is_not_offered_with_nothing_to_change(self):
+        session = ModellingSession(FakeCompiler())
+        model = ModellingViewModel(session, describe_change=lambda _: self.run())
+        assert not model.can_describe_a_change
+
+    def test_asking_without_a_provider_says_what_to_do(self):
+        seen: list[Outcome] = []
+        model = view()
+        model.add_box(10, 10, 10)
+        model.on_outcome(seen.append)
+        model.describe_a_change("round it")
+
+        assert seen[-1].refused
+        assert "Settings" in seen[-1].detail

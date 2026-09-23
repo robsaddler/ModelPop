@@ -27,11 +27,12 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
-from modelpop.ai import default_store
+from modelpop.ai import AnthropicProvider, default_store
 from modelpop.application.ai_ports import AiSettings
 from modelpop.application.modelling import ModellingSession
 from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, WorkspaceState
 from modelpop.domain.readiness import Severity
+from modelpop.generation import edit_by_description
 from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
 from modelpop.rendering.viewport import ViewportScene
@@ -97,10 +98,14 @@ class MainWindow(QMainWindow):
         # and the tree hands its geometry to the workspace after every rebuild,
         # so the viewport, the readiness panel and the slicer all work on it
         # without knowing it came from the CAD tools.
+        session = modelling or ModellingSession()
         self._modelling = ModellingViewModel(
-            modelling or ModellingSession(),
+            session,
             ThreadedRebuilder(self),
             self._view_model.adopt,
+            lambda words: edit_by_description(
+                session, words, AnthropicProvider(self._secrets), self._ai_settings
+            ),
         )
 
         self.setWindowTitle("ModelPop")

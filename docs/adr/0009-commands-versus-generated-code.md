@@ -90,10 +90,28 @@ history. The feature tree is inspectable and the compiled script is readable, so
 model actually" is answerable. Every edit is testable with no kernel, because a fake compiler
 satisfies the port. ADR-0001's invariant is now true of the code rather than only of the document.
 
-**Bad.** Two editing paths now exist: typed commands for a parametric model, and script rewriting
-for a part that came out of Pipeline A. They will need to converge, and the natural direction is for
-Pipeline A's output to be *imported* as a feature tree rather than kept as a script. That is not
-built and is not free.
+**Bad.** Two editing paths still exist: typed commands for a parametric model, and script
+rewriting for a part that came out of Pipeline A. They will need to converge, and the natural
+direction is for Pipeline A's output to be *imported* as a feature tree rather than kept as a
+script. That is not built and is not free.
+
+### Update, same day: the model now asks for commands
+
+`modelpop.generation.command_prompt` and `command_loop` implement decision 1's editing half. A
+language model is given the vocabulary - **generated from the command classes, not typed out**, so
+the prompt cannot drift from the code - and replies with JSON naming operations and parameters.
+Every entry goes through `command_from`, the same path a saved document takes, so the model cannot
+reach any construction the file format cannot. At no point is a string from a model executed.
+
+Three behaviours worth recording:
+
+- **A reply is capped at twelve operations.** "Make it look nicer" otherwise comes back as thirty
+  changes the user never asked for and has to undo one at a time.
+- **One refused command does not lose the rest.** A model asked to round the corners and hollow the
+  part may get the fillet right and the wall thickness wrong. Each is applied separately, each rolls
+  back on its own, and the run reports which stuck.
+- **An empty array is an answer, not a failure.** The prompt tells the model to return nothing
+  rather than approximate with an operation the user did not ask for.
 
 Every rebuild costs a subprocess, roughly a second or two on a tree of a handful of features. That
 is acceptable for a click and would not be for a drag; a gizmo will need a preview path that does

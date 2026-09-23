@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from modelpop.domain.commands import Command
     from modelpop.domain.mesh import Mesh
     from modelpop.domain.units import Length
+    from modelpop.generation.command_loop import CommandEditRun
 
 __all__ = ["ModellingViewModel", "Outcome"]
 
@@ -78,6 +79,7 @@ class ModellingViewModel:
         session: ModellingSession | None = None,
         runner: Runner = run_inline,
         on_geometry: Callable[[Mesh], None] | None = None,
+        describe_change: Callable[[str], Result[CommandEditRun]] | None = None,
     ) -> None:
         """Create the view-model.
 
@@ -88,10 +90,14 @@ class ModellingViewModel:
                 rebuild is a subprocess and takes a second or two.
             on_geometry: called with the new mesh after every successful
                 rebuild, so the viewport and the print pipeline see it.
+            describe_change: asks a language model to change the model. Passed
+                in rather than built here, because the presentation layer must
+                not know which provider is in use.
         """
         self._session = session or ModellingSession()
         self._runner = runner
         self._on_geometry = on_geometry
+        self._describe = describe_change
         self._busy = False
         self._state_listeners: list[Callable[[ModelState], None]] = []
         self._outcome_listeners: list[Callable[[Outcome], None]] = []
@@ -108,6 +114,11 @@ class ModellingViewModel:
     def is_busy(self) -> bool:
         """Whether a rebuild is running."""
         return self._busy
+
+    @property
+    def can_describe_a_change(self) -> bool:
+        """Whether the "tell it what to change" box should be offered."""
+        return self._describe is not None and self.can_operate
 
     @property
     def can_build(self) -> bool:
@@ -206,6 +217,57 @@ class ModellingViewModel:
         is undoable because it is an ordinary command, recorded with who asked.
         """
         self._apply(command, Origin.ASSISTANT)
+
+    def describe_a_change(self, instruction: str) -> None:
+        """Ask a language model to change the model, in the user's own words.
+
+        The model replies with the same typed commands the toolbar emits, so
+        the change joins the feature tree, is marked as the assistant's, and is
+        undoable. There is no separate AI history and no special case.
+        """
+        if not instruction.strip():
+            return
+        if self._describe is None:
+            self._announce(
+                Outcome(
+                    "Describing a change needs an AI provider",
+                    "Add an API key in Settings.",
+                    refused=True,
+                )
+            )
+            return
+
+        self._run_described(instruction)
+
+    def _run_described(self, instruction: str) -> None:
+        """Run one described change off the interface thread."""
+        if self._busy:
+            self._announce(Outcome("Still rebuilding; that was ignored.", refused=True))
+            return
+
+        self._set_busy(True)
+        describe = self._describe
+
+        def finish() -> None:
+            try:
+                assert describe is not None
+                outcome = describe(instruction)
+                if isinstance(outcome, Failure):
+                    self._announce(Outcome(outcome.reason, outcome.detail, refused=True))
+                    return
+
+                run = outcome.unwrap()
+                mesh = self.state.mesh
+                if run.changed_anything and mesh is not None and self._on_geometry is not None:
+                    self._on_geometry(mesh)
+                self._announce(
+                    Outcome(run.summary(), run.detail(), refused=not run.changed_anything)
+                )
+            finally:
+                self._set_busy(False)
+                self._announce_state()
+
+        self._runner(finish)
 
     # -------------------------------------------------------------- history
 

@@ -200,6 +200,7 @@ class CadPanel(QWidget):
 
         layout.addWidget(self._build_shapes())
         layout.addWidget(self._build_operations())
+        layout.addWidget(self._build_describe())
         layout.addWidget(self._build_tree(), stretch=1)
 
         self._status = QLabel()
@@ -310,6 +311,35 @@ class CadPanel(QWidget):
 
         return group
 
+    def _build_describe(self) -> QGroupBox:
+        """Say what to change, in words.
+
+        The model replies with the same operations the buttons above emit, so
+        what it does lands in the same tree and undoes the same way. It is not
+        a separate mode.
+        """
+        group = QGroupBox("Or just say what you want")
+        rows = QVBoxLayout(group)
+
+        row = QHBoxLayout()
+        self._instruction = QLineEdit()
+        self._instruction.setPlaceholderText("round the corners and hollow it out")
+        self._instruction.returnPressed.connect(self._describe_a_change)
+        row.addWidget(self._instruction, stretch=1)
+
+        self._describe_button = QPushButton("Change it")
+        self._describe_button.clicked.connect(self._describe_a_change)
+        row.addWidget(self._describe_button)
+        rows.addLayout(row)
+
+        note = QLabel(
+            "Whatever it changes appears in the list below and undoes like anything else."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(_HINT_STYLE)
+        rows.addWidget(note)
+        return group
+
     def _build_tree(self) -> QGroupBox:
         group = QGroupBox("How it was built")
         rows = QVBoxLayout(group)
@@ -345,6 +375,10 @@ class CadPanel(QWidget):
         index = self._opening.currentIndex()
         opening = None if index == 0 else _FACE_CHOICES[index - 1][1]
         self._view.hollow(self._wall.value(), opening)
+
+    def _describe_a_change(self) -> None:
+        self._view.describe_a_change(self._instruction.text())
+        self._instruction.clear()
 
     def _add_text(self) -> None:
         dialog = TextDialog(self)
@@ -388,6 +422,8 @@ class CadPanel(QWidget):
         ):
             button.setEnabled(operable)
 
+        self._describe_button.setEnabled(self._view.can_describe_a_change)
+        self._instruction.setEnabled(self._view.can_describe_a_change)
         self._undo_button.setEnabled(self._view.can_undo)
         self._redo_button.setEnabled(self._view.can_redo)
         self._undo_button.setToolTip(self._view.state.undo_label)

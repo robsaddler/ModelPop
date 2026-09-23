@@ -10,19 +10,25 @@ from modelpop.generation.cad_loop import (
     generate_part,
 )
 from modelpop.generation.cad_prompt import SYSTEM_PROMPT, build_edit, build_request
+from modelpop.generation.command_loop import CommandEditRun, edit_by_description
+from modelpop.generation.command_prompt import build_edit_request, read_commands
 
 __all__ = [
     "SYSTEM_PROMPT",
     "Attempt",
     "CadGenerationRun",
     "CadLoopGenerator",
+    "CommandEditRun",
     "Gate",
     "GateReport",
     "GateResult",
     "build_edit",
+    "build_edit_request",
     "build_request",
+    "edit_by_description",
     "edit_part",
     "evaluate",
     "extract_script",
     "generate_part",
+    "read_commands",
 ]
