@@ -40,17 +40,24 @@ parts, and which no consumer product does well.
 The riskiest assumptions get tested first, and a real printed object arrives before any AI is involved.
 
 ```
-Phase 0  Foundation        ── solution, CI, gates, domain model, command bus
-Phase 1  See a model       ── import STL/3MF, viewport, mesh ops, repair
-Phase 2  PRINT something   ── 3MF writer, slicer, G-code verification  ◄── FIRST REAL PRINT
-Phase 2.5 Find something   ── repository search, gallery, remix a base model
-Phase 3  Generate a mesh   ── generation venv, TRELLIS.2, GPU lease
-Phase 4  Generate a part   ── build123d codegen loop with gates
-Phase 5  Edit it properly  ── sketches, features, booleans, fillets, feature tree
-Phase 6  Edit by prompt    ── LLM emits validated commands onto the same bus
-Phase 7  Photos → replica  ── COLMAP/OpenMVS, ArUco scale
-Phase 8  Make it delightful ─ detail rescue, hollowing, multi-colour, printer comms
+Phase 0  Foundation        ── DONE  domain model, command bus, four gates, CI
+Phase 1  See a model       ── DONE  import, viewport, mesh ops, repair, readiness
+Phase 2  PRINT something   ── DONE  slicer, auto supports, telemetry   ◄── reached
+Phase 4  Generate a part   ── DONE  build123d codegen loop with gates
+Phase 6  Edit by prompt    ── DONE  for generated parts: the script is the document
+
+Phase 2b  Verify the G-code ─ unsupported islands, bridges, first-layer area
+Phase 2.5 Find something    ─ repository search, gallery, remix a base model
+Phase 3   Generate a mesh   ─ generation venv, TRELLIS.2, GPU lease
+Phase 5   Edit it properly  ─ sketches, features, feature tree, gizmos
+Phase 7   Photos → replica  ─ COLMAP/OpenMVS, ArUco scale
+Phase 8   Make it delightful─ detail rescue, hollowing, multi-colour, printer comms
 ```
+
+**Phases 4 and 6 arrived early, out of order.** Once the CAD kernel was in place, generating a
+part and editing one by description were the same loop, and both were reachable without the GPU
+work Phase 3 needs. The order in this plan was always about risk, not ceremony: those were the
+cheapest remaining paths to something genuinely useful, so they were taken first.
 
 **Phase 2 is the milestone that matters.** At the end of it you can drag a downloaded STL in, see a
 readiness report, and print it from ModelPop. That proves the entire back half of the app — file IO,
@@ -63,7 +70,7 @@ The slicer step, the single biggest external unknown, is **already proven** — 
 
 ## Phases in detail
 
-### Phase 0 — Foundation
+### Phase 0 — Foundation *(done)*
 Package layout per `01-architecture.md`. `uv`, `pyproject.toml`, `ruff`, `mypy --strict`.
 Domain model: `Document`, `Feature`, `Command`, `Mesh`, `Length`/`Unit` value types. The command bus
 with undo/redo. `import-linter` contracts that encode the layering. CI on Windows. ADRs 0001–0007.
@@ -71,7 +78,7 @@ with undo/redo. `import-linter` contracts that encode the layering. CI on Window
 **Done when:** an empty app starts, the fast test suite runs in under 10 s, and a layering violation
 fails the build.
 
-### Phase 1 — See a model
+### Phase 1 — See a model *(done)*
 STL (binary + ASCII), OBJ and 3MF import. The PySide6 shell and the PyVista/VTK viewport: orbit, pan,
 zoom, shaded and wireframe, build-plate and 256 mm print-volume overlay. `MeshOps` with
 watertight/manifold checks, repair, decimation, booleans. The hypothesis geometry suite.
@@ -79,12 +86,15 @@ watertight/manifold checks, repair, decimation, booleans. The hypothesis geometr
 **Done when:** you can open any MakerWorld STL, orbit it, and get an honest verdict on whether it is
 manifold.
 
-### Phase 2 — Print something *(the milestone)*
+### Phase 2 — Print something *(done — the milestone)*
 Bambu project 3MF writer. `Slicer` over the Bambu CLI. Auto-orientation. G-code verification
 (unsupported islands, bridges, first-layer area). The readiness report with traffic lights and
 one-click fixes. Fix filament binding, then add the **AMS versus multi-plate** time-and-waste
 comparison. Printer gateway over LAN mode, dry-run by default.
 **Done when:** a model goes from drag-and-drop to a physical print without leaving ModelPop.
+**Result:** reached. Supports are chosen by measuring overhangs rather than always-on, after
+discovering that enabling them enlarges the footprint enough to make a 152 mm cube stop fitting.
+G-code verification moved to Phase 2b; the rest shipped.
 
 ### Phase 2.5 — Find something *(the cheapest useful app there is)*
 Repository search across Thingiverse, Printables, Thangs and MyMiniFactory behind the `ModelRepository` port,
@@ -100,10 +110,13 @@ approving the reference image. Then straight into the Phase 2 print-prep pipelin
 virtual print simulator, now that the viewport is solid.
 **Done when:** a typed prompt produces a printed object.
 
-### Phase 4 — Generate a part
+### Phase 4 — Generate a part *(done)*
 The build123d codegen loop: helper library, dimension table, the six gates, orthographic contact
 sheets, numeric failure feedback, best-of-N. The AI settings panel and `SecretStore` land here.
 **Done when:** "a wall bracket for a 35 mm pipe with two M4 holes 40 mm apart" prints and fits.
+**Result:** the loop is built and covered by tests against a scripted model. It corrects a wrong
+dimension from numeric feedback, recovers from a syntax error, keeps the best attempt when nothing
+fully passes, and stops at a spend limit. Confirming it against a real model needs an API key.
 
 ### Phase 5 — Edit it properly
 The in-app CAD editor. Sketching with constraints, extrude/revolve/sweep/loft, booleans, fillets and
@@ -113,10 +126,13 @@ one of the most-wanted edits on printed models and a natural target for prompt-d
 This is the largest phase; split it into vertical slices, one operation at a time, each fully tested.
 **Done when:** you can model a simple mechanical part from scratch without leaving the app.
 
-### Phase 6 — Edit by prompt
+### Phase 6 — Edit by prompt *(done for generated parts)*
 Command schema exposed to the LLM as tools. Validation, clamping and rejection. Preview-then-apply.
 Every AI edit is a normal undoable command.
 **Done when:** "make the walls 3 mm and add a 2 mm fillet to the top edges" works and is undoable.
+**Result:** works for generated parts, where the script is the document and an edit is a rewrite put
+through the same gates. Editing an *imported* mesh by description still needs Phase 5's feature
+model, and the app says so rather than failing obscurely.
 
 ### Phase 7 — Photos → replica
 Frame selection, segmentation, COLMAP + OpenMVS, ArUco/ChArUco scale recovery with a printable
