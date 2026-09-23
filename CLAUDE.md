@@ -17,7 +17,8 @@ Read `docs/00-plan.md` first. Architecture: `docs/01-architecture.md`. Standards
 
 ## The stack (ADR-0007 — Python-first, single process)
 
-- **Python 3.12** for the app. A **separate** 3.12 venv holds the PyTorch/CUDA generation stack.
+- **Python 3.14** for the app (`requires-python >= 3.13`, and CI tests both). A **separate** venv
+  holds the PyTorch/CUDA generation stack, pinned lower because Torch has no 3.14 wheels.
 - **CAD: build123d + cadquery-ocp (OCCT 8.0.1)**, in-process. Fillets, chamfers, booleans, STEP/STL/3MF.
 - **Viewport: PyVista / VTK**, shell in **PySide6**.
 - **Mesh: trimesh, manifold3d, pymeshfix (AGPL), PyMeshLab (GPL), Open3D, bpy (GPL)**.

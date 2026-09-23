@@ -11,16 +11,25 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from modelpop.ai import AnthropicProvider
+from modelpop.ai import AnthropicProvider, default_store
+from modelpop.ai.secrets import LayeredSecretStore
+from modelpop.application.discovery_service import Discovery
 from modelpop.application.workspace import Workspace
 from modelpop.cad import Build123dKernel
 from modelpop.domain.printer import PrinterProfile
 from modelpop.generation import CadLoopGenerator
 from modelpop.mesh import TrimeshIO, TrimeshOps
 from modelpop.printing import BambuSlicer, ToolpathVerifier
+from modelpop.repositories import (
+    MYMINIFACTORY_KEY_NAME,
+    THINGIVERSE_KEY_NAME,
+    JsonAcceptanceStore,
+    MyMiniFactoryRepository,
+    ThingiverseRepository,
+)
 from modelpop.ui.main_window import MainWindow
 
-__all__ = ["main"]
+__all__ = ["build_discovery", "build_workspace", "main"]
 
 
 def build_workspace() -> Workspace:
@@ -42,12 +51,34 @@ def build_workspace() -> Workspace:
     )
 
 
+def build_discovery(secrets: LayeredSecretStore) -> Discovery:
+    """Wire the model repositories.
+
+    Every source is constructed whether or not it has a credential, so the
+    gallery can say which ones are missing a key rather than pretending they do
+    not exist. Which sources are here, and which are deliberately absent, is
+    ADR-0008.
+
+    Credentials are read here rather than inside the adapters: the composition
+    root is the one place allowed to know both where secrets live and which
+    concrete adapter needs them.
+    """
+    return Discovery(
+        [
+            MyMiniFactoryRepository(secrets.get(MYMINIFACTORY_KEY_NAME) or ""),
+            ThingiverseRepository(secrets.get(THINGIVERSE_KEY_NAME) or ""),
+        ],
+        JsonAcceptanceStore(),
+    )
+
+
 def main() -> int:
     """Start the application."""
     app = QApplication(sys.argv)
     app.setApplicationName("ModelPop")
 
-    window = MainWindow(build_workspace())
+    secrets = default_store()
+    window = MainWindow(build_workspace(), lambda: build_discovery(secrets))
     window.show()
     return app.exec()
 

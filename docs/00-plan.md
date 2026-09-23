@@ -46,8 +46,8 @@ Phase 2  PRINT something   ── DONE  slicer, auto supports, telemetry   ◄�
 Phase 4  Generate a part   ── DONE  build123d codegen loop with gates
 Phase 6  Edit by prompt    ── DONE  for generated parts: the script is the document
 Phase 2b Verify the G-code ── DONE  unsupported islands and first-layer area, from the toolpath
+Phase 2.5 Find something   ── DONE  repository search, ranked gallery, licence tick (ADR-0008)
 
-Phase 2.5 Find something    ─ repository search, gallery, remix a base model
 Phase 3   Generate a mesh   ─ generation venv, TRELLIS.2, GPU lease
 Phase 5   Edit it properly  ─ sketches, features, feature tree, gizmos
 Phase 7   Photos → replica  ─ COLMAP/OpenMVS, ArUco scale

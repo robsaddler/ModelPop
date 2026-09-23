@@ -28,6 +28,11 @@ from PySide6.QtWidgets import (
 
 from modelpop.ai import ANTHROPIC_KEY_NAME
 from modelpop.application.ai_ports import AiSettings, ModelChoice, ModelRole
+from modelpop.repositories import (
+    ACCESS_WARNING,
+    MYMINIFACTORY_KEY_NAME,
+    THINGIVERSE_KEY_NAME,
+)
 
 if TYPE_CHECKING:
     from modelpop.ai.secrets import LayeredSecretStore
@@ -68,6 +73,7 @@ class SettingsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_key_group())
+        layout.addWidget(self._build_sources_group())
         layout.addWidget(self._build_model_group())
         layout.addWidget(self._build_limits_group())
 
@@ -106,6 +112,63 @@ class SettingsDialog(QDialog):
         note.setWordWrap(True)
         note.setStyleSheet(_HINT_STYLE)
         form.addRow(note)
+        return group
+
+    def _build_sources_group(self) -> QGroupBox:
+        """Credentials for the model repositories.
+
+        Both are free and optional, and the gallery works with neither - a
+        downloaded file dropped on the window needs no account at all. The
+        Thingiverse warning is shown in full rather than summarised, because
+        granting an app full read and write on your account to run a search is
+        a surprising thing and burying it would be wrong.
+        """
+        group = QGroupBox("Where to search for models")
+        form = QFormLayout(group)
+
+        self._source_fields: dict[str, QLineEdit] = {}
+        for name, label, hint in (
+            (
+                MYMINIFACTORY_KEY_NAME,
+                "MyMiniFactory key",
+                "Free, from myminifactory.com/settings/developer. Searching needs only "
+                "this key; downloading in the app needs a connected account.",
+            ),
+            (
+                THINGIVERSE_KEY_NAME,
+                "Thingiverse token",
+                ACCESS_WARNING,
+            ),
+        ):
+            field = QLineEdit()
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+            source = self._secrets.source_of(name)
+            field.setPlaceholderText(
+                f"already set ({source})" if source != "not set" else "not set"
+            )
+
+            row = QHBoxLayout()
+            row.addWidget(field)
+            forget = QPushButton("Forget")
+            forget.clicked.connect(lambda _=False, n=name, f=field: self._forget(n, f))
+            row.addWidget(forget)
+            form.addRow(label, row)
+
+            note = QLabel(hint)
+            note.setWordWrap(True)
+            note.setStyleSheet(_HINT_STYLE)
+            form.addRow(note)
+            self._source_fields[name] = field
+
+        aside = QLabel(
+            "MakerWorld has no public API and its terms do not permit automated "
+            "access, so ModelPop never contacts it. Download the 3MF yourself and "
+            "drop it on the window - it carries the Bambu print profile, which is "
+            "better than anything a search would return."
+        )
+        aside.setWordWrap(True)
+        aside.setStyleSheet(_HINT_STYLE)
+        form.addRow(aside)
         return group
 
     def _build_model_group(self) -> QGroupBox:
@@ -166,6 +229,11 @@ class SettingsDialog(QDialog):
         self._key_field.clear()
         self._key_field.setPlaceholderText("no key set")
 
+    def _forget(self, name: str, field: QLineEdit) -> None:
+        self._secrets.delete(name)
+        field.clear()
+        field.setPlaceholderText("not set")
+
     def _save(self) -> None:
         typed = self._key_field.text().strip()
         if typed:
@@ -176,6 +244,18 @@ class SettingsDialog(QDialog):
                 # than to let the user believe it was.
                 self._key_field.setPlaceholderText("could not save the key")
                 return
+
+        for name, field in self._source_fields.items():
+            value = field.text().strip()
+            if not value:
+                continue
+            try:
+                self._secrets.set(name, value)
+            except RuntimeError:
+                field.clear()
+                field.setPlaceholderText("could not save it")
+                return
+
         self.accept()
 
     def settings(self) -> AiSettings:

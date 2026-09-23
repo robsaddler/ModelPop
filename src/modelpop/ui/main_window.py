@@ -7,6 +7,7 @@ Everything it calls is testable without a display.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QKeySequence
@@ -31,6 +32,13 @@ from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, W
 from modelpop.domain.readiness import Severity
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
 from modelpop.rendering.viewport import ViewportScene
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from modelpop.application.discovery_service import Discovery
+    from modelpop.application.repository_ports import Download
+
 from modelpop.ui.dialogs import (
     EditDialog,
     GenerateDialog,
@@ -53,7 +61,11 @@ _SEVERITY_COLOURS = {
 class MainWindow(QMainWindow):
     """Open a model, see it, and learn whether it will print."""
 
-    def __init__(self, workspace: Workspace) -> None:
+    def __init__(
+        self,
+        workspace: Workspace,
+        discovery: Callable[[], Discovery] | None = None,
+    ) -> None:
         """Build the window around a workspace."""
         super().__init__()
         # Work runs inline for now: the operations in Phase 1 are fast enough
@@ -62,6 +74,10 @@ class MainWindow(QMainWindow):
         self._view_model = WorkspaceViewModel(workspace)
         self._printer = workspace.printer
         self._secrets = default_store()
+        # A factory rather than an instance: the credentials can change in
+        # Settings while the window is open, and a source built at start-up
+        # would keep the key the user just replaced.
+        self._discovery = discovery
         self._ai_settings = AiSettings()
 
         self.setWindowTitle("ModelPop")
@@ -141,6 +157,11 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self._choose_file)
         file_menu.addAction(open_action)
 
+        find_action = QAction("&Find a model to start from...", self)
+        find_action.setShortcut("Ctrl+F")
+        find_action.triggered.connect(self._find_a_model)
+        file_menu.addAction(find_action)
+
         save_action = QAction("&Save as...", self)
         save_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         save_action.triggered.connect(self._choose_save_path)
@@ -206,6 +227,43 @@ class MainWindow(QMainWindow):
         )
         if path:
             self._view_model.save_as(Path(path))
+
+    def _find_a_model(self) -> None:
+        """Search the repositories for something to start from.
+
+        The downloaded file lands beside wherever the user is working, or in
+        their documents if nothing is open yet. Never in a library: ADR-0008
+        explains why there is not one.
+        """
+        from modelpop.ui.gallery import GalleryDialog
+
+        if self._discovery is None:
+            QMessageBox.information(
+                self,
+                "ModelPop",
+                "Searching for models is not wired up in this build.",
+            )
+            return
+
+        into = self._download_directory()
+        if into is None:
+            return
+
+        GalleryDialog(self._discovery(), into, self, self._opened_from_gallery).exec()
+
+    def _download_directory(self) -> Path | None:
+        """Where a model found in the gallery should land."""
+        open_file = self._view_model.state.source_path
+        if open_file is not None:
+            return open_file.parent
+
+        chosen = QFileDialog.getExistingDirectory(self, "Where should the model be saved?")
+        return Path(chosen) if chosen else None
+
+    def _opened_from_gallery(self, download: Download) -> None:
+        """Open a model that arrived from a repository, keeping its credit."""
+        self._view_model.open(download.path)
+        self.statusBar().showMessage(f"From {download.attribution}", 15000)
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._secrets, self._ai_settings, self)

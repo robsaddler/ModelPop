@@ -56,8 +56,14 @@ Draft clause, to be refined before it ships:
 
 ## Sources
 
-Ranked by how usable their access is. **All API details below need verifying in a Phase 7 spike** —
-treat this table as a research starting point, not established fact.
+> **Superseded.** The table below was the research starting point. Every entry was verified on
+> 23 September 2026 and two of the five turned out to be unusable. Read
+> `docs/research/spike-repositories.md` for what was measured, and **ADR-0008** for what was decided.
+> In short: MyMiniFactory and Thingiverse are built; MakerWorld is file-drop only because its terms
+> forbid automated access; Printables is an unofficial link-import; **Thangs is dropped** because
+> its geometric search no longer exists and every endpoint is closed.
+
+The original table, kept because the reasoning in it is still how the sources were ranked:
 
 | Source | Access | Notes |
 |---|---|---|
