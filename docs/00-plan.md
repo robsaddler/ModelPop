@@ -50,8 +50,8 @@ Phase 2.5 Find something   ── DONE  repository search, ranked gallery, licen
 Phase 3  Generate a mesh   ── DONE  a picture into a mesh on the local GPU (ADR-0010)
 Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-plate
 
-Phase 5  Edit it properly   ─ feature tree, commands and projects DONE; sketches and gizmos to come
-Phase 7  Photos → replica   ─ multi-photo reconstruction, scale from a reference in shot
+Phase 5  Edit it properly   ─ feature tree, profiles, patterns and projects DONE; gizmos to come
+Phase 7  Photos → replica   ─ scale from a reference in shot DONE; multi-photo reconstruction to come
 Phase 8  Make it delightful ─ detail rescue, printer comms (multi-colour splitting DONE)
 ```
 
@@ -119,13 +119,23 @@ sheets, numeric failure feedback, best-of-N. The AI settings panel and `SecretSt
 dimension from numeric feedback, recovers from a syntax error, keeps the best attempt when nothing
 fully passes, and stops at a spend limit. Confirming it against a real model needs an API key.
 
-### Phase 5 — Edit it properly
-The in-app CAD editor. Sketching with constraints, extrude/revolve/sweep/loft, booleans, fillets and
-chamfers, a feature tree with rebuild, STEP import/export, measurement, section views, gizmos.
-Include **text on a surface** (project a string onto a picked face, emboss or deboss by depth) — it is
-one of the most-wanted edits on printed models and a natural target for prompt-driven editing.
-This is the largest phase; split it into vertical slices, one operation at a time, each fully tested.
+### Phase 5 — Edit it properly *(the stated goal is met; the polish is not)*
+The in-app CAD editor. A feature tree that rebuilds from nothing on every change, driven entirely by
+typed commands on one bus, so a toolbar click, a model's request and a replay are the same path.
+
+**Built:** box, cylinder and sphere with placement and cut; **extrude** and **revolve** from a drawn
+outline; fillet, chamfer, hollow, move, rotate, scale-to-size; **text on a surface**, embossed or
+engraved; **mirror**; **repeat** in a row and **around** an axis; undo and redo across all of it;
+STEP and STL export; projects that save and reopen the tree.
+
 **Done when:** you can model a simple mechanical part from scratch without leaving the app.
+**Result: met.** A bracket is a plate, one drilled hole, a row of four and a fillet — four commands,
+still parametric, and changing the plate moves the holes. Every operation builds through real OCCT
+in an integration test that checks the volume rather than the script.
+
+**Still to come:** gizmos (drag handles in the viewport), sweep and loft, a sketcher with constraints,
+section views, and measurement in the viewport. The profile dialog is the useful nine tenths of a
+sketcher and is honest about being it.
 
 ### Phase 6 — Edit by prompt *(done for generated parts)*
 Command schema exposed to the LLM as tools. Validation, clamping and rejection. Preview-then-apply.
@@ -135,10 +145,20 @@ Every AI edit is a normal undoable command.
 through the same gates. Editing an *imported* mesh by description still needs Phase 5's feature
 model, and the app says so rather than failing obscurely.
 
-### Phase 7 — Photos → replica
-Frame selection, segmentation, COLMAP + OpenMVS, ArUco/ChArUco scale recovery with a printable
-calibration mat, plane removal, watertight close-up.
-**Done when:** photos of an object on the mat produce a replica that measures correctly with calipers.
+### Phase 7 — Photos → replica *(scale recovery done; reconstruction to come)*
+Frame selection, segmentation, COLMAP + OpenMVS, scale recovery, plane removal, watertight close-up.
+
+**Built: scale from a reference in shot.** Drag a line along a ruler, a bank card or a coin in the
+photograph, drag another across the subject, and the generated model comes out the size the real
+thing is. Deliberately two drags rather than automatic marker detection: finding a reference
+automatically fails silently and plausibly, and a model 30% out looks entirely reasonable until it
+meets a pair of calipers. Automatic detection can arrive later behind the same `PhotoScale` value.
+The app now distinguishes a **measured** size from a **chosen** one in the note on the model, and
+never lets one read like the other.
+
+**Still to come:** multi-photo reconstruction — the part that needs COLMAP and OpenMVS.
+**Done when:** photos of an object against a reference produce a replica that measures correctly
+with calipers.
 
 ### Phase 8 — Delight
 Texture→displacement detail rescue. Hollowing with drain holes. Multi-colour part splitting for the
