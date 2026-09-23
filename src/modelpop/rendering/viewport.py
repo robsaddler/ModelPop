@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 __all__ = [
     "BUILD_PLATE_COLOUR",
     "MODEL_COLOUR",
+    "PROBLEM_COLOUR",
     "PickResult",
     "ViewportScene",
     "to_polydata",
@@ -34,10 +35,15 @@ __all__ = [
 # A picked point in millimetres, and the index of the triangle that was hit.
 PickResult = tuple[tuple[float, ...], int]
 
-MODEL_COLOUR = "#7FB3D5"
-PROBLEM_COLOUR = "#E74C3C"
-BUILD_PLATE_COLOUR = "#2C3E50"
-ENVELOPE_COLOUR = "#566573"
+# Chosen to read clearly against a dark viewport, and to keep the problem
+# colour distinguishable from the model colour for the red-green colour blind:
+# the two differ in lightness as well as hue.
+MODEL_COLOUR = "#6FA8DC"
+PROBLEM_COLOUR = "#E8834A"
+BUILD_PLATE_COLOUR = "#3A4750"
+ENVELOPE_COLOUR = "#8899A6"
+BACKGROUND_TOP = "#2B3038"
+BACKGROUND_BOTTOM = "#171A1F"
 
 
 def to_polydata(mesh: Mesh) -> pv.PolyData:
@@ -80,6 +86,7 @@ class ViewportScene:
         self._model_actor: Any = None
         self._locator: Any = None
         self._polydata: pv.PolyData | None = None
+        self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._draw_build_volume()
 
     # ----------------------------------------------------------------- scene
@@ -96,7 +103,7 @@ class ViewportScene:
 
         plate = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=width, j_size=depth)
         self._plotter.add_mesh(
-            plate, color=BUILD_PLATE_COLOUR, opacity=0.35, name="build-plate", pickable=False
+            plate, color=BUILD_PLATE_COLOUR, opacity=0.9, name="build-plate", pickable=False
         )
 
         envelope = pv.Box(bounds=(-width / 2, width / 2, -depth / 2, depth / 2, 0, height))
@@ -105,7 +112,7 @@ class ViewportScene:
             color=ENVELOPE_COLOUR,
             style="wireframe",
             line_width=1,
-            opacity=0.4,
+            opacity=0.5,
             name="build-envelope",
             pickable=False,
         )

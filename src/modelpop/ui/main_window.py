@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -32,10 +32,13 @@ from modelpop.rendering.viewport import ViewportScene
 
 __all__ = ["MainWindow"]
 
+# Readable on a dark panel. The default reds and greens are not: a blocker
+# rendered in #C0392B on #2B3038 is almost invisible, which defeats the point
+# of having a readiness panel at all.
 _SEVERITY_COLOURS = {
-    Severity.INFO: "#27AE60",
-    Severity.WARNING: "#E67E22",
-    Severity.BLOCKER: "#C0392B",
+    Severity.INFO: "#6FCF97",
+    Severity.WARNING: "#F2C14E",
+    Severity.BLOCKER: "#F2765A",
 }
 
 
@@ -68,8 +71,18 @@ class MainWindow(QMainWindow):
 
     def _build_layout(self) -> None:
         side = QVBoxLayout()
-        side.addWidget(QLabel("<b>Print readiness</b>"))
+        heading = QLabel("Print readiness")
+        heading.setStyleSheet("font-size: 15px; font-weight: 600;")
+        side.addWidget(heading)
         side.addWidget(self._summary)
+
+        # Findings are two lines each - the problem and what to do about it -
+        # so they must wrap. Truncated advice is worse than none.
+        self._findings.setWordWrap(True)
+        self._findings.setSpacing(6)
+        self._findings.setStyleSheet(
+            "QListWidget { border: none; } QListWidget::item { padding: 6px 4px; }"
+        )
         side.addWidget(self._findings, stretch=1)
 
         self._repair_button = QPushButton("Repair")
@@ -87,7 +100,7 @@ class MainWindow(QMainWindow):
 
         panel = QWidget()
         panel.setLayout(side)
-        panel.setFixedWidth(340)
+        panel.setFixedWidth(380)
 
         layout = QHBoxLayout()
         layout.addWidget(self._viewport.interactor, stretch=1)
@@ -189,12 +202,9 @@ class MainWindow(QMainWindow):
                 f"color: {_SEVERITY_COLOURS[report.verdict]}; font-weight: bold;"
             )
             for finding in report.findings:
-                item = QListWidgetItem(f"{finding.message}\n    {finding.remedy}")
-                item.setForeground(
-                    Qt.GlobalColor.darkRed
-                    if finding.severity is Severity.BLOCKER
-                    else Qt.GlobalColor.darkYellow
-                )
+                item = QListWidgetItem(f"{finding.message}\n{finding.remedy}")
+                item.setForeground(QColor(_SEVERITY_COLOURS[finding.severity]))
+                item.setToolTip(f"{finding.rule}: {finding.message}")
                 self._findings.addItem(item)
 
         self._repair_button.setEnabled(self._view_model.can_repair)
