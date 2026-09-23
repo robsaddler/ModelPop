@@ -14,6 +14,11 @@ dependencies = [
     "numpy>=2.0",
     "trimesh>=4.0",
     "manifold3d>=3.0",
+    "networkx>=3.3",      # trimesh needs it for hole filling and graph ops
+    "scipy>=1.14",        # trimesh needs it for sampling and spatial queries
+    "rtree>=1.3",         # trimesh needs it for ray casting (wall thickness)
+    "fast-simplification>=0.1",  # quadric decimation backend for trimesh
+    "lxml>=5.3",          # trimesh needs it to write 3MF
     # viewport
     "pyvista>=0.49",
     "pyvistaqt>=0.13",
@@ -127,7 +132,18 @@ module = ["pyvista.*", "pyvistaqt.*", "trimesh.*", "manifold3d.*", "build123d.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# trimesh ships partial type information, so calls into it read as untyped.
+# Relaxing this one check beats scattering ignores through the adapter.
+module = ["modelpop.mesh.*"]
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 warn_return_any = false
+disallow_untyped_calls = false
+disallow_any_explicit = false
+# Tests build fixtures straight from trimesh and from literal JSON payloads,
+# both of which are loosely typed by nature. Relaxed here only, never in src.
+disable_error_code = ["attr-defined", "index"]

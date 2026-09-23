@@ -108,8 +108,7 @@ class Mesh:
             raise ValueError(f"faces must have shape (m, 3), got {faces.shape}")
         if len(faces) and (faces.min() < 0 or faces.max() >= len(vertices)):
             raise ValueError(
-                f"face indices must lie in [0, {len(vertices)}), "
-                f"got [{faces.min()}, {faces.max()}]"
+                f"face indices must lie in [0, {len(vertices)}), got [{faces.min()}, {faces.max()}]"
             )
         if not np.isfinite(vertices).all():
             raise ValueError("vertices contain NaN or infinity")

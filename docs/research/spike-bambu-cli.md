@@ -24,8 +24,14 @@ where `<PROF>` = `C:\Program Files\Bambu Studio\resources\profiles\BBL`.
 ### Critical gotchas found the hard way
 
 1. **The process is GUI-subsystem: it writes nothing to stdout/stderr.** All status comes back in
-   `result.json`, written to the **current working directory** (not `--outputdir`). Always run it in a
-   throwaway working directory and read `result.json` from there.
+   `result.json`, written to **`--outputdir`**, alongside the G-code. It falls back to the current
+   working directory only when no output directory is given.
+
+   > **Correction (2026-09-23, found while writing the adapter).** This originally said `result.json`
+   > always lands in the *current working directory*. That was wrong. The spike below ran with
+   > `cd "$OUT"` and `--outputdir "$OUT"`, so the two were the same folder and the distinction was
+   > invisible. The adapter reads `--outputdir` first and treats the working directory as a fallback.
+   > Worth remembering as a method note: a spike that conflates two variables cannot tell them apart.
 2. **It never sets a process exit code** that PowerShell can read (`$p.ExitCode` was empty every time).
    `result.json.return_code` is the only reliable status. `0` = success, `-3` = input files not found.
 3. **PowerShell `Start-Process -ArgumentList` silently mangles arguments containing spaces**, which

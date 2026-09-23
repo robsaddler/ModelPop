@@ -209,9 +209,7 @@ class TestBoundingBox:
 
     def test_a_tall_thin_model_fits_but_a_wide_one_may_not(self):
         tall = Mesh(
-            np.array(
-                [[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 250]], dtype=np.float64
-            ),
+            np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 250]], dtype=np.float64),
             np.array([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=np.int32),
         )
         envelope = (Length.mm(256), Length.mm(256), Length.mm(256))

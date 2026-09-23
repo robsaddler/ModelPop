@@ -39,12 +39,18 @@ def unit_cube(size: float = 1.0, origin: tuple[float, float, float] = (0.0, 0.0,
     # outward-facing winding
     faces = np.array(
         [
-            [0, 3, 2], [0, 2, 1],  # bottom
-            [4, 5, 6], [4, 6, 7],  # top
-            [0, 1, 5], [0, 5, 4],  # front
-            [1, 2, 6], [1, 6, 5],  # right
-            [2, 3, 7], [2, 7, 6],  # back
-            [3, 0, 4], [3, 4, 7],  # left
+            [0, 3, 2],
+            [0, 2, 1],  # bottom
+            [4, 5, 6],
+            [4, 6, 7],  # top
+            [0, 1, 5],
+            [0, 5, 4],  # front
+            [1, 2, 6],
+            [1, 6, 5],  # right
+            [2, 3, 7],
+            [2, 7, 6],  # back
+            [3, 0, 4],
+            [3, 4, 7],  # left
         ],
         dtype=np.int32,
     )
@@ -53,9 +59,7 @@ def unit_cube(size: float = 1.0, origin: tuple[float, float, float] = (0.0, 0.0,
 
 def tetrahedron(scale: float = 1.0) -> Mesh:
     """The smallest closed mesh there is: four vertices, four triangles."""
-    vertices = np.array(
-        [[0, 0, 0], [scale, 0, 0], [0, scale, 0], [0, 0, scale]], dtype=np.float64
-    )
+    vertices = np.array([[0, 0, 0], [scale, 0, 0], [0, scale, 0], [0, 0, scale]], dtype=np.float64)
     faces = np.array([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=np.int32)
     return Mesh(vertices, faces)
 

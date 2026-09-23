@@ -56,8 +56,9 @@ Tests that would fail without the change; `ruff` and `mypy --strict` clean; `imp
 
 - **Bambu Studio 02.08.02.61** at `C:\Program Files\Bambu Studio\bambu-studio.exe`. CLI slicing
   **works** — see `docs/research/spike-bambu-cli.md`.
-- The CLI writes **no stdout and no usable exit code**. Status is `result.json` in the *working*
-  directory. Pass arguments as a **list** to `subprocess`, never a joined string.
+- The CLI writes **no stdout and no usable exit code**. Status is `result.json`, written to
+  **`--outputdir`** (the working directory is only a fallback). Pass arguments as a **list** to
+  `subprocess`, never a joined string.
 - P2S build volume **256 × 256 × 256 mm**; default process `0.20mm Standard @BBL P2S`; support
   defaults `support_type: tree(auto)`, `support_threshold_angle: 30`, `enable_support: 0`.
 - **build123d fillets all 12 edges of a cube in 7 ms**; booleans exact (spike S7).
