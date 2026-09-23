@@ -25,16 +25,23 @@ Bambu retired its own first-generation AI tools in September 2026 for exactly th
 | **Scale it** | "About six inches tall" is a first-class operation. Units are a type, not a float. |
 | **Slice it** | Bambu Studio CLI, with supports chosen by measuring the geometry. Returns predicted time and warnings. |
 | **Generate a part** | Describe a mechanical part; a model writes build123d code, it runs sandboxed, and the solid is **measured against your dimensions** and corrected until it matches. |
-| **Change a part** | "Make the walls 3 mm." The script is rewritten and re-checked through the same gates. |
+| **Build it yourself** | CAD tools in the app: box, cylinder, sphere, fillet, chamfer, hollow, holes and pockets, move, rotate, scale to a size, text on a face. A feature tree, and undo. |
+| **Change it by saying so** | "Round the corners and hollow it out." The model replies with the **same typed commands the toolbar emits**, so an AI edit joins the tree and undoes like anything else. |
+| **Save the project** | The feature tree as readable JSON. No geometry - the shape is rebuilt, so a saved model picks up later improvements to how an operation is built. |
+| **Find something to start from** | Search MyMiniFactory and Thingiverse at once, ranked with reasons, with a licence badge on every card. |
+| **Check the toolpath** | Reads the sliced G-code back and finds material starting in mid-air, plus tip-over risk and by-object collisions. |
+| **Watch it print** | Scrub through the print, coloured by the slicer's own feature names, with the nozzle where it will be. |
 
 ### Not yet built
 
-Photos to a scaled replica, organic mesh generation (TRELLIS.2), repository search, interactive
-sketch-based CAD editing, G-code verification, the virtual printer. See `docs/00-plan.md`.
+Photos to a scaled replica, and the model that turns a picture into a mesh - the whole path around
+it is built and PyTorch is installed, but a backend still has to be chosen. Sketches and gizmos.
+Multi-colour splitting, and the AMS-versus-multi-plate comparison that depends on it.
+See `docs/00-plan.md`.
 
 ## Running it
 
-Requires **Python 3.13+** and, for slicing, **Bambu Studio**. Keep the checkout at a short path —
+Requires **Python 3.13 or newer** (3.14 is what it is developed on) and, for slicing, **Bambu Studio**. Keep the checkout at a short path —
 long Windows paths break `pip`.
 
 ```bash
@@ -48,6 +55,11 @@ credential store, never to a file in this repo. An exported `ANTHROPIC_API_KEY` 
 
 Everything except generation works without a key, and everything except slicing works without
 Bambu Studio.
+
+Searching for models needs a free key from MyMiniFactory or Thingiverse, also in **File →
+Settings**. Making a model from a picture needs its own Python environment with PyTorch - one
+command, see [`docs/10-mesh-generation.md`](docs/10-mesh-generation.md). Each of these is optional
+and each says so specifically when it is missing, rather than failing at the click.
 
 ## Developing
 
@@ -72,12 +84,16 @@ can be tested with no display.
 | [`docs/03-pipelines.md`](docs/03-pipelines.md) | The router, generation pipelines, print prep |
 | [`docs/04-engineering-standards.md`](docs/04-engineering-standards.md) | Definition of done, test strategy, CI |
 | [`docs/05-skills-plan.md`](docs/05-skills-plan.md) | Claude Code skills to install, and to write |
-| [`docs/adr/`](docs/adr/) | Decision records, including the two that were superseded |
+| [`docs/08-gcode-verification.md`](docs/08-gcode-verification.md) | Will it actually print - and what real Bambu G-code taught us |
+| [`docs/09-virtual-print.md`](docs/09-virtual-print.md) | The print preview, and where its clock comes from |
+| [`docs/10-mesh-generation.md`](docs/10-mesh-generation.md) | Turning a picture into a mesh, and why it needs its own Python |
+| [`docs/adr/`](docs/adr/) | Decision records, including the three that were superseded or refined |
 | [`docs/research/`](docs/research/) | Measured spike results, and what they cost to learn |
 
 ## Constraints
 
 1. Open source only — the sole running cost is AI API credits. GPL and AGPL are fine; this is not sold.
-2. CAD editing happens **inside** the app.
+2. CAD editing happens **inside** the app. Everything that changes a parametric model is a typed
+   command on one bus - whether a toolbar, a prompt or a replay asked for it (ADR-0001, ADR-0009).
 3. Bring your own AI key, configured in-app.
 4. SOLID, patterns, modularity and testing are the point.
