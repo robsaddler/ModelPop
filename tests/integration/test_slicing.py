@@ -186,3 +186,73 @@ def test_a_floating_slab_is_caught_and_supports_fix_it(tmp_path):
 
     assert unsupported.unsupported_layers >= 1, "the floating slab should be caught"
     assert supported.unsupported_layers == 0, "supports should hold the slab up"
+
+
+@slicer_required
+def test_a_real_slice_can_be_played_back(tmp_path, overhanging_part):
+    """The virtual printer, against a genuine file.
+
+    Proves the three things a synthetic fixture cannot: that the slicer's own
+    M73 ladder is present and usable, that its stated total matches what the
+    header says, and that the head climbs as the print runs.
+    """
+    from modelpop.printing import Clock, VirtualPrint
+
+    model = tmp_path / "part.stl"
+    TrimeshIO().save(overhanging_part, model)
+    report = (
+        BambuSlicer()
+        .slice(
+            SliceJob(
+                model_path=model,
+                printer=PrinterProfile.p2s(),
+                output_dir=tmp_path / "out",
+                supports=SupportType.TREE_AUTO,
+            )
+        )
+        .unwrap()
+    )
+
+    play = VirtualPrint.read(report.gcode_path)
+
+    assert play.can_play
+    assert play.clock is Clock.SLICER, "the file should carry its own M73 ladder"
+    assert play.total_seconds > 60
+
+    # the slicer's telemetry and the file's own header must agree
+    assert play.total_seconds == pytest.approx(report.predicted_seconds, rel=0.05)
+
+    heights = [play.at_fraction(f).z for f in (0.0, 0.5, 1.0)]
+    assert heights == sorted(heights)
+    assert heights[-1] > heights[0]
+
+    assert len(play.extruded_by(play.total_seconds)) > len(
+        play.extruded_by(play.total_seconds * 0.1)
+    )
+
+
+@slicer_required
+def test_the_filament_weight_is_computed_not_read(tmp_path, overhanging_part):
+    """Bambu's P2S profile sets filament_density = 0.
+
+    So the header's own weight line reads 0.00 for every print, and anything
+    that trusts it reports a weightless model. This is the AMS comparison's
+    input, so it has to be right.
+    """
+    from modelpop.printing import Toolpath
+
+    model = tmp_path / "part.stl"
+    TrimeshIO().save(overhanging_part, model)
+    report = (
+        BambuSlicer()
+        .slice(
+            SliceJob(model_path=model, printer=PrinterProfile.p2s(), output_dir=tmp_path / "out")
+        )
+        .unwrap()
+    )
+
+    toolpath = Toolpath.read(report.gcode_path)
+
+    assert toolpath.filament_mm > 0, "the header states a length even when weight is zero"
+    assert toolpath.grams() > 0.5, "a 20 mm cube with an arm weighs more than half a gram"
+    assert toolpath.flush.slots > 0, "the flush matrix should be present for the AMS comparison"
