@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING
 from modelpop.application.ai_ports import AiSettings, Conversation, Message, ModelRole
 from modelpop.domain.commands import Origin
 from modelpop.domain.result import Result, failure, success
-from modelpop.generation.command_prompt import SYSTEM_PROMPT, build_edit_request, read_commands
+from modelpop.generation.command_prompt import (
+    SYSTEM_PROMPT,
+    build_edit_request,
+    build_new_request,
+    read_commands,
+)
 
 if TYPE_CHECKING:
     from modelpop.application.ai_ports import ChatProvider
@@ -79,10 +84,14 @@ def edit_by_description(
     provider: ChatProvider,
     settings: AiSettings | None = None,
 ) -> Result[CommandEditRun]:
-    """Ask a model to change the open part, and apply what it asks for.
+    """Ask a model to build or change the open part, and apply what it asks for.
+
+    Builds when the session is empty and changes when it is not, which is the
+    same journey from the user's side: they say what they want in words, and
+    the result is an ordinary feature tree they can then edit with the toolbar.
 
     Args:
-        session: the parametric model to change.
+        session: the parametric model to build or change.
         instruction: what the user said, in their own words.
         provider: the model to ask.
         settings: which model, and what it may spend.
@@ -118,8 +127,18 @@ def edit_by_description(
 
 
 def _describe(session: ModellingSession, instruction: str) -> str:
-    """The user message: the current model, and the change asked for."""
+    """The user message: the current model, and what is wanted of it.
+
+    An empty session is a *new part*, not a change to nothing, and is asked for
+    in those terms. The reply comes back as the same typed commands either way,
+    which is the whole point: a part built from a description lands in the
+    feature tree and the toolbar can then work on it, rather than being a
+    script only a language model can edit.
+    """
     state = session.state
+    if state.is_empty:
+        return build_new_request(instruction)
+
     tree = "\n".join(f"{line.index + 1}. {line.label}" for line in state.features)
     size = ""
     if state.measurements is not None:

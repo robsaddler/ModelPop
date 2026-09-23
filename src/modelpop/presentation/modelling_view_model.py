@@ -125,8 +125,19 @@ class ModellingViewModel:
 
     @property
     def can_describe_a_change(self) -> bool:
-        """Whether the "tell it what to change" box should be offered."""
-        return self._describe is not None and self.can_operate
+        """Whether the "say what you want" box should be offered.
+
+        Offered on an empty model too. A description is how a part *starts* as
+        readily as how it changes, and the result is the same feature tree
+        either way - which is the point, because a part built from words can
+        then be refined with the toolbar.
+        """
+        return self._describe is not None and self.can_build and not self._busy
+
+    @property
+    def describing_would_start_a_new_part(self) -> bool:
+        """Whether a description would build a part rather than change one."""
+        return self.state.is_empty
 
     @property
     def can_build(self) -> bool:

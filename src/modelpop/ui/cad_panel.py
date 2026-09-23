@@ -402,11 +402,13 @@ class CadPanel(QWidget):
         return group
 
     def _build_describe(self) -> QGroupBox:
-        """Say what to change, in words.
+        """Say what you want, in words.
 
         The model replies with the same operations the buttons above emit, so
         what it does lands in the same tree and undoes the same way. It is not
-        a separate mode.
+        a separate mode - which is also why it can build a part from nothing:
+        a described part is an ordinary feature tree, and the toolbar can go on
+        refining it.
         """
         group = QGroupBox("Or just say what you want")
         rows = QVBoxLayout(group)
@@ -422,12 +424,10 @@ class CadPanel(QWidget):
         row.addWidget(self._describe_button)
         rows.addLayout(row)
 
-        note = QLabel(
-            "Whatever it changes appears in the list below and undoes like anything else."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet(_HINT_STYLE)
-        rows.addWidget(note)
+        self._describe_note = QLabel()
+        self._describe_note.setWordWrap(True)
+        self._describe_note.setStyleSheet(_HINT_STYLE)
+        rows.addWidget(self._describe_note)
         return group
 
     def _build_tree(self) -> QGroupBox:
@@ -483,6 +483,22 @@ class CadPanel(QWidget):
         directory = QFileDialog.getExistingDirectory(self, "Where should the two parts go?")
         if directory:
             self._view.split_colours(Path(directory))
+
+    def _say_what_a_description_would_do(self) -> None:
+        """Label the box for building or for changing, whichever it would do."""
+        starting = self._view.describing_would_start_a_new_part
+        self._describe_button.setText("Make it" if starting else "Change it")
+        self._instruction.setPlaceholderText(
+            "a phone stand 80 mm wide leaning back 20 degrees"
+            if starting
+            else "round the corners and hollow it out"
+        )
+        self._describe_note.setText(
+            "It builds the part out of the same operations as the buttons above, "
+            "so you can carry on with those afterwards."
+            if starting
+            else "Whatever it changes appears in the list below and undoes like anything else."
+        )
 
     def _describe_a_change(self) -> None:
         self._view.describe_a_change(self._instruction.text())
@@ -560,6 +576,7 @@ class CadPanel(QWidget):
 
         self._describe_button.setEnabled(self._view.can_describe_a_change)
         self._instruction.setEnabled(self._view.can_describe_a_change)
+        self._say_what_a_description_would_do()
         self._split_button.setEnabled(self._view.can_split_colours)
         self._undo_button.setEnabled(self._view.can_undo)
         self._redo_button.setEnabled(self._view.can_redo)

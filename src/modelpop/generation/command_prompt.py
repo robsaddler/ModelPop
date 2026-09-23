@@ -34,7 +34,12 @@ from modelpop.domain.cad_commands import (
 from modelpop.domain.commands import Command, Feature
 from modelpop.domain.result import Result, failure, success
 
-__all__ = ["SYSTEM_PROMPT", "build_edit_request", "read_commands"]
+__all__ = [
+    "SYSTEM_PROMPT",
+    "build_edit_request",
+    "build_new_request",
+    "read_commands",
+]
 
 # How many changes one instruction may ask for. A request like "make it look
 # nicer" can otherwise come back as thirty operations the user never asked for
@@ -140,6 +145,22 @@ Rules:
 
 Reply with the JSON array only. No prose, no explanation, no code fence.
 """
+
+
+def build_new_request(description: str) -> str:
+    """The user message for a part that does not exist yet.
+
+    Worth its own phrasing. Asked to *change* a model that is not there, a
+    model tends to answer with a single primitive and stop, because "change
+    nothing into a bracket" is a strange sentence. Asked to *make* one, it
+    builds the thing.
+    """
+    return (
+        f"There is no model yet. Build one from nothing: {description.strip()}\n\n"
+        "Start with an operation that adds a shape. Work in the order somebody "
+        "would model it: the main body first, then the features cut or added to "
+        "it, then anything that rounds or softens it."
+    )
 
 
 def build_edit_request(instruction: str, tree: str, measurements: str = "") -> str:

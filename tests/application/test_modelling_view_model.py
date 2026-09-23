@@ -275,10 +275,18 @@ class TestDescribingAChange:
         model = self.describing(self.run())
         assert model.can_describe_a_change
 
-    def test_it_is_not_offered_with_nothing_to_change(self):
+    def test_it_is_offered_with_nothing_there_yet(self):
+        """A description is how a part starts as readily as how it changes."""
         session = ModellingSession(FakeCompiler())
         model = ModellingViewModel(session, describe_change=lambda _: self.run())
-        assert not model.can_describe_a_change
+
+        assert model.can_describe_a_change
+        assert model.describing_would_start_a_new_part
+
+    def test_once_there_is_a_shape_a_description_changes_it_instead(self):
+        model = self.describing(self.run())
+        model.add_box(10, 10, 10)
+        assert not model.describing_would_start_a_new_part
 
     def test_asking_without_a_provider_says_what_to_do(self):
         seen: list[Outcome] = []

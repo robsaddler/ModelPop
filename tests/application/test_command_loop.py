@@ -23,6 +23,7 @@ from modelpop.generation.command_prompt import (
     MAX_COMMANDS,
     SYSTEM_PROMPT,
     build_edit_request,
+    build_new_request,
     read_commands,
 )
 
@@ -329,3 +330,106 @@ class TestWhenItCannotRun:
         edit_by_description(started(), "make it half as tall", model)
 
         assert "10.0 mm" in model.seen[0].messages[0].text
+
+
+class TestBuildingAPartFromWords:
+    """A description that starts a part rather than changing one.
+
+    The point of routing it here rather than through the code-generation loop:
+    what comes back is an ordinary feature tree, so the toolbar can carry on
+    refining it. A generated *script* can only be edited by asking a model
+    again, which is the divergence ADR-0009 recorded as the cost of that path.
+    """
+
+    def empty(self) -> ModellingSession:
+        return ModellingSession(FakeCompiler())
+
+    def test_an_empty_model_is_asked_to_build_rather_than_to_change(self):
+        """Asked to change nothing into a bracket, a model tends to stall."""
+        session = self.empty()
+        model = ScriptedModel(
+            [
+                commands(
+                    {"name": "create-box", "parameters": {"width": 80, "depth": 30, "height": 5}}
+                )
+            ]
+        )
+
+        edit_by_description(session, "a bracket 80 mm long", model)
+
+        asked = model.seen[0].messages[0].text
+        assert "Build one from nothing" in asked
+        assert "a bracket 80 mm long" in asked
+        assert "Change it so that" not in asked
+
+    def test_a_part_with_something_in_it_is_still_asked_to_change(self):
+        session = started()
+        model = ScriptedModel([commands({"name": "fillet", "parameters": {"radius": 3}})])
+
+        edit_by_description(session, "round the corners", model)
+
+        asked = model.seen[0].messages[0].text
+        assert "Change it so that" in asked
+        assert "Build one from nothing" not in asked
+
+    def test_the_result_is_a_feature_tree_the_toolbar_can_go_on_editing(self):
+        session = self.empty()
+        model = ScriptedModel(
+            [
+                commands(
+                    {"name": "create-box", "parameters": {"width": 80, "depth": 30, "height": 5}},
+                    {
+                        "name": "create-cylinder",
+                        "parameters": {"radius": 2, "height": 20, "x": -30, "cut": True},
+                    },
+                    {"name": "repeat", "parameters": {"times": 4, "dx": 20}},
+                )
+            ]
+        )
+
+        run = edit_by_description(session, "a bracket with four holes", model).unwrap()
+
+        assert run.changed_anything
+        assert len(session.state.features) == 3
+        assert session.state.can_undo, "and every step of it undoes"
+
+    def test_a_built_part_is_recorded_as_the_assistants(self):
+        session = self.empty()
+        model = ScriptedModel(
+            [
+                commands(
+                    {"name": "create-box", "parameters": {"width": 10, "depth": 10, "height": 10}}
+                )
+            ]
+        )
+
+        edit_by_description(session, "a cube", model)
+
+        assert session.state.features[0].origin is Origin.ASSISTANT
+
+    def test_a_step_the_kernel_refuses_does_not_lose_the_rest_of_the_part(self):
+        """A part half built is more useful than a part not built at all."""
+        session = ModellingSession(FakeCompiler(refuse_containing="hollow"))
+        model = ScriptedModel(
+            [
+                commands(
+                    {"name": "create-box", "parameters": {"width": 40, "depth": 40, "height": 40}},
+                    {"name": "hollow", "parameters": {"wall_thickness": 2}},
+                    {"name": "fillet", "parameters": {"radius": 3}},
+                )
+            ]
+        )
+
+        run = edit_by_description(session, "a hollow rounded box", model).unwrap()
+
+        assert len(run.applied) == 2, "the box and the fillet"
+        assert len(run.refused) == 1
+        assert session.state.measurements is not None, "and what is left still builds"
+
+    def test_asking_for_nothing_is_still_refused(self):
+        assert not edit_by_description(self.empty(), "   ", ScriptedModel()).ok
+
+    def test_the_new_part_request_tells_the_model_what_order_to_work_in(self):
+        message = build_new_request("a phone stand")
+        assert "adds a shape" in message
+        assert "a phone stand" in message
