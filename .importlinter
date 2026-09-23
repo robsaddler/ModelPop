@@ -1,0 +1,83 @@
+[importlinter]
+root_package = modelpop
+include_external_packages = True
+
+# ---------------------------------------------------------------------------
+# The layering from docs/01-architecture.md, made executable.
+# Dependencies point inwards only. These contracts are the reason the kernel
+# stays swappable; without them the layering decays within weeks.
+# ---------------------------------------------------------------------------
+
+[importlinter:contract:layers]
+name = Layers point inwards only
+type = layers
+layers =
+    modelpop.ui
+    modelpop.presentation
+    modelpop.rendering
+    modelpop.cad | modelpop.mesh | modelpop.printing | modelpop.ai | modelpop.generation | modelpop.vision | modelpop.repositories
+    modelpop.application
+    modelpop.domain
+
+# numpy is deliberately allowed in the domain. It is the lingua franca of
+# geometry in Python, and a mesh of a million triangles cannot be carried in
+# tuples. Excluding it would force a conversion at every boundary for no gain.
+# The spirit of this rule is "no kernel, no UI, no I/O" - not "no arrays".
+[importlinter:contract:domain-is-pure]
+name = The domain imports no kernel, no UI and no I/O
+type = forbidden
+source_modules = modelpop.domain
+forbidden_modules =
+    build123d
+    trimesh
+    manifold3d
+    pyvista
+    vtk
+    PySide6
+    httpx
+    anthropic
+    pydantic
+    keyring
+
+[importlinter:contract:application-knows-no-adapters]
+name = The application imports no adapter and no third-party geometry type
+type = forbidden
+source_modules = modelpop.application
+forbidden_modules =
+    modelpop.cad
+    modelpop.mesh
+    modelpop.printing
+    modelpop.ai
+    modelpop.generation
+    modelpop.vision
+    modelpop.repositories
+    modelpop.rendering
+    modelpop.ui
+    build123d
+    trimesh
+    manifold3d
+    pyvista
+    vtk
+
+[importlinter:contract:presentation-has-no-ui-framework]
+name = View-models import no UI framework
+type = forbidden
+source_modules = modelpop.presentation
+forbidden_modules =
+    PySide6
+    pyvistaqt
+
+[importlinter:contract:ai-sdks-are-contained]
+name = Nothing outside modelpop.ai imports an AI SDK
+type = forbidden
+source_modules =
+    modelpop.domain
+    modelpop.application
+    modelpop.cad
+    modelpop.mesh
+    modelpop.printing
+    modelpop.rendering
+    modelpop.presentation
+    modelpop.ui
+forbidden_modules =
+    anthropic

@@ -1,0 +1,1 @@
+"""Model repository search adapters."""

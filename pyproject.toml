@@ -1,0 +1,133 @@
+[project]
+name = "modelpop"
+version = "0.1.0"
+description = "Turn an idea or a photo into a printable, editable 3D model for a Bambu Lab P2S"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "Rob Saddler" }]
+
+dependencies = [
+    # CAD kernel (OCCT) - ADR-0007
+    "build123d>=0.13.0",
+    # mesh processing
+    "numpy>=2.0",
+    "trimesh>=4.0",
+    "manifold3d>=3.0",
+    # viewport
+    "pyvista>=0.49",
+    "pyvistaqt>=0.13",
+    "PySide6>=6.9",
+    # infrastructure
+    "pydantic>=2.9",
+    "keyring>=25.0",
+    "structlog>=24.0",
+]
+
+[project.optional-dependencies]
+repair = [
+    # AGPL / GPL - permitted because ModelPop is open source and not sold (ADR-0007)
+    "pymeshfix>=0.17",
+    "pymeshlab>=2025.7",
+]
+ai = [
+    "anthropic>=0.40",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+modelpop = "modelpop.ui.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.112",
+    "syrupy>=4.8",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/modelpop"]
+
+# ---------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "integration: touches a real external dependency (slicer, network, GPU). Excluded from the fast loop.",
+    "eval: scored AI eval; costs credits. Opt-in only.",
+]
+filterwarnings = ["error::DeprecationWarning:modelpop.*"]
+
+# ---------------------------------------------------------------- coverage
+
+[tool.coverage.run]
+source = ["src/modelpop"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@overload"]
+
+# ---------------------------------------------------------------- ruff
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "RET",       # return
+    "PTH",       # use pathlib
+    "RUF",       # ruff
+    "ANN",       # type annotations
+    "D",         # docstrings
+]
+ignore = [
+    "D104",      # missing docstring in public package - __init__ files are often re-exports
+    "D105",      # magic methods are documented by the operator they implement
+    "D107",      # __init__ docstring - the class docstring covers it
+    "ANN401",    # allow Any where it is genuinely the contract
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "ANN"]        # tests document themselves through their names
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# ---------------------------------------------------------------- mypy
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+# third-party packages without complete type information
+module = ["pyvista.*", "pyvistaqt.*", "trimesh.*", "manifold3d.*", "build123d.*", "vtk.*", "pymeshfix.*", "pymeshlab.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_return_any = false
