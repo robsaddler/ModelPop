@@ -26,7 +26,7 @@ from modelpop.domain.units import Length
 
 if TYPE_CHECKING:
     from modelpop.application.cad_ports import DimensionTable
-    from modelpop.application.mesh_generation_ports import Progress
+    from modelpop.application.mesh_generation_ports import GenerationOptions, Progress
     from modelpop.domain.mesh import Mesh
 
 __all__ = ["Notification", "WorkspaceViewModel"]
@@ -226,14 +226,19 @@ class WorkspaceViewModel:
         """The state of the mesh generator, for Settings."""
         return self._workspace.describe_mesh_generation()
 
-    def generate_from_image(self, image: Path, on_progress: Progress | None = None) -> None:
+    def generate_from_image(
+        self,
+        image: Path,
+        options: GenerationOptions | None = None,
+        on_progress: Progress | None = None,
+    ) -> None:
         """Turn a picture into a model.
 
         Routed through the runner like every other long operation, because this
-        one takes tens of seconds and a frozen window reads as a crash.
+        one takes minutes and a frozen window reads as a crash.
         """
         self._run(
-            lambda: self._workspace.generate_from_image(image, None, on_progress),
+            lambda: self._workspace.generate_from_image(image, options, on_progress),
             done=f"Made a model from {image.name}",
             failed="Could not make a model from that picture",
         )

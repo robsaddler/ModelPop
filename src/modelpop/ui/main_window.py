@@ -48,6 +48,7 @@ from modelpop.ui.cad_panel import CadPanel, ThreadedRebuilder
 from modelpop.ui.dialogs import (
     EditDialog,
     GenerateDialog,
+    GenerateFromImageDialog,
     RunLogDialog,
     SettingsDialog,
 )
@@ -351,8 +352,13 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
+        chosen = Path(path)
+        dialog = GenerateFromImageDialog(chosen.name, self)
+        if not dialog.exec():
+            return
+
         self.statusBar().showMessage("Making a model from that picture...")
-        self._view_model.generate_from_image(Path(path), self._on_generation_progress)
+        self._view_model.generate_from_image(chosen, dialog.options(), self._on_generation_progress)
 
     def _on_generation_progress(self, fraction: float, message: str) -> None:
         """Show how a generation is getting on.

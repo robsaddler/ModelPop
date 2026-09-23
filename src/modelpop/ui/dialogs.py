@@ -28,6 +28,11 @@ from PySide6.QtWidgets import (
 
 from modelpop.ai import ANTHROPIC_KEY_NAME
 from modelpop.application.ai_ports import AiSettings, ModelChoice, ModelRole
+from modelpop.application.mesh_generation_ports import (
+    Background,
+    Detail,
+    GenerationOptions,
+)
 from modelpop.repositories import (
     ACCESS_WARNING,
     MYMINIFACTORY_KEY_NAME,
@@ -467,3 +472,60 @@ class EditDialog(QDialog):
     def instruction(self) -> str:
         """The change the user described."""
         return self._instruction.toPlainText().strip()
+
+
+class GenerateFromImageDialog(QDialog):
+    """Choose how to turn a picture into a shape.
+
+    Two settings, both of which change the answer rather than decorating it:
+    how long to spend, and how to separate the subject from its background.
+    """
+
+    def __init__(self, image_name: str, parent: QWidget | None = None) -> None:
+        """Build the dialog for one picture."""
+        super().__init__(parent)
+        self.setWindowTitle("Make a model from a picture")
+        self.setMinimumWidth(460)
+
+        form = QFormLayout(self)
+        form.addRow(QLabel(f"<b>{image_name}</b>"))
+
+        self._detail = QComboBox()
+        for detail in Detail:
+            self._detail.addItem(f"{detail.value.title()} - {detail.describe}")
+        self._detail.setCurrentIndex(list(Detail).index(Detail.STANDARD))
+        form.addRow("Detail", self._detail)
+
+        self._background = QComboBox()
+        for background in Background:
+            self._background.addItem(f"{background.value.title()} - {background.describe}")
+        form.addRow("Background", self._background)
+
+        self._seed = QSpinBox()
+        self._seed.setRange(0, 2_000_000_000)
+        self._seed.setSpecialValueText("pick one")
+        form.addRow("Seed", self._seed)
+
+        note = QLabel(
+            "A stated seed makes a run repeatable, which is the only way to iterate "
+            "on a picture rather than gamble on it. The first run is slow - it loads "
+            "about ten gigabytes of weights."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(_HINT_STYLE)
+        form.addRow(note)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def options(self) -> GenerationOptions:
+        """What the user chose."""
+        return GenerationOptions(
+            detail=list(Detail)[self._detail.currentIndex()],
+            background=list(Background)[self._background.currentIndex()],
+            seed=int(self._seed.value()),
+        )
