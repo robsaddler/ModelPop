@@ -33,17 +33,27 @@ from modelpop.application.mesh_generation_ports import (
     Detail,
     GenerationOptions,
 )
+from modelpop.domain.photo_scale import PhotoScale
 from modelpop.domain.units import Length
 from modelpop.repositories import (
     ACCESS_WARNING,
     MYMINIFACTORY_KEY_NAME,
     THINGIVERSE_KEY_NAME,
 )
+from modelpop.ui.measure_dialog import MeasureDialog
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from modelpop.ai.secrets import LayeredSecretStore
 
-__all__ = ["EditDialog", "GenerateDialog", "RunLogDialog", "SettingsDialog"]
+__all__ = [
+    "EditDialog",
+    "GenerateDialog",
+    "GenerateFromImageDialog",
+    "RunLogDialog",
+    "SettingsDialog",
+]
 
 _MODELS = [
     "claude-opus-5",
@@ -482,11 +492,25 @@ class GenerateFromImageDialog(QDialog):
     how long to spend, and how to separate the subject from its background.
     """
 
-    def __init__(self, image_name: str, parent: QWidget | None = None) -> None:
-        """Build the dialog for one picture."""
+    def __init__(
+        self,
+        image_name: str,
+        parent: QWidget | None = None,
+        image: Path | None = None,
+    ) -> None:
+        """Build the dialog for one picture.
+
+        Args:
+            image_name: what to call it on screen.
+            parent: the owning widget.
+            image: the file itself, when there is one to measure on. Optional
+                so a caller with only a name still gets the rest of the dialog.
+        """
         super().__init__(parent)
         self.setWindowTitle("Make a model from a picture")
         self.setMinimumWidth(460)
+        self._image = image
+        self._measured: PhotoScale | None = None
 
         form = QFormLayout(self)
         form.addRow(QLabel(f"<b>{image_name}</b>"))
@@ -507,6 +531,28 @@ class GenerateFromImageDialog(QDialog):
         self._seed.setSpecialValueText("pick one")
         form.addRow("Seed", self._seed)
 
+        size_row = QHBoxLayout()
+        self._size = QDoubleSpinBox()
+        self._size.setRange(1.0, 1000.0)
+        self._size.setValue(100.0)
+        self._size.setSuffix(" mm")
+        size_row.addWidget(self._size)
+
+        self._measure_button = QPushButton("Measure it from the photo...")
+        self._measure_button.setToolTip(
+            "Draw a line along a ruler in the shot and one across the subject, "
+            "and the model comes out the size the real thing is"
+        )
+        self._measure_button.setEnabled(image is not None)
+        self._measure_button.clicked.connect(self._measure)
+        size_row.addWidget(self._measure_button)
+        form.addRow("Size", size_row)
+
+        self._provenance = QLabel()
+        self._provenance.setWordWrap(True)
+        self._provenance.setStyleSheet(_HINT_STYLE)
+        form.addRow(self._provenance)
+
         note = QLabel(
             "A stated seed makes a run repeatable, which is the only way to iterate "
             "on a picture rather than gamble on it. The first run is slow - it loads "
@@ -523,13 +569,57 @@ class GenerateFromImageDialog(QDialog):
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
 
+        self._say_where_the_size_came_from()
+
     def options(self) -> GenerationOptions:
         """What the user chose."""
         return GenerationOptions(
             detail=list(Detail)[self._detail.currentIndex()],
             background=list(Background)[self._background.currentIndex()],
             seed=int(self._seed.value()),
+            size=Length.mm(self._size.value()),
+            size_was_measured=self._measured is not None,
         )
+
+    @property
+    def measured(self) -> PhotoScale | None:
+        """What was measured off the photograph, if anything was.
+
+        The distinction the whole feature turns on: a size that came from here
+        can be checked with calipers, and one that did not cannot.
+        """
+        return self._measured
+
+    def _measure(self) -> None:
+        """Measure the subject against something of known size in the shot."""
+        if self._image is None:
+            return
+        dialog = MeasureDialog(self._image, self)
+        if not dialog.loaded:
+            self._provenance.setText("That picture could not be opened to measure on.")
+            return
+        if not dialog.exec():
+            return
+
+        self._measured = dialog.scale
+        self._size.setValue(min(self._measured.subject.millimetres, self._size.maximum()))
+        self._say_where_the_size_came_from()
+
+    def _say_where_the_size_came_from(self) -> None:
+        """Never let a chosen size pass for a measured one."""
+        if self._measured is not None:
+            self._provenance.setText(f"Measured from the photo. {self._measured.describe()}")
+        elif self._image is None:
+            self._provenance.setText(
+                "A picture has no scale, so this size is chosen, not measured. "
+                "Use Resize afterwards if you know the real one."
+            )
+        else:
+            self._provenance.setText(
+                "A picture has no scale, so this size is chosen, not measured. "
+                "If there is a ruler, a coin or a bank card in the shot, measure "
+                "against it instead."
+            )
 
 
 class ResizeDialog(QDialog):

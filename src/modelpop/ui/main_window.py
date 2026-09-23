@@ -357,7 +357,7 @@ class MainWindow(QMainWindow):
             return
 
         chosen = Path(path)
-        dialog = GenerateFromImageDialog(chosen.name, self)
+        dialog = GenerateFromImageDialog(chosen.name, self, image=chosen)
         if not dialog.exec():
             return
 

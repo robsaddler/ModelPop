@@ -121,8 +121,17 @@ class GenerationOptions:
     A picture has no scale: the generator works in a normalised box and hands
     back a model one unit across. Read as millimetres that is a grain of sand,
     which is not a useful default for anything. So the result is scaled to a
-    stated size and the user is told the size was chosen, not measured - which
-    is exactly what a ruler in the photo is for.
+    stated size, and ``size_was_measured`` says whether that size means
+    anything.
+    """
+
+    size_was_measured: bool = False
+    """Whether the size came off a ruler in the shot rather than being picked.
+
+    Carried all the way to the note on the finished model, because the two are
+    not the same claim and the difference is the whole point of putting a ruler
+    in the photograph. A measured model can be checked with calipers; a chosen
+    one cannot, and the app must never let one pass for the other.
     """
 
     timeout_seconds: float = 600.0

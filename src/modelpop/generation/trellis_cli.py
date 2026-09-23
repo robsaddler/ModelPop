@@ -243,7 +243,9 @@ class TrellisCliGenerator:
                     "It wrote a file ModelPop could not open.",
                 )
 
-            mesh, scale_note = _given_a_scale(loaded.unwrap(), settings.size)
+            mesh, scale_note = _given_a_scale(
+                loaded.unwrap(), settings.size, measured=settings.size_was_measured
+            )
             return success(
                 GeneratedMesh(
                     mesh=mesh,
@@ -357,14 +359,18 @@ class TrellisCliGenerator:
 _UNSCALED_MM = 10.0
 
 
-def _given_a_scale(mesh: Mesh, size: Length) -> tuple[Mesh, tuple[str, ...]]:
-    """Resize a generated model to something printable, and say that we did.
+def _given_a_scale(
+    mesh: Mesh, size: Length, *, measured: bool = False
+) -> tuple[Mesh, tuple[str, ...]]:
+    """Resize a generated model to something printable, and say where the size came from.
 
     The generator works in a normalised box and returns a model one unit
-    across. Read as millimetres that is a grain of sand. There is no way to
-    recover the real size from a picture, so one is chosen and the user is told
-    it was chosen - which is what they are reaching for when they put a ruler
-    in the shot.
+    across. Read as millimetres that is a grain of sand, so it is scaled.
+
+    The note is the part that matters. A size measured against a ruler in the
+    shot can be checked with calipers; a size the app picked cannot, and a
+    model that says nothing looks exactly like one that was measured. So the
+    two say different things, and neither is silent.
 
     A model that already has a plausible size is left alone, so a backend that
     one day returns real units is not scaled twice.
@@ -375,13 +381,14 @@ def _given_a_scale(mesh: Mesh, size: Length) -> tuple[Mesh, tuple[str, ...]]:
     if largest > _UNSCALED_MM:
         return mesh, ()
 
-    return (
-        mesh.scaled_to_fit(size),
-        (
-            f"A picture has no scale, so this was made {size.format()} at its "
-            "largest. Use Resize to set the real size.",
-        ),
+    note = (
+        f"Scaled to {size.format()} at its largest, measured against a reference in the photograph."
+        if measured
+        else f"A picture has no scale, so this was made {size.format()} at its "
+        "largest. Use Resize to set the real size, or measure against a ruler "
+        "in the shot next time."
     )
+    return mesh.scaled_to_fit(size), (note,)
 
 
 def _report(line: str, on_progress: Progress) -> None:

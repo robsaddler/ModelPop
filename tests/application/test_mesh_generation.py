@@ -585,3 +585,61 @@ class TestGivingTheResultAScale:
 
     def test_the_default_size_is_something_a_printer_could_make(self):
         assert 10 <= GenerationOptions().size.millimetres <= 256
+
+
+class TestWhereTheSizeCameFrom:
+    """A measured size and a chosen one are not the same claim.
+
+    The distinction Rob was reaching for when he asked for a ruler in the shot.
+    A model scaled to 100 mm because the app picked 100 mm cannot be checked
+    against calipers; one scaled to 240 mm because a ruler in the photograph
+    said so can. Neither may be silent, and neither may sound like the other.
+    """
+
+    def cube(self, size: float) -> Mesh:
+        vertices = np.array(
+            [
+                [0, 0, 0],
+                [size, 0, 0],
+                [size, size, 0],
+                [0, size, 0],
+                [0, 0, size],
+                [size, 0, size],
+                [size, size, size],
+                [0, size, size],
+            ],
+            dtype=np.float64,
+        )
+        faces = np.array([[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]], dtype=np.int32)
+        return Mesh(vertices, faces)
+
+    def test_a_measured_size_is_reported_as_measured(self):
+        _, notes = _given_a_scale(self.cube(1.0), Length.mm(240), measured=True)
+
+        assert "measured against a reference in the photograph" in notes[0]
+        assert "no scale" not in notes[0], "that is the other claim entirely"
+
+    def test_a_chosen_size_still_admits_it_was_chosen(self):
+        _, notes = _given_a_scale(self.cube(1.0), Length.mm(100), measured=False)
+
+        assert "no scale" in notes[0]
+        assert "measured against" not in notes[0]
+
+    def test_a_chosen_size_says_what_to_do_about_it(self):
+        _, notes = _given_a_scale(self.cube(1.0), Length.mm(100))
+        assert "ruler" in notes[0], "the user should know the option exists"
+
+    def test_both_are_scaled_the_same_way(self):
+        """The note is the only difference; the geometry is not special-cased."""
+        chosen, _ = _given_a_scale(self.cube(1.0), Length.mm(240))
+        measured, _ = _given_a_scale(self.cube(1.0), Length.mm(240), measured=True)
+
+        assert chosen.bounds.largest_dimension.millimetres == pytest.approx(
+            measured.bounds.largest_dimension.millimetres
+        )
+
+    def test_the_default_is_the_honest_one(self):
+        """A caller that forgets must not accidentally claim a measurement."""
+        assert not GenerationOptions().size_was_measured
+        _, notes = _given_a_scale(self.cube(1.0), Length.mm(100))
+        assert "no scale" in notes[0]
