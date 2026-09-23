@@ -11,6 +11,7 @@ that those figures were taken on the **integrated** GPU, so they are a floor.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILD_PLATE_COLOUR",
+    "MEASURE_COLOUR",
     "MODEL_COLOUR",
     "PROBLEM_COLOUR",
     "PickResult",
@@ -42,6 +44,11 @@ MODEL_COLOUR = "#6FA8DC"
 PROBLEM_COLOUR = "#E8834A"
 BUILD_PLATE_COLOUR = "#3A4750"
 ENVELOPE_COLOUR = "#8899A6"
+MEASURE_COLOUR = "#F2C14E"
+
+# Big enough to see against a model, small enough not to hide the feature
+# being measured. In millimetres, because everything here is.
+MEASURE_POINT_MM = 0.8
 BACKGROUND_TOP = "#2B3038"
 BACKGROUND_BOTTOM = "#171A1F"
 
@@ -85,6 +92,7 @@ class ViewportScene:
         self._printer = printer or PrinterProfile.p2s()
         self._model_actor: Any = None
         self._locator: Any = None
+        self._measure_actors: list[Any] = []
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._draw_build_volume()
@@ -140,6 +148,7 @@ class ViewportScene:
 
     def clear_model(self) -> None:
         """Remove the model, leaving the build volume in place."""
+        self.clear_measurement()
         if self._model_actor is not None:
             self._plotter.remove_actor(self._model_actor, render=False)
         self._model_actor = None
@@ -169,6 +178,84 @@ class ViewportScene:
         self._model_actor.GetProperty().SetRepresentationToWireframe() if enabled else (
             self._model_actor.GetProperty().SetRepresentationToSurface()
         )
+
+    def pick_at(self, x: float, y: float) -> PickResult | None:
+        """Cast a ray through a point on screen and return the first hit.
+
+        The half of picking that needs the camera. ``pick`` takes a ray in
+        millimetres and is pure geometry; this turns a click into one, using
+        VTK's own coordinate transform so the answer agrees with what the user
+        can see rather than with a reimplementation of the projection.
+
+        Screen coordinates here are VTK's: origin at the *bottom* left. Qt
+        hands out clicks from the top left, so a caller converts.
+        """
+        renderer = getattr(self._plotter, "renderer", None)
+        if renderer is None or self._polydata is None:
+            return None
+
+        near = self._world_at(renderer, x, y, 0.0)
+        far = self._world_at(renderer, x, y, 1.0)
+        if near is None or far is None:
+            return None
+        return self.pick(near, far)
+
+    @staticmethod
+    def _world_at(
+        renderer: Any, x: float, y: float, depth: float
+    ) -> tuple[float, float, float] | None:
+        """One screen point at one depth, in millimetres."""
+        try:
+            renderer.SetDisplayPoint(x, y, depth)
+            renderer.DisplayToWorld()
+            wx, wy, wz, w = renderer.GetWorldPoint()
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not w:
+            return None
+        return (wx / w, wy / w, wz / w)
+
+    # ------------------------------------------------------------ measuring
+
+    def show_measurement(self, points: Sequence[tuple[float, float, float]]) -> None:
+        """Draw the points picked so far, and the line between two of them.
+
+        Drawn rather than described because a measurement whose ends cannot be
+        seen is a measurement nobody can check. Removed and redrawn on every
+        change: two spheres and a line cost nothing next to the model.
+        """
+        self.clear_measurement()
+        if not points:
+            return
+
+        for index, point in enumerate(points):
+            self._measure_actors.append(
+                self._plotter.add_mesh(
+                    pv.Sphere(radius=MEASURE_POINT_MM, center=point),
+                    color=MEASURE_COLOUR,
+                    name=f"measure-point-{index}",
+                    pickable=False,
+                    reset_camera=False,
+                )
+            )
+
+        if len(points) >= 2:
+            self._measure_actors.append(
+                self._plotter.add_mesh(
+                    pv.Line(points[0], points[1]),
+                    color=MEASURE_COLOUR,
+                    line_width=3,
+                    name="measure-line",
+                    pickable=False,
+                    reset_camera=False,
+                )
+            )
+
+    def clear_measurement(self) -> None:
+        """Take the measurement marks off the model."""
+        for actor in self._measure_actors:
+            self._plotter.remove_actor(actor, reset_camera=False, render=False)
+        self._measure_actors.clear()
 
     # ---------------------------------------------------------------- picking
 

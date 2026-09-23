@@ -9,8 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt
+from PySide6.QtGui import QAction, QColor, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from modelpop.application.discovery_service import Discovery
     from modelpop.application.repository_ports import Download
 
+from modelpop.presentation.measuring import MeasuringTool
 from modelpop.ui.cad_panel import CadPanel, ThreadedRebuilder
 from modelpop.ui.dialogs import (
     EditDialog,
@@ -55,6 +56,11 @@ from modelpop.ui.dialogs import (
 )
 
 __all__ = ["MainWindow"]
+
+# How far the mouse may travel between press and release and still count as
+# a click rather than an orbit. A few pixels of wobble is a steady hand, not
+# an attempt to rotate the model.
+CLICK_SLOP_PIXELS = 4
 
 # Readable on a dark panel. The default reds and greens are not: a blocker
 # rendered in #C0392B on #2B3038 is almost invisible, which defeats the point
@@ -116,6 +122,8 @@ class MainWindow(QMainWindow):
 
         self._viewport = QtInteractor(self)
         self._scene = ViewportScene(self._viewport, self._printer)
+        self._measuring = MeasuringTool()
+        self._pressed_at: QPoint | None = None
         self._findings = QListWidget()
         self._summary = QLabel("Open a model to begin.")
         self._summary.setWordWrap(True)
@@ -260,6 +268,71 @@ class MainWindow(QMainWindow):
         frame_action.setShortcut(QKeySequence("Ctrl+0"))
         frame_action.triggered.connect(self._scene.frame_model)
         view_menu.addAction(frame_action)
+
+        view_menu.addSeparator()
+        self._measure_action = QAction("&Measure between two points", self)
+        self._measure_action.setCheckable(True)
+        self._measure_action.setShortcut(QKeySequence("Ctrl+M"))
+        self._measure_action.toggled.connect(self._set_measuring)
+        view_menu.addAction(self._measure_action)
+
+    # -------------------------------------------------------------- measuring
+
+    def _set_measuring(self, on: bool) -> None:
+        """Turn the measuring tool on or off.
+
+        While it is on the viewport's own click handling is left alone - VTK
+        still rotates the model on a drag - and a *click* is taken as a point.
+        Stealing the drag as well would make the part unrotatable, which is the
+        one thing somebody measuring it most needs to do.
+        """
+        if on:
+            self._measuring.turn_on()
+            self._viewport.interactor.installEventFilter(self)
+        else:
+            self._measuring.turn_off()
+            self._viewport.interactor.removeEventFilter(self)
+            self._scene.clear_measurement()
+            self._viewport.render()
+        self.statusBar().showMessage(self._measuring.describe())
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        """Take clicks in the viewport as measurement points.
+
+        A *click*, not a drag: the mouse has to come back up within a few
+        pixels of where it went down, or the user was orbiting the model and
+        meant nothing by it. Never consumes the event, so VTK still gets it.
+        """
+        if not self._measuring.is_on or watched is not self._viewport.interactor:
+            return super().eventFilter(watched, event)
+
+        if isinstance(event, QMouseEvent):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                self._pressed_at = event.position().toPoint()
+            elif event.type() == QEvent.Type.MouseButtonRelease and self._pressed_at is not None:
+                moved = (event.position().toPoint() - self._pressed_at).manhattanLength()
+                self._pressed_at = None
+                if moved <= CLICK_SLOP_PIXELS:
+                    self._measure_at(event.position().x(), event.position().y())
+
+        return super().eventFilter(watched, event)
+
+    def _measure_at(self, x: float, y: float) -> None:
+        """Turn one click into a measurement point, if it hit the model."""
+        # Qt counts rows from the top of the widget, VTK from the bottom.
+        flipped = self._viewport.interactor.height() - y
+        hit = self._scene.pick_at(x, flipped)
+        point = None if hit is None else (hit[0][0], hit[0][1], hit[0][2])
+
+        if not self._measuring.picked(point) and point is None:
+            self.statusBar().showMessage(
+                "That click missed the model. " + self._measuring.describe()
+            )
+            return
+
+        self._scene.show_measurement(self._measuring.points)
+        self._viewport.render()
+        self.statusBar().showMessage(self._measuring.describe())
 
     def _connect(self) -> None:
         self._modelling.on_outcome(self._on_cad_outcome)

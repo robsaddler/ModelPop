@@ -160,3 +160,101 @@ class TestPicking:
         hit = scene.pick((0, 0, 500), (0, 0, -500))
         assert hit is not None
         assert hit[0][2] == pytest.approx(Length.inches(1).millimetres, abs=1e-4)
+
+
+class TestPickingFromTheScreen:
+    """Turning a click into a point on the model.
+
+    ``pick`` is pure geometry; this is the half that needs the camera, and the
+    half that goes wrong invisibly - an off-by-one in the projection still
+    returns *a* point, just not the one under the cursor. So the camera is
+    aimed straight down and the centre of the screen is checked against a
+    shape whose top is at a known height.
+    """
+
+    def looking_down(self, plotter) -> ViewportScene:
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20).dropped_to_bed())
+        plotter.view_xy()
+        plotter.camera.focal_point = (0.0, 0.0, 10.0)
+        plotter.camera.position = (0.0, 0.0, 400.0)
+        plotter.camera.parallel_projection = True
+        plotter.camera.parallel_scale = 30.0
+        plotter.render()
+        return scene
+
+    def test_the_middle_of_the_screen_lands_on_the_top_of_the_model(self, plotter):
+        scene = self.looking_down(plotter)
+
+        hit = scene.pick_at(320, 240)
+
+        assert hit is not None, "looking straight down at a cube from above"
+        assert hit[0][2] == pytest.approx(20.0, abs=0.01)
+
+    def test_a_corner_of_the_screen_misses_a_small_model(self, plotter):
+        scene = self.looking_down(plotter)
+        assert scene.pick_at(2, 2) is None
+
+    def test_picking_from_the_screen_with_no_model_is_safe(self, plotter):
+        assert ViewportScene(plotter).pick_at(320, 240) is None
+
+
+class TestTheMeasurementOverlay:
+    """The marks drawn on the model while it is being measured."""
+
+    def scene_with_a_cube(self, plotter) -> ViewportScene:
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20).dropped_to_bed())
+        return scene
+
+    def test_points_are_drawn_where_they_were_picked(self, plotter):
+        scene = self.scene_with_a_cube(plotter)
+        scene.show_measurement([(0.0, 0.0, 20.0), (10.0, 0.0, 20.0)])
+
+        assert "measure-point-0" in plotter.renderer.actors
+        assert "measure-point-1" in plotter.renderer.actors
+        assert "measure-line" in plotter.renderer.actors
+
+    def test_one_point_draws_no_line(self, plotter):
+        scene = self.scene_with_a_cube(plotter)
+        scene.show_measurement([(0.0, 0.0, 20.0)])
+
+        assert "measure-point-0" in plotter.renderer.actors
+        assert "measure-line" not in plotter.renderer.actors
+
+    def test_showing_a_new_measurement_replaces_the_old_marks(self, plotter):
+        """Otherwise every click leaves a sphere behind for the rest of the session."""
+        scene = self.scene_with_a_cube(plotter)
+        scene.show_measurement([(0.0, 0.0, 20.0), (10.0, 0.0, 20.0)])
+        scene.show_measurement([(0.0, 0.0, 20.0)])
+
+        assert "measure-point-1" not in plotter.renderer.actors
+        assert "measure-line" not in plotter.renderer.actors
+
+    def test_clearing_takes_the_marks_off(self, plotter):
+        scene = self.scene_with_a_cube(plotter)
+        scene.show_measurement([(0.0, 0.0, 20.0), (10.0, 0.0, 20.0)])
+
+        scene.clear_measurement()
+
+        assert "measure-point-0" not in plotter.renderer.actors
+        assert "measure-line" not in plotter.renderer.actors
+
+    def test_changing_the_model_takes_the_marks_off_too(self, plotter):
+        """A measurement of the old shape, left floating over the new one."""
+        scene = self.scene_with_a_cube(plotter)
+        scene.show_measurement([(0.0, 0.0, 20.0), (10.0, 0.0, 20.0)])
+
+        scene.clear_model()
+
+        assert "measure-point-0" not in plotter.renderer.actors
+
+    def test_showing_nothing_is_safe(self, plotter):
+        self.scene_with_a_cube(plotter).show_measurement([])
+
+    def test_the_marks_are_not_pickable(self, plotter):
+        """Measuring off your own measurement mark would be a fine bug."""
+        scene = self.scene_with_a_cube(plotter)
+        scene.show_measurement([(0.0, 0.0, 20.0), (10.0, 0.0, 20.0)])
+
+        assert not plotter.renderer.actors["measure-point-0"].GetPickable()
