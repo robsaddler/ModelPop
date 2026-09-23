@@ -194,6 +194,10 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self._choose_file)
         file_menu.addAction(open_action)
 
+        self._from_image_action = QAction("Make one from a &picture...", self)
+        self._from_image_action.triggered.connect(self._from_image)
+        file_menu.addAction(self._from_image_action)
+
         find_action = QAction("&Find a model to start from...", self)
         find_action.setShortcut("Ctrl+F")
         find_action.triggered.connect(self._find_a_model)
@@ -324,6 +328,41 @@ class MainWindow(QMainWindow):
         self._view_model.open(download.path)
         self.statusBar().showMessage(f"From {download.attribution}", 15000)
 
+    def _from_image(self) -> None:
+        """Turn a photo or a drawing into a model.
+
+        The picture is the whole input. What comes back is a mesh like any
+        other, so everything downstream - repair, scaling, the readiness panel,
+        slicing - already works on it.
+        """
+        if not self._view_model.can_generate_a_mesh:
+            QMessageBox.information(
+                self,
+                "ModelPop",
+                "Making a model from a picture is not set up.\n\n"
+                + self._view_model.describe_mesh_generation()
+                + "\n\nSee docs/10-mesh-generation.md.",
+            )
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a picture", "", "Pictures (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if not path:
+            return
+
+        self.statusBar().showMessage("Making a model from that picture...")
+        self._view_model.generate_from_image(Path(path), self._on_generation_progress)
+
+    def _on_generation_progress(self, fraction: float, message: str) -> None:
+        """Show how a generation is getting on.
+
+        It takes tens of seconds, and a window with no sign of life reads as a
+        crash. Straight to the status bar because the message arrives on a
+        worker thread and a dialog from there is undefined.
+        """
+        self.statusBar().showMessage(f"{message} ({fraction:.0%})")
+
     def _open_project(self) -> None:
         """Open a saved feature tree."""
         path, _ = QFileDialog.getOpenFileName(
@@ -369,7 +408,12 @@ class MainWindow(QMainWindow):
         PrintWindow(report.gcode_path, self._view_model.printer, self).exec()
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self._secrets, self._ai_settings, self)
+        dialog = SettingsDialog(
+            self._secrets,
+            self._ai_settings,
+            self,
+            self._view_model.describe_mesh_generation(),
+        )
         if dialog.exec():
             self._ai_settings = dialog.settings()
             self._view_model.ai_settings = self._ai_settings

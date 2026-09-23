@@ -298,3 +298,97 @@ class TestWhatAGeneratedMeshRecords:
     def test_a_triangle_ceiling_is_set_by_default(self):
         """These models produce millions and a printer cannot use them."""
         assert 0 < GenerationOptions().target_triangles <= 1_000_000
+
+
+class TestThroughTheWorkspace:
+    """The seam between a generated shape and everything downstream."""
+
+    def workspace(self, generator=None):
+        from modelpop.application.workspace import Workspace
+
+        from .test_workspace import FakeIO, FakeOps, FakeSlicer
+
+        return Workspace(FakeIO(), FakeOps(), FakeSlicer(), mesh_generator=generator)
+
+    def fake_generator(self, result):
+        class Fake:
+            def is_available(self) -> bool:
+                return True
+
+            def describe(self) -> str:
+                return "a fake generator"
+
+            def from_text(self, prompt, options=None, on_progress=None):
+                return result
+
+            def from_image(self, image, options=None, on_progress=None):
+                return result
+
+        return Fake()
+
+    def test_a_generated_shape_becomes_the_open_model(self, tmp_path):
+        from modelpop.domain.result import success
+
+        from .test_workspace import box
+
+        generated = success(GeneratedMesh(mesh=box(20), model="trellis", seed=3))
+        workspace = self.workspace(self.fake_generator(generated))
+
+        image = tmp_path / "dragon.png"
+        image.write_bytes(b"png")
+        state = workspace.generate_from_image(image).unwrap()
+
+        assert state.has_model
+
+    def test_the_readiness_report_is_produced_for_it(self):
+        """Everything downstream must work on it without knowing where it came
+        from. That is the whole point of the port."""
+        from modelpop.domain.result import success
+
+        from .test_workspace import box
+
+        generated = success(GeneratedMesh(mesh=box(20), model="trellis"))
+        workspace = self.workspace(self.fake_generator(generated))
+
+        state = workspace.adopt(box(20))
+        assert state.readiness is not None
+
+    def test_where_the_shape_came_from_is_recorded(self, tmp_path):
+        from modelpop.domain.result import success
+
+        from .test_workspace import box
+
+        generated = success(
+            GeneratedMesh(mesh=box(20), model="trellis", seed=42, source_image=Path("dragon.png"))
+        )
+        workspace = self.workspace(self.fake_generator(generated))
+
+        image = tmp_path / "dragon.png"
+        image.write_bytes(b"png")
+        state = workspace.generate_from_image(image).unwrap()
+
+        assert "trellis" in state.generation_note
+        assert "seed 42" in state.generation_note
+
+    def test_without_a_generator_it_says_where_to_read(self, tmp_path):
+        image = tmp_path / "dragon.png"
+        image.write_bytes(b"png")
+
+        result = self.workspace().generate_from_image(image)
+        assert not result.ok
+        assert "10-mesh-generation" in result.detail
+
+    def test_the_workspace_reports_whether_it_can(self):
+        assert not self.workspace().can_generate_a_mesh
+        assert "not wired up" in self.workspace().describe_mesh_generation()
+
+    def test_a_failure_from_the_generator_is_passed_through(self, tmp_path):
+        from modelpop.domain.result import failure
+
+        workspace = self.workspace(self.fake_generator(failure("the card caught fire")))
+        image = tmp_path / "dragon.png"
+        image.write_bytes(b"png")
+
+        result = workspace.generate_from_image(image)
+        assert not result.ok
+        assert "caught fire" in result.error

@@ -26,6 +26,11 @@ if TYPE_CHECKING:
     from modelpop.application.ai_ports import AiSettings
     from modelpop.application.cad_ports import DimensionTable
     from modelpop.application.generation_ports import PartGenerator
+    from modelpop.application.mesh_generation_ports import (
+        GenerationOptions,
+        MeshGenerator,
+        Progress,
+    )
     from modelpop.application.ports import (
         GcodeVerifier,
         MeshIO,
@@ -59,6 +64,10 @@ class WorkspaceState:
     source_path: Path | None = None
     readiness: ReadinessReport | None = None
     last_slice: SliceReport | None = None
+    generation_note: str = ""
+    """Where a generated shape came from. Kept because six months later "did I
+    make this or did a model?" has no other answer."""
+
     last_generation: CadGenerationRun | None = None
     """How the part was generated, when it was. Kept so the user can read the
     script, see what was corrected, and know what the run cost."""
@@ -103,6 +112,7 @@ class Workspace:
         generator: PartGenerator | None = None,
         ai_settings: AiSettings | None = None,
         gcode_verifier: GcodeVerifier | None = None,
+        mesh_generator: MeshGenerator | None = None,
     ) -> None:
         """Wire the workspace to its ports.
 
@@ -118,6 +128,7 @@ class Workspace:
             generator: turns a description into a part.
             ai_settings: default attempt and spend limits.
             gcode_verifier: reads the toolpath back after slicing.
+            mesh_generator: turns a picture into a mesh.
         """
         self._io = mesh_io
         self._ops = mesh_ops
@@ -126,6 +137,7 @@ class Workspace:
         self._generator = generator
         self._ai_settings = ai_settings
         self._verifier = gcode_verifier
+        self._mesh_generator = mesh_generator
 
     @property
     def can_generate(self) -> bool:
@@ -259,6 +271,47 @@ class Workspace:
                 source_path=None,
                 readiness=self._assess(mesh),
                 last_generation=run,
+            )
+        )
+
+    @property
+    def can_generate_a_mesh(self) -> bool:
+        """Whether a picture could be turned into a shape right now."""
+        return self._mesh_generator is not None and self._mesh_generator.is_available()
+
+    def describe_mesh_generation(self) -> str:
+        """The state of the mesh generator, for Settings."""
+        if self._mesh_generator is None:
+            return "Mesh generation is not wired up in this build."
+        return self._mesh_generator.describe()
+
+    def generate_from_image(
+        self,
+        image: Path,
+        options: GenerationOptions | None = None,
+        on_progress: Progress | None = None,
+    ) -> Result[WorkspaceState]:
+        """Turn a picture into a model.
+
+        The result goes into the workspace like anything else, so repair,
+        scaling, bed placement, the readiness report and slicing all work on it
+        without knowing a model made the shape.
+        """
+        if self._mesh_generator is None:
+            return failure(
+                "Making a shape from a picture is unavailable",
+                "See docs/10-mesh-generation.md; it needs its own environment.",
+            )
+
+        generated = self._mesh_generator.from_image(image, options, on_progress)
+        if not generated.ok:
+            return generated  # type: ignore[return-value]
+
+        made = generated.unwrap()
+        return success(
+            replace(
+                self.adopt(made.mesh),
+                generation_note=made.provenance,
             )
         )
 

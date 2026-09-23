@@ -61,12 +61,26 @@ class SettingsDialog(QDialog):
     """
 
     def __init__(
-        self, secrets: LayeredSecretStore, settings: AiSettings, parent: QWidget | None = None
+        self,
+        secrets: LayeredSecretStore,
+        settings: AiSettings,
+        parent: QWidget | None = None,
+        generation_status: str = "",
     ) -> None:
-        """Build the dialog around the current settings."""
+        """Build the dialog around the current settings.
+
+        Args:
+            secrets: where credentials are kept.
+            settings: the model and limit choices.
+            parent: the owning window.
+            generation_status: what the mesh generator found, in words. Passed
+                in rather than queried, because probing it starts an
+                interpreter and the dialog must open immediately.
+        """
         super().__init__(parent)
         self._secrets = secrets
         self._settings = settings
+        self._generation_status = generation_status
 
         self.setWindowTitle("Settings")
         self.setMinimumWidth(520)
@@ -76,6 +90,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._build_sources_group())
         layout.addWidget(self._build_model_group())
         layout.addWidget(self._build_limits_group())
+        layout.addWidget(self._build_generation_group())
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -220,6 +235,30 @@ class SettingsDialog(QDialog):
         self._spend.setValue(self._settings.spend_limit_usd)
         form.addRow("Spend limit per part", self._spend)
 
+        return group
+
+    def _build_generation_group(self) -> QGroupBox:
+        """What the picture-to-model environment found.
+
+        Shown whether or not it works, because "not installed" and "no CUDA"
+        need different things from the user and a silent absence tells them
+        neither.
+        """
+        group = QGroupBox("Making a model from a picture")
+        form = QFormLayout(group)
+
+        status = QLabel(self._generation_status or "Not checked.")
+        status.setWordWrap(True)
+        form.addRow(status)
+
+        note = QLabel(
+            "This runs in its own Python environment with PyTorch, because those "
+            "dependencies are several gigabytes and would otherwise be everyone's. "
+            "Set it up with: uv run python scripts/setup_generation.py"
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(_HINT_STYLE)
+        form.addRow(note)
         return group
 
     # ----------------------------------------------------------------- saving
