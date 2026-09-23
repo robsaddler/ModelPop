@@ -6,6 +6,8 @@ the script is one build123d actually accepts, and that the operations do what
 their names claim - which no amount of string matching can show.
 """
 
+import math
+
 import pytest
 
 from modelpop.application.modelling import ModellingSession
@@ -21,8 +23,11 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Mirror,
     Move,
     Plane,
+    Repeat,
+    RepeatAround,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -472,3 +477,75 @@ def test_an_extruded_profile_takes_the_rest_of_the_vocabulary(model):
     hollowed = model.state.measurements
     assert hollowed.volume_mm3 < square * 0.5, "rounded and mostly air"
     assert hollowed.is_valid
+
+
+@kernel_required
+def test_a_row_of_drilled_holes_removes_every_one(model):
+    """The failure this exists for is silent: plugs instead of holes.
+
+    A pattern that copies the built solid rather than re-emitting the shape
+    produces a model that is valid, watertight and completely wrong.
+    """
+    assert model.apply(CreateBox(100, 40, 6)).ok
+    plate = model.state.measurements.volume_mm3
+
+    assert model.apply(CreateCylinder(2.5, 20, x=-40, cut=True)).ok
+    assert model.apply(Repeat(5, dx=20)).ok
+
+    one_hole = math.pi * 2.5**2 * 6
+    after = model.state.measurements
+    assert after.volume_mm3 == pytest.approx(plate - 5 * one_hole, rel=0.002), "five holes"
+    assert after.solid_count == 1
+    assert after.is_valid
+
+
+@kernel_required
+def test_a_bolt_circle_is_evenly_spaced(model):
+    assert model.apply(CreateCylinder(30, 8)).ok
+    disc = model.state.measurements.volume_mm3
+
+    assert model.apply(CreateCylinder(3, 20, x=20, cut=True)).ok
+    assert model.apply(RepeatAround(6)).ok
+
+    one_hole = math.pi * 3**2 * 8
+    after = model.state.measurements
+    assert after.volume_mm3 == pytest.approx(disc - 6 * one_hole, rel=0.002), "six holes"
+    assert after.width.millimetres == pytest.approx(60, abs=0.01), "still the same disc"
+    assert after.is_valid
+
+
+@kernel_required
+def test_mirroring_a_half_doubles_it_and_leaves_no_seam(model):
+    """One solid, not two touching ones, which is what a slicer needs."""
+    assert model.apply(CreateBox(20, 40, 10, x=10)).ok
+    half = model.state.measurements
+
+    assert model.apply(Mirror(Plane.YZ)).ok
+
+    whole = model.state.measurements
+    assert whole.volume_mm3 == pytest.approx(half.volume_mm3 * 2, rel=0.001)
+    assert whole.width.millimetres == pytest.approx(40, abs=0.01)
+    assert whole.solid_count == 1, "fused, not two blocks side by side"
+    assert whole.is_valid
+
+
+@kernel_required
+def test_mirroring_can_replace_the_original(model):
+    assert model.apply(CreateBox(20, 40, 10, x=10)).ok
+    assert model.apply(Mirror(Plane.YZ, keep_original=False)).ok
+
+    assert model.state.measurements.width.millimetres == pytest.approx(20, abs=0.01)
+
+
+@kernel_required
+def test_a_patterned_shape_still_takes_the_rest_of_the_vocabulary(model):
+    """A bracket: a plate, a row of holes, and rounded corners over the lot."""
+    assert model.apply(CreateBox(80, 30, 5)).ok
+    assert model.apply(CreateCylinder(2, 20, x=-30, cut=True)).ok
+    assert model.apply(Repeat(4, dx=20)).ok
+    assert model.apply(Fillet(3, EdgeSelector.VERTICAL)).ok
+
+    size = model.state.measurements
+    assert size.is_valid
+    assert size.solid_count == 1
+    assert size.width.millimetres == pytest.approx(80, abs=0.01)

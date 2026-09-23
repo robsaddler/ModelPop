@@ -64,6 +64,9 @@ def _vocabulary() -> str:
         "text-on-surface": (
             f"text, face ({_choices(Face)}), size (mm), depth (mm), raised (true or false)"
         ),
+        "mirror": f"plane ({_choices(Plane)}), keep_original (true or false)",
+        "repeat": "times (a whole number), dx, dy, dz (mm between copies)",
+        "repeat-around": "times (a whole number), axis (X, Y or Z)",
         "extrude": (
             f"points (a list of [x, y] corners in mm), height (mm), "
             f"plane ({_choices(Plane)}), cut (true to remove it)"
@@ -113,6 +116,12 @@ Rules:
   do not repeat the first corner at the end: it closes itself. The corners
   describe the *shape*, not where it sits: the finished profile is centred on
   the origin like every other shape, so use "move" to place it.
+- "repeat" and "repeat-around" copy the shape *immediately before them*, so
+  they must follow one. A row of mounting holes is one cut cylinder followed by
+  a "repeat"; a bolt circle is one off-centre cut cylinder followed by a
+  "repeat-around". Put one after a fillet or a hollow and it is discarded.
+- "mirror" reflects the whole part about a plane through the origin, so model
+  one half of a symmetrical part and reflect it rather than building both.
 - The first operation must add a shape. There is nothing to cut from yet.
 - Ask for the fewest operations that do what was requested. At most \
 {MAX_COMMANDS}.

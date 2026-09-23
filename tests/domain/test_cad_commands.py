@@ -18,6 +18,7 @@ import pytest
 from modelpop.application.cad_ports import Part
 from modelpop.cad.feature_compiler import MAX_FEATURES, compile_document
 from modelpop.domain.cad_commands import (
+    MAX_COPIES,
     MAX_MM,
     MAX_OUTLINE_POINTS,
     MAX_RADIUS_MM,
@@ -30,8 +31,11 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Mirror,
     Move,
     Plane,
+    Repeat,
+    RepeatAround,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -553,3 +557,110 @@ class TestOutlinesAndExtrusion:
 
     def test_it_is_part_of_the_vocabulary_offered_to_a_model(self):
         assert "extrude" in known_commands()
+
+
+class TestMirroringAndPatterns:
+    """Symmetry and repetition - the two things that make a part quick to model.
+
+    The patterns are asserted on the script rather than on geometry because the
+    way they fail is silent: a pattern that copies the built solid instead of
+    re-emitting the shape turns six drilled holes into six plugs, and the
+    result is still a valid, buildable, wrong model.
+    """
+
+    def test_a_mirror_keeps_both_halves_by_default(self):
+        source = script_for(CreateBox(20, 40, 10, x=10), Mirror())
+        assert "result = result + mirror(result, about=Plane.YZ)" in source
+
+    def test_a_mirror_can_replace_the_original_instead(self):
+        source = script_for(CreateBox(20, 40, 10, x=10), Mirror(Plane.YZ, keep_original=False))
+        assert "result = mirror(result, about=Plane.YZ)" in source
+        assert "result = result + mirror" not in source
+
+    def test_the_mirror_plane_reaches_the_script(self):
+        assert "about=Plane.XZ" in script_for(CreateBox(10, 10, 10), Mirror(Plane.XZ))
+
+    def test_a_row_repeats_the_shape_before_it(self):
+        source = script_for(CreateBox(40, 40, 6), CreateCylinder(2.5, 20, x=-30), Repeat(4, dx=20))
+
+        assert source.count("Cylinder(2.5, 20.0)") == 4, "the original and three copies"
+        assert "Pos(20, 0, 0) * (Pos(-30.0, 0.0, 0.0) * Cylinder(2.5, 20.0))" in source
+        assert "Pos(60, 0, 0) * (Pos(-30.0, 0.0, 0.0) * Cylinder(2.5, 20.0))" in source
+
+    def test_repeating_a_cut_cuts_every_copy(self):
+        """The failure this test exists for makes plugs instead of holes."""
+        source = script_for(
+            CreateBox(40, 40, 6), CreateCylinder(2.5, 20, x=-30, cut=True), Repeat(3, dx=20)
+        )
+        assert source.count("result = result - ") == 3
+        assert "result = result + " not in source
+
+    def test_a_ring_spaces_copies_over_a_full_turn(self):
+        source = script_for(CreateCylinder(30, 8), CreateCylinder(3, 20, x=20), RepeatAround(4))
+
+        assert "Rot(0, 0, 90)" in source
+        assert "Rot(0, 0, 180)" in source
+        assert "Rot(0, 0, 270)" in source
+        assert "Rot(0, 0, 360)" not in source, "that is back where it started"
+
+    def test_a_ring_can_turn_about_another_axis(self):
+        source = script_for(CreateBox(10, 10, 10), CreateBox(4, 4, 4, z=20), RepeatAround(4, "X"))
+        assert "Rot(90, 0, 0)" in source
+
+    def test_an_extruded_profile_patterns_like_anything_else(self):
+        source = script_for(Extrude(((0, 0), (10, 0), (10, 10)), 5), Repeat(3, dy=15))
+        assert source.count("_outline = Polyline(") == 3
+        assert "_solid = Pos(0, 15, 0) * _solid" in source
+
+    def test_a_pattern_with_nothing_before_it_is_refused(self):
+        assert not compile_document(tree(Repeat(4, dx=10))).ok
+
+    def test_a_pattern_after_an_operation_still_repeats_the_shape(self):
+        """A fillet between the hole and the pattern must not break the link."""
+        source = script_for(
+            CreateBox(40, 40, 6),
+            CreateCylinder(2.5, 20, x=-10, cut=True),
+            Fillet(1, EdgeSelector.TOP),
+            Repeat(2, dx=20),
+        )
+        assert source.count("Cylinder(2.5, 20.0)") == 2
+
+    def test_a_single_copy_says_so_rather_than_emitting_nothing(self):
+        source = script_for(CreateBox(10, 10, 10), Repeat(1, dx=20))
+        assert "one copy is the shape itself" in source
+
+    def test_the_count_is_capped(self):
+        assert Repeat(10_000, dx=5).times == MAX_COPIES
+        assert RepeatAround(10_000).times == MAX_COPIES
+
+    def test_a_nonsense_count_falls_back_rather_than_crashing(self):
+        assert Repeat("lots", dx=5).times == 2
+        assert Repeat(0, dx=5).times == 1
+
+    def test_copies_on_top_of_each_other_are_recognised(self):
+        assert not Repeat(4).goes_anywhere
+        assert Repeat(4, dz=0.5).goes_anywhere
+
+    def test_they_all_say_what_they_do(self):
+        assert "Mirror across the side plane" in Mirror().describe()
+        assert Repeat(4, dx=20).describe() == "Repeat the last shape 4 times, (20, 0, 0) mm apart"
+        assert "6 copies" in RepeatAround(6).describe()
+
+    def test_they_all_survive_a_round_trip_through_the_document(self):
+        for command in (
+            Mirror(Plane.XZ, keep_original=False),
+            Repeat(3, dy=8),
+            RepeatAround(5, "Y"),
+        ):
+            document = tree(CreateBox(20, 20, 20), command)
+            assert command_from(document.active_features[-1]) == command
+
+    def test_they_are_part_of_the_vocabulary_offered_to_a_model(self):
+        for name in ("mirror", "repeat", "repeat-around"):
+            assert name in known_commands()
+
+    def test_every_pattern_compiles_to_valid_python(self):
+        source = script_for(
+            CreateCylinder(30, 8), CreateCylinder(3, 20, x=20, cut=True), RepeatAround(6), Mirror()
+        )
+        compile(source, "<generated>", "exec")

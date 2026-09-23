@@ -35,8 +35,11 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Mirror,
     Move,
     Plane,
+    Repeat,
+    RepeatAround,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -116,6 +119,7 @@ def compile_document(document: Document, part: Part = Part.WHOLE) -> Result[str]
     lines: list[str] = [_PREAMBLE]
     unknown: list[str] = []
     started = False
+    repeatable: Command | None = None
 
     for index, feature in enumerate(features, start=1):
         command = command_from(feature)
@@ -126,7 +130,11 @@ def compile_document(document: Document, part: Part = Part.WHOLE) -> Result[str]
         if part is Part.BODY and _is_decoration(command):
             continue
 
-        fragment = _fragment_for(command, first=not started)
+        if isinstance(command, Repeat | RepeatAround):
+            fragment = _pattern_fragment(command, repeatable)
+        else:
+            fragment = _fragment_for(command, first=not started)
+
         if fragment is None:
             unknown.append(feature.name)
             continue
@@ -135,6 +143,11 @@ def compile_document(document: Document, part: Part = Part.WHOLE) -> Result[str]
         lines.append(fragment)
         lines.append("")
         started = True
+
+        # A pattern repeats the shape before it, so the tree has to remember
+        # what that was. Only shapes qualify: repeating a fillet means nothing.
+        if _is_a_shape(command):
+            repeatable = command
 
     if not started:
         return failure(
@@ -195,24 +208,33 @@ def _known_to_fail(features: tuple[Feature, ...]) -> Result[str] | None:
     return None
 
 
-def _fragment_for(command: Command, *, first: bool) -> str | None:
+def _fragment_for(command: Command, *, first: bool, copy: str = "") -> str | None:
     """One feature as a line of build123d.
 
     ``first`` matters because a creation command starts the solid and anything
     else operates on what is already there. A fillet with nothing to round is a
     mistake worth catching here rather than as a kernel traceback.
+
+    ``copy`` is a build123d transform applied to a shape before it is combined,
+    which is how a pattern re-emits the shape before it without that shape
+    needing to know it is being copied.
     """
     match command:
         case CreateBox():
             return _shape(
-                command, f"Box({command.width}, {command.depth}, {command.height})", first=first
+                command,
+                f"Box({command.width}, {command.depth}, {command.height})",
+                first=first,
+                copy=copy,
             )
         case CreateCylinder():
-            return _shape(command, f"Cylinder({command.radius}, {command.height})", first=first)
+            return _shape(
+                command, f"Cylinder({command.radius}, {command.height})", first=first, copy=copy
+            )
         case CreateSphere():
-            return _shape(command, f"Sphere({command.radius})", first=first)
+            return _shape(command, f"Sphere({command.radius})", first=first, copy=copy)
         case Extrude():
-            return _extrude_fragment(command, first=first)
+            return _extrude_fragment(command, first=first, copy=copy)
         case _ if first:
             return None  # nothing to operate on yet
 
@@ -233,6 +255,8 @@ def _fragment_for(command: Command, *, first: bool) -> str | None:
             return f"result = Rot({_rotation(command)}) * result"
         case ScaleTo():
             return _scale_fragment(command)
+        case Mirror():
+            return _mirror_fragment(command)
         case TextOnSurface():
             return _text_fragment(command)
         case _:
@@ -254,7 +278,7 @@ def _centre_of(points: tuple[tuple[float, float], ...]) -> tuple[float, float]:
     return ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
 
 
-def _extrude_fragment(command: Extrude, *, first: bool) -> str | None:
+def _extrude_fragment(command: Extrude, *, first: bool, copy: str = "") -> str | None:
     """An outline given thickness.
 
     Refused rather than built when the outline cannot enclose an area. Two
@@ -280,6 +304,9 @@ def _extrude_fragment(command: Extrude, *, first: bool) -> str | None:
         f"_solid = extrude(_profile, amount={command.height / 2}, both=True)",
     ]
 
+    if copy:
+        lines.append(f"_solid = {copy} * _solid")
+
     if first:
         if command.cut:
             return None  # nothing to cut from yet
@@ -290,7 +317,61 @@ def _extrude_fragment(command: Extrude, *, first: bool) -> str | None:
     return "\n".join(lines)
 
 
-def _shape(command: Any, expression: str, *, first: bool) -> str | None:
+def _is_a_shape(command: Command) -> bool:
+    """Whether a feature adds or removes material in its own right.
+
+    Only these can be patterned. Repeating a fillet or a hollow is meaningless,
+    and quietly repeating the shape before it instead would produce a model
+    that is not what anyone asked for.
+    """
+    return isinstance(command, CreateBox | CreateCylinder | CreateSphere | Extrude)
+
+
+def _pattern_fragment(command: Repeat | RepeatAround, shape: Command | None) -> str | None:
+    """Copies of the shape before this one, laid out.
+
+    Re-emitting the earlier fragment rather than copying the built solid keeps
+    a cut a cut: patterning a drilled hole has to remove six holes, and adding
+    a copy of the whole result would fill six plugs in instead. It also means
+    each copy goes through exactly the same code path as the original, so a
+    shape cannot pattern differently from how it builds.
+    """
+    if shape is None:
+        return None
+
+    lines: list[str] = []
+    for step in range(1, command.times):
+        fragment = _fragment_for(shape, first=False, copy=_copy_transform(command, step))
+        if fragment is None:
+            return None
+        lines.append(fragment)
+
+    # One copy is the shape itself, already in the tree. Said out loud rather
+    # than emitted as nothing, which reads as a feature that failed.
+    return "\n".join(lines) if lines else "# one copy is the shape itself; nothing to add"
+
+
+def _copy_transform(command: Repeat | RepeatAround, step: int) -> str:
+    """Where the nth copy of a patterned shape goes."""
+    if isinstance(command, Repeat):
+        return f"Pos({command.dx * step:g}, {command.dy * step:g}, {command.dz * step:g})"
+    angle = command.step_degrees * step
+    angles = {"X": (angle, 0.0, 0.0), "Y": (0.0, angle, 0.0)}
+    x, y, z = angles.get(command.axis, (0.0, 0.0, angle))
+    return f"Rot({x:g}, {y:g}, {z:g})"
+
+
+def _mirror_fragment(command: Mirror) -> str:
+    """The part reflected, with or without the original.
+
+    The plane passes through the origin, which is where every shape here is
+    centred, so a half modelled about the origin meets its reflection exactly.
+    """
+    reflected = f"mirror(result, about={_PLANES[command.plane]})"
+    return f"result = result + {reflected}" if command.keep_original else f"result = {reflected}"
+
+
+def _shape(command: Any, expression: str, *, first: bool, copy: str = "") -> str | None:
     """Create a solid, fuse one onto it, or cut one out of it.
 
     A second primitive is a union rather than a replacement, because the user
@@ -301,6 +382,8 @@ def _shape(command: Any, expression: str, *, first: bool) -> str | None:
     placed = expression
     if command.x or command.y or command.z:
         placed = f"Pos({command.x}, {command.y}, {command.z}) * {expression}"
+    if copy:
+        placed = f"{copy} * ({placed})"
 
     if first:
         return None if command.cut else f"result = {placed}"

@@ -339,3 +339,57 @@ class TestExtruding:
         model = view()
         model.extrude([(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], 6)
         assert len(model.state.features) == 1
+
+
+class TestMirroringAndPatterns:
+    """The two commands that make a part quick, driven with no display."""
+
+    def plate_with_a_hole(self) -> ModellingViewModel:
+        model = view()
+        model.add_box(100, 40, 6)
+        model.drill(5, 6, at=(-40, 0))
+        return model
+
+    def test_a_row_joins_the_tree_and_undoes(self):
+        model = self.plate_with_a_hole()
+        model.repeat(5, dx=20)
+
+        assert "Repeat the last shape 5 times" in model.state.features[-1].label
+        model.undo()
+        assert len(model.state.features) == 2
+
+    def test_a_ring_joins_the_tree(self):
+        model = self.plate_with_a_hole()
+        model.repeat_around(6)
+        assert "6 copies" in model.state.features[-1].label
+
+    def test_copies_with_no_spacing_are_refused_rather_than_built(self):
+        """Otherwise the model looks unchanged and nobody can tell why."""
+        seen: list[Outcome] = []
+        model = self.plate_with_a_hole()
+        model.on_outcome(seen.append)
+        model.repeat(4)
+
+        assert seen[-1].refused
+        assert "same place" in seen[-1].message
+        assert len(model.state.features) == 2, "and nothing was recorded"
+
+    def test_one_copy_is_allowed_even_with_no_spacing(self):
+        """It is a no-op, not a mistake, and the script says so."""
+        model = self.plate_with_a_hole()
+        model.repeat(1)
+        assert len(model.state.features) == 3
+
+    def test_mirroring_joins_the_tree(self):
+        model = view()
+        model.add_box(20, 40, 10, at=(10, 0, 0))
+        model.mirror()
+
+        assert "Mirror across the side plane" in model.state.features[-1].label
+
+    def test_mirroring_can_replace_the_original(self):
+        model = view()
+        model.add_box(20, 40, 10, at=(10, 0, 0))
+        model.mirror(Plane.XZ, keep_original=False)
+
+        assert "replace it" in model.state.features[-1].label

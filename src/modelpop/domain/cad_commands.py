@@ -27,6 +27,7 @@ from modelpop.domain.commands import Command, Feature
 from modelpop.domain.units import Length
 
 __all__ = [
+    "MAX_COPIES",
     "MAX_OUTLINE_POINTS",
     "MIN_OUTLINE_POINTS",
     "Chamfer",
@@ -38,8 +39,11 @@ __all__ = [
     "Face",
     "Fillet",
     "Hollow",
+    "Mirror",
     "Move",
     "Plane",
+    "Repeat",
+    "RepeatAround",
     "Rotate",
     "ScaleTo",
     "TextOnSurface",
@@ -156,6 +160,21 @@ class Plane(Enum):
             Plane.XZ: "standing up, facing you",
             Plane.YZ: "standing up, edge on",
         }[self]
+
+
+# A pattern is a boolean operation per copy. This is far more than anyone lays
+# out by hand and low enough that a hallucinated count cannot turn one command
+# into a rebuild that never returns.
+MAX_COPIES = 100
+
+
+def _clamp_count(value: Any) -> int:
+    """A repeat count that is a whole number and worth doing."""
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 2
+    return max(1, min(count, MAX_COPIES))
 
 
 class EdgeSelector(Enum):
@@ -584,6 +603,126 @@ class Extrude(Command):
         return len(self.points) >= MIN_OUTLINE_POINTS
 
 
+@dataclass(frozen=True, slots=True)
+class Mirror(Command):
+    """Reflect the part and keep both halves.
+
+    Half the mechanical parts anyone prints are symmetrical, and modelling one
+    half and reflecting it is both faster and self-correcting: the two sides
+    cannot drift apart, because there is only one of them.
+
+    The mirror plane passes through the origin, which is where every shape in
+    this vocabulary is centred, so the two halves meet rather than overlapping
+    or leaving a gap.
+    """
+
+    plane: Plane = Plane.YZ
+    keep_original: bool = True
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "mirror"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"plane": self.plane.value, "keep_original": self.keep_original}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        both = "and keep both halves" if self.keep_original else "and replace it"
+        return f"Mirror across the {self.plane.value} plane {both}"
+
+
+@dataclass(frozen=True, slots=True)
+class Repeat(Command):
+    """Make a row of the last thing added, evenly spaced.
+
+    A pattern in a real CAD package repeats a *feature*, not the whole model,
+    and that is what this does: it takes the shape immediately before it in the
+    tree and lays out copies. A row of mounting holes is one drilled hole and
+    one of these, which is how people describe it out loud.
+
+    Repeating anything that is not a shape - a fillet, a hollow - means
+    nothing, and the compiler refuses it rather than producing a model that is
+    subtly not what was asked for.
+    """
+
+    times: int = 2
+    dx: float = 0.0
+    dy: float = 0.0
+    dz: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Bound the count and clamp the spacing.
+
+        The count is capped because a runaway value is a boolean operation per
+        copy, and a thousand of them is a rebuild that never returns.
+        """
+        object.__setattr__(self, "times", _clamp_count(self.times))
+        for axis in ("dx", "dy", "dz"):
+            object.__setattr__(self, axis, _clamp(getattr(self, axis), -MAX_MM, MAX_MM))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "repeat"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"times": self.times, "dx": self.dx, "dy": self.dy, "dz": self.dz}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        step = f"({self.dx:g}, {self.dy:g}, {self.dz:g})"
+        return f"Repeat the last shape {self.times} times, {step} mm apart"
+
+    @property
+    def goes_anywhere(self) -> bool:
+        """Whether the copies land somewhere other than on top of each other."""
+        return any(abs(step) >= MIN_MM for step in (self.dx, self.dy, self.dz))
+
+
+@dataclass(frozen=True, slots=True)
+class RepeatAround(Command):
+    """Space copies of the last thing added evenly round an axis.
+
+    A bolt circle: drill one hole off centre, then ask for six of them. The
+    copies are spaced over a full turn, because a partial arc needs a start
+    angle and a sweep, and nobody has wanted one yet.
+    """
+
+    times: int = 4
+    axis: str = "Z"
+
+    def __post_init__(self) -> None:
+        """Bound the count and normalise the axis."""
+        object.__setattr__(self, "times", _clamp_count(self.times))
+        letter = str(self.axis).upper()[:1]
+        object.__setattr__(self, "axis", letter if letter in "XYZ" else "Z")
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "repeat-around"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"times": self.times, "axis": self.axis}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        return f"Space {self.times} copies of the last shape evenly around {self.axis}"
+
+    @property
+    def step_degrees(self) -> float:
+        """How far apart the copies sit, in degrees."""
+        return 360.0 / self.times
+
+
 # --------------------------------------------------------------- rebuilding
 
 _BY_NAME: dict[str, Any] = {
@@ -597,6 +736,9 @@ _BY_NAME: dict[str, Any] = {
     "rotate": Rotate,
     "scale-to": ScaleTo,
     "extrude": Extrude,
+    "mirror": Mirror,
+    "repeat": Repeat,
+    "repeat-around": RepeatAround,
     "text-on-surface": TextOnSurface,
 }
 
@@ -634,6 +776,11 @@ def _construct(factory: Any, parameters: dict[str, Any]) -> Command:
             parameters["height"],
             Plane(parameters.get("plane", "floor")),
             bool(parameters.get("cut", False)),
+        )
+    if factory is Mirror:
+        return Mirror(
+            Plane(parameters.get("plane", "side")),
+            bool(parameters.get("keep_original", True)),
         )
     if factory is TextOnSurface:
         return TextOnSurface(

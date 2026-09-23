@@ -31,12 +31,13 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from modelpop.application.modelling import ModelState
-from modelpop.domain.cad_commands import EdgeSelector, Face
+from modelpop.domain.cad_commands import MAX_COPIES, EdgeSelector, Face
 from modelpop.domain.units import Length
 from modelpop.presentation.modelling_view_model import ModellingViewModel
 from modelpop.ui.outline_dialog import OutlineDialog
@@ -49,6 +50,14 @@ __all__ = ["CadPanel", "TextDialog", "ThreadedRebuilder"]
 _HINT_STYLE = "color: #9AA5B1; font-size: 11px;"
 _ASSISTANT_COLOUR = "#9FC5E8"
 _SUPPRESSED_COLOUR = "#6B7280"
+
+# Which way a row of copies runs. Tuples so the spacing multiplies straight
+# into an offset without a branch per direction.
+_DIRECTION_CHOICES = [
+    ("across", (1.0, 0.0, 0.0)),
+    ("back", (0.0, 1.0, 0.0)),
+    ("up", (0.0, 0.0, 1.0)),
+]
 
 _EDGE_CHOICES = [
     ("All edges", EdgeSelector.ALL),
@@ -345,6 +354,42 @@ class CadPanel(QWidget):
         self._text_button.clicked.connect(self._add_text)
         size_row.addWidget(self._text_button)
 
+        repeat_row = QHBoxLayout()
+        self._copies = QSpinBox()
+        self._copies.setRange(2, MAX_COPIES)
+        self._copies.setValue(4)
+        repeat_row.addWidget(QLabel("Make"))
+        repeat_row.addWidget(self._copies)
+
+        self._spacing = _number(20.0, -500.0, 500.0, 1.0)
+        repeat_row.addWidget(QLabel("apart"))
+        repeat_row.addWidget(self._spacing)
+
+        self._direction = QComboBox()
+        for label, _ in _DIRECTION_CHOICES:
+            self._direction.addItem(label)
+        repeat_row.addWidget(self._direction)
+
+        self._repeat_button = QPushButton("In a row")
+        self._repeat_button.setToolTip(
+            "Copy the last shape added - a row of mounting holes is one hole and this"
+        )
+        self._repeat_button.clicked.connect(self._repeat)
+        repeat_row.addWidget(self._repeat_button)
+
+        self._ring_button = QPushButton("In a ring")
+        self._ring_button.setToolTip(
+            "Space copies of the last shape evenly round the centre - a bolt circle"
+        )
+        self._ring_button.clicked.connect(lambda: self._view.repeat_around(self._copies.value()))
+        repeat_row.addWidget(self._ring_button)
+
+        self._mirror_button = QPushButton("Mirror")
+        self._mirror_button.setToolTip("Reflect the whole part left to right and keep both halves")
+        self._mirror_button.clicked.connect(lambda: self._view.mirror())
+        repeat_row.addWidget(self._mirror_button)
+        rows.addLayout(repeat_row)
+
         self._outline_button = QPushButton("Outline...")
         self._outline_button.setToolTip(
             "Draw a closed profile and give it thickness - a bracket, a gasket, "
@@ -443,6 +488,12 @@ class CadPanel(QWidget):
         self._view.describe_a_change(self._instruction.text())
         self._instruction.clear()
 
+    def _repeat(self) -> None:
+        """Lay out a row of the last shape, in the chosen direction."""
+        step = self._spacing.value()
+        unit = _DIRECTION_CHOICES[self._direction.currentIndex()][1]
+        self._view.repeat(self._copies.value(), *(step * axis for axis in unit))
+
     def _add_outline(self) -> None:
         """Draw a profile and extrude it.
 
@@ -499,6 +550,9 @@ class CadPanel(QWidget):
             self._hollow_button,
             self._scale_button,
             self._text_button,
+            self._repeat_button,
+            self._ring_button,
+            self._mirror_button,
         ):
             button.setEnabled(operable)
 

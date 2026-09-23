@@ -29,8 +29,11 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Mirror,
     Move,
     Plane,
+    Repeat,
+    RepeatAround,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -269,6 +272,33 @@ class ModellingViewModel:
             )
             return
         self._apply(command)
+
+    def mirror(self, plane: Plane = Plane.YZ, *, keep_original: bool = True) -> None:
+        """Reflect the part about a plane through the origin."""
+        self._apply(Mirror(plane, keep_original))
+
+    def repeat(self, times: int, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> None:
+        """Lay out a row of the last shape added.
+
+        Refused here when the copies would land on top of each other, because
+        the result of that is a model that looks unchanged and a user who
+        cannot tell whether the command ran.
+        """
+        command = Repeat(times, dx, dy, dz)
+        if command.times > 1 and not command.goes_anywhere:
+            self._announce(
+                Outcome(
+                    "Those copies would all sit in the same place",
+                    "Give a spacing in at least one direction.",
+                    refused=True,
+                )
+            )
+            return
+        self._apply(command)
+
+    def repeat_around(self, times: int, axis: str = "Z") -> None:
+        """Space copies of the last shape added evenly round an axis."""
+        self._apply(RepeatAround(times, axis))
 
     def apply_from_assistant(self, command: Command) -> None:
         """Apply a command a language model asked for.
