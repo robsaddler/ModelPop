@@ -4,7 +4,7 @@ No files, no slicer, no display. If this ever needs a real dependency, the
 layering has gone wrong.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -428,3 +428,115 @@ class TestToolpathVerification:
         """An extra check that is absent must not turn a good slice into a failure."""
         ws = self.workspace(verifier=None)
         assert ws.slice(self.opened(ws), tmp_path).ok
+
+
+class TestRescuingTheDetail:
+    """Baking a model's colour into its surface, at the use-case level.
+
+    The mechanics are tested against real textures in tests/geometry. What
+    matters here is *when the button appears*: a model that never had a texture
+    cannot have one baked, and offering it anyway puts an operation in front of
+    the user that can only fail.
+    """
+
+    class FakeBake:
+        def __init__(self, mesh=None, error=""):
+            self.asked: list[tuple] = []
+            self._mesh = mesh
+            self._error = error
+
+        def is_available(self) -> bool:
+            return True
+
+        def describe(self) -> str:
+            return "a fake baker"
+
+        def rescue(self, source, depth_mm=0.4, nozzle=None, layer_height_mm=0.2):
+            from modelpop.domain.result import failure as fail
+            from modelpop.domain.result import success as ok
+
+            self.asked.append((source, depth_mm))
+            if self._error:
+                return fail("no", self._error)
+            return ok(self._mesh if self._mesh is not None else box(20))
+
+    def workspace(self, baker=None) -> Workspace:
+        return Workspace(mesh_io=FakeIO(), mesh_ops=FakeOps(), detail=baker)
+
+    def textured(self, tmp_path) -> WorkspaceState:
+        source = tmp_path / "generated.glb"
+        source.write_bytes(b"pretend this is a glb")
+        return WorkspaceState(mesh=box(20), source_path=source, textured_path=source)
+
+    def test_without_a_baker_it_says_so_rather_than_failing_obscurely(self, tmp_path):
+        outcome = self.workspace().rescue_detail(self.textured(tmp_path))
+        assert not outcome.ok
+        assert "not available" in outcome.error
+
+    def test_a_model_with_no_texture_is_refused_before_anything_is_read(self, tmp_path):
+        baker = self.FakeBake()
+        outcome = self.workspace(baker).rescue_detail(WorkspaceState(mesh=box(20)))
+
+        assert not outcome.ok
+        assert "no texture to bake" in outcome.error
+        assert baker.asked == [], "it reached the baker anyway"
+
+    def test_a_texture_whose_file_has_gone_is_refused(self, tmp_path):
+        state = WorkspaceState(mesh=box(20), textured_path=tmp_path / "gone.glb")
+        assert not self.workspace(self.FakeBake()).rescue_detail(state).ok
+
+    def test_it_reads_the_textured_file_rather_than_the_open_mesh(self, tmp_path):
+        """The open mesh may already have been repaired, scaled or simplified,
+        and the texture's coordinates would not fit it any more."""
+        baker = self.FakeBake()
+        state = self.textured(tmp_path)
+        self.workspace(baker).rescue_detail(state, 0.6)
+
+        assert baker.asked == [(state.textured_path, 0.6)]
+
+    def test_the_baked_model_replaces_the_open_one_and_is_re_assessed(self, tmp_path):
+        baked = box(40)
+        outcome = self.workspace(self.FakeBake(baked)).rescue_detail(self.textured(tmp_path))
+
+        assert outcome.ok
+        after = outcome.unwrap()
+        assert after.mesh is baked
+        assert after.readiness is not None, "the bake changed the geometry and nothing re-checked"
+
+    def test_a_stale_slice_is_dropped_because_the_geometry_changed(self, tmp_path):
+        from modelpop.application.ports import SliceReport
+
+        state = replace(self.textured(tmp_path), last_slice=SliceReport(True, "ok"))
+        after = self.workspace(self.FakeBake()).rescue_detail(state).unwrap()
+
+        assert after.last_slice is None
+
+    def test_the_bake_is_recorded_beside_where_the_shape_came_from(self, tmp_path):
+        """Both facts are true and both are worth having six months later."""
+        state = replace(self.textured(tmp_path), generation_note="Generated from a photo")
+        after = self.workspace(self.FakeBake()).rescue_detail(state, 0.5).unwrap()
+
+        assert "Generated from a photo" in after.generation_note
+        assert "0.50 mm deep" in after.generation_note
+
+    def test_a_refusal_from_the_baker_reaches_the_user_intact(self, tmp_path):
+        baker = self.FakeBake(error="it was all one colour")
+        outcome = self.workspace(baker).rescue_detail(self.textured(tmp_path))
+
+        assert not outcome.ok
+        assert "one colour" in outcome.error
+
+    def test_opening_a_format_that_can_carry_a_texture_offers_the_bake(self, tmp_path):
+        source = tmp_path / "model.glb"
+        source.write_bytes(b"x")
+        opened = self.workspace(self.FakeBake()).open(source)
+
+        assert opened.unwrap().textured_path == source
+
+    def test_opening_an_stl_offers_nothing_because_it_can_carry_no_texture(self, tmp_path):
+        """A button that can only ever fail is worse than no button."""
+        source = tmp_path / "model.stl"
+        source.write_bytes(b"x")
+        opened = self.workspace(self.FakeBake()).open(source)
+
+        assert opened.unwrap().textured_path is None

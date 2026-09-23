@@ -19,7 +19,7 @@ from modelpop.application.workspace import Workspace
 from modelpop.cad import Build123dCompiler, Build123dKernel
 from modelpop.domain.printer import PrinterProfile
 from modelpop.generation import CadLoopGenerator, TrellisCliGenerator
-from modelpop.mesh import TrimeshIO, TrimeshOps
+from modelpop.mesh import TrimeshDetailBake, TrimeshIO, TrimeshOps
 from modelpop.printing import BambuLanGateway, BambuSlicer, ToolpathVerifier
 from modelpop.projects import JsonProjectStore
 from modelpop.repositories import (
@@ -56,6 +56,7 @@ def build_workspace() -> Workspace:
         # ticks the box in Settings. The window holds that switch; see
         # MainWindow._send_to_printer.
         printer_gateway=BambuLanGateway(),
+        detail=TrimeshDetailBake(),
     )
 
 

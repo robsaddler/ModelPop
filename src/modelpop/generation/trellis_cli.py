@@ -252,6 +252,7 @@ class TrellisCliGenerator:
                     model=MODEL_NAME,
                     seed=settings.seed,
                     source_image=image,
+                    textured_path=_kept(output),
                     seconds=ran.unwrap(),
                     notes=(*self._notes(settings), *scale_note),
                 )
@@ -357,6 +358,25 @@ class TrellisCliGenerator:
 # Below this the model came out of the generator's normalised box rather than
 # from anything measured, so its size means nothing and is replaced.
 _UNSCALED_MM = 10.0
+
+
+def _kept(output: Path) -> Path | None:
+    """Copy the generator's textured file somewhere it survives the job directory.
+
+    The mesh is read out and the scratch directory is swept away, which is
+    right for everything except the texture: detail rescue bakes that colour
+    into the surface, and it is the one thing the domain mesh cannot carry.
+    A copy costs a couple of megabytes and is the difference between the
+    feature being possible and not.
+    """
+    if not output.is_file():
+        return None
+    destination = Path(tempfile.gettempdir()) / f"modelpop-generated-{os.getpid()}-{output.name}"
+    try:
+        shutil.copy2(output, destination)
+    except OSError:
+        return None
+    return destination
 
 
 def _given_a_scale(

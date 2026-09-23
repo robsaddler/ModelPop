@@ -25,6 +25,7 @@ from modelpop.domain.units import Length
 if TYPE_CHECKING:
     from modelpop.application.ai_ports import AiSettings
     from modelpop.application.cad_ports import DimensionTable
+    from modelpop.application.detail_ports import DetailRescue
     from modelpop.application.generation_ports import PartGenerator
     from modelpop.application.mesh_generation_ports import (
         GenerationOptions,
@@ -50,6 +51,10 @@ __all__ = ["Workspace", "WorkspaceState"]
 # responsive well before it. See the triangle-budget readiness rule.
 DEFAULT_TRIANGLE_BUDGET = 300_000
 
+# Formats that can hold a colour texture and the coordinates to index it.
+# An STL holds neither, so a model opened from one has nothing to rescue.
+_CAN_CARRY_A_TEXTURE = frozenset({".glb", ".gltf", ".obj", ".ply", ".dae"})
+
 
 # The rules only a toolpath can raise. Named here so a re-slice can retire the
 # previous run's verdict instead of appending to it.
@@ -72,6 +77,13 @@ class WorkspaceState:
     generation_note: str = ""
     """Where a generated shape came from. Kept because six months later "did I
     make this or did a model?" has no other answer."""
+
+    textured_path: Path | None = None
+    """The file this model's colour texture lives in, when there is one.
+
+    Not the mesh: the domain mesh is vertices and faces and carries no texture,
+    which is right. Detail rescue needs somewhere to read the colour from, and
+    this is the only thing that remembers where."""
 
     last_generation: CadGenerationRun | None = None
     """How the part was generated, when it was. Kept so the user can read the
@@ -119,6 +131,7 @@ class Workspace:
         gcode_verifier: GcodeVerifier | None = None,
         mesh_generator: MeshGenerator | None = None,
         printer_gateway: PrinterGateway | None = None,
+        detail: DetailRescue | None = None,
     ) -> None:
         """Wire the workspace to its ports.
 
@@ -138,6 +151,7 @@ class Workspace:
             printer_gateway: sends a finished job to the printer. Defaults
                 to one that describes the job and sends nothing, because a
                 print is the only irreversible thing this application does.
+            detail: bakes a model's colour texture into its surface.
         """
         self._io = mesh_io
         self._ops = mesh_ops
@@ -148,6 +162,7 @@ class Workspace:
         self._verifier = gcode_verifier
         self._mesh_generator = mesh_generator
         self._gateway = printer_gateway
+        self._detail = detail
 
     @property
     def can_generate(self) -> bool:
@@ -177,6 +192,10 @@ class Workspace:
                 mesh=mesh,
                 source_path=path,
                 readiness=self._assess(mesh),
+                # Only formats that can carry one. Offering to bake a texture
+                # out of an STL would put a button in front of the user that
+                # can only ever fail.
+                textured_path=path if path.suffix.lower() in _CAN_CARRY_A_TEXTURE else None,
             )
         )
 
@@ -322,6 +341,10 @@ class Workspace:
             replace(
                 self.adopt(made.mesh),
                 generation_note=made.provenance,
+                # Where the colour lives, so the detail can be rescued later.
+                # The mesh itself carries none, and once it has been repaired
+                # or scaled the texture's coordinates would not fit it anyway.
+                textured_path=made.textured_path,
             )
         )
 
@@ -451,6 +474,54 @@ class Workspace:
         if not sliced.ok:
             return sliced  # type: ignore[return-value]
         return success(self._with_slice(state, sliced.unwrap()))
+
+    # ---------------------------------------------------------- detail rescue
+
+    @property
+    def can_rescue_detail(self) -> bool:
+        """Whether there is a texture to bake into this model's surface."""
+        return self._detail is not None and self._detail.is_available()
+
+    def rescue_detail(self, state: WorkspaceState, depth_mm: float = 0.4) -> Result[WorkspaceState]:
+        """Turn a generated model's colour into relief.
+
+        The failure every consumer AI-3D tool shares: the generator puts its
+        fine detail in a texture, a slicer cannot see colour, and the print
+        comes out a smooth blob. This pushes the colour into the geometry,
+        where a slicer can find it.
+
+        Reads the *textured file*, not the open mesh, because the mesh has no
+        texture on it by design - and because it may already have been repaired,
+        scaled or simplified, none of which the texture's coordinates survive.
+        """
+        if self._detail is None:
+            return failure(
+                "Detail rescue is not available in this build",
+                "No detail baker was configured.",
+            )
+        if state.textured_path is None or not state.textured_path.is_file():
+            return failure(
+                "There is no texture to bake",
+                "Detail rescue works on a model a generator painted. Make one "
+                "from a picture first, or open a textured file.",
+            )
+
+        baked = self._detail.rescue(
+            state.textured_path,
+            depth_mm,
+            self._printer.nozzle,
+            self._printer.layer_height.millimetres,
+        )
+        if not baked.ok:
+            return baked  # type: ignore[return-value]
+
+        mesh = baked.unwrap()
+        return success(
+            replace(
+                self._with_mesh(state, mesh),
+                generation_note=_and_rescued(state.generation_note, depth_mm),
+            )
+        )
 
     # ---------------------------------------------------------------- sending
 
@@ -608,3 +679,14 @@ class Workspace:
         return seated.translated(
             centre_x / mesh.unit.millimetres, centre_y / mesh.unit.millimetres, 0.0
         )
+
+
+def _and_rescued(note: str, depth_mm: float) -> str:
+    """Record the bake beside wherever the shape came from.
+
+    Appended rather than replacing: "generated from a photo" and "its texture
+    was baked in 0.4 mm deep" are both true and both worth having six months
+    later, when the only question is why the surface looks like that.
+    """
+    said = f"Texture baked into the surface, {depth_mm:.2f} mm deep"
+    return f"{note}. {said}" if note else said

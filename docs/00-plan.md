@@ -52,7 +52,7 @@ Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-p
 
 Phase 5  Edit it properly   ── DONE  tree, profiles, patterns, sweep, loft, section, drag handles
 Phase 7  Photos → replica   ─ scale from a reference in shot DONE; multi-photo reconstruction to come
-Phase 8  Make it delightful ─ detail rescue and variants to come (colour splitting, printer
+Phase 8  Make it delightful ─ variants to come (detail rescue, colour splitting, printer
                              comms, print monitoring DONE)
 ```
 
@@ -183,8 +183,15 @@ AMS. Generation history and variants. Print monitoring.
 filament; and **print monitoring** - a panel that polls the printer, backs off when it does not
 answer, gives up after enough misses, and stops of its own accord when the print ends.
 
-**Still to come:** texture-to-displacement detail rescue, which the plan has always said is genuine
-research, and generation variants.
+**And detail rescue**, which this plan called genuine research from day one. It measured better than
+feared (`research/spike-detail-rescue.md`): the bake is exact, costs six milliseconds at ten thousand
+vertices, and does not tear the mesh at the texture's seam. What limits it is *mesh density* - a
+feature needs two vertices across it, so the mesh is subdivided first by an amount worked out from
+the detail asked for. The part that really is unsolved is narrower than expected: luminance is a
+**guess** at height, so the depth is the user's to set and the app says as much rather than implying
+the number is a measurement.
+
+**Still to come:** generation variants.
 
 ## Working method
 
@@ -205,7 +212,7 @@ domain skills as you go so the knowledge compounds instead of evaporating betwee
 | 16 GB VRAM constrains generation quality | Real, but adequate — the shape stage of every candidate model fits | One GPU lease; separate processes; hosted fallback behind the same port |
 | Licence traps | The obvious best generator excludes UK users; several mesh libraries are GPL/AGPL or non-commercial | ADR-0004 tracks licences explicitly; every dependency is checked before adoption |
 | ~~VTK rendered on the integrated GPU~~ | **Closed, and it is not a risk.** Re-measured in a real window: 70–96 FPS at 393k triangles, 50 FPS at 1.57M, still on the iGPU. It cannot be forced off it from inside the app, and there is nothing to gain. `research/spike-viewport-gpu.md`. |
-| Detail rescue (texture→displacement) may not work well | Nobody has solved it; it is genuinely research | Spike it in isolation in Phase 8; the product is valuable without it |
+| ~~Detail rescue may not work well~~ | **Spiked and shipped.** The mechanics are exact and fast; what is unsolved is narrower than feared - luminance is a guess at height, so the depth is the user's to set. `research/spike-detail-rescue.md`. |
 | The generation environment is large | Multi-GB PyTorch/CUDA install | It is a separate, optional venv; the app is fully useful without it (Phases 2 and 2.5) |
 | Scope | This is a big build | The phase order guarantees something useful and printable from Phase 2 onward |
 
@@ -224,6 +231,7 @@ domain skills as you go so the knowledge compounds instead of evaporating betwee
 | `05-skills-plan.md` | Which Claude skills to install, and which to write |
 | `research/spike-bambu-cli.md` | Verified slicer facts, measured on this machine |
 | `research/spike-viewport-gpu.md` | Which GPU the viewport gets, and why it does not matter |
+| `research/spike-detail-rescue.md` | Texture into geometry: exact, fast, and limited by mesh density |
 | `11-using-the-app.md` | How to use it, task by task |
 | `research/spike-s7-python-stack.md` | **Why the stack is Python** — measured, not argued |
 | `research/findings.md` | The 2026 landscape digest with citations |

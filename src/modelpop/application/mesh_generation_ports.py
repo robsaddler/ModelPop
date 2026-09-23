@@ -148,6 +148,15 @@ class GeneratedMesh:
     seed: int = 0
     prompt: str = ""
     source_image: Path | None = None
+    textured_path: Path | None = None
+    """Where the generator's own textured file was kept.
+
+    The domain mesh is vertices and faces and carries no texture, which is
+    right - but the detail a generator paints on lives in that texture, and
+    detail rescue needs somewhere to read it from. So the file is kept rather
+    than swept away with the job directory.
+    """
+
     seconds: float = 0.0
     notes: tuple[str, ...] = field(default_factory=tuple)
     """Anything the run wants the user to know - what it simplified, what it

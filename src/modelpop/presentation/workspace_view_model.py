@@ -297,6 +297,29 @@ class WorkspaceViewModel:
                 )
             )
 
+    @property
+    def can_rescue_detail(self) -> bool:
+        """Whether this model has a texture worth baking into its surface."""
+        return (
+            self._workspace.can_rescue_detail
+            and self._state.textured_path is not None
+            and not self._busy
+        )
+
+    def rescue_detail(self, depth_mm: float = 0.4) -> None:
+        """Turn the model's colour into relief.
+
+        An ordinary operation on the bus like any other, so it re-assesses,
+        re-draws and can be undone by reopening - which matters more here than
+        elsewhere, because how deep the relief should be is a judgement nobody
+        can make in advance.
+        """
+        self._run(
+            lambda: self._workspace.rescue_detail(self._state, depth_mm),
+            done="Baked the texture into the surface",
+            failed="The detail could not be baked in",
+        )
+
     def slice(self, output_dir: Path, supports: SupportType | None = None) -> None:
         """Slice the model into G-code.
 

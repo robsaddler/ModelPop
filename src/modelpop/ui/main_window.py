@@ -14,6 +14,7 @@ from PySide6.QtGui import QAction, QColor, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -188,6 +189,18 @@ class MainWindow(QMainWindow):
         self._how_button = QPushButton("How this part was made")
         self._how_button.setVisible(False)
         side.addWidget(self._how_button)
+
+        # Only ever shown for a model that has a texture, which is a generated
+        # one. Offering it on a box drawn in the CAD tools would put a button
+        # in front of the user that can only fail.
+        self._detail_button = QPushButton("Rescue the detail...")
+        self._detail_button.setToolTip(
+            "Bake the model's colour into its surface, so the detail survives "
+            "being sliced instead of printing as a smooth blob"
+        )
+        self._detail_button.setVisible(False)
+        self._detail_button.clicked.connect(self._rescue_detail)
+        side.addWidget(self._detail_button)
 
         self._repair_button = QPushButton("Repair")
         self._resize_button = QPushButton("Resize...")
@@ -650,6 +663,28 @@ class MainWindow(QMainWindow):
 
         PrintWindow(report.gcode_path, self._view_model.printer, self).exec()
 
+    def _rescue_detail(self) -> None:
+        """Ask how deep the relief should be, then bake it in.
+
+        A number rather than a switch, because nobody can say in advance what
+        the right depth is: luminance is a *guess* at height, and the only way
+        to find out is to try it, look at it, and try again. The dialog says
+        so rather than implying the number means something exact.
+        """
+        depth, chosen = QInputDialog.getDouble(
+            self,
+            "Rescue the detail",
+            "How deep should the relief be?\n\n"
+            "The model's colour is read as height, which is a guess rather than a\n"
+            "measurement. Try a number, look at the result, and change it.",
+            0.4,
+            0.05,
+            5.0,
+            2,
+        )
+        if chosen:
+            self._view_model.rescue_detail(depth)
+
     def _watch_the_printer(self) -> None:
         """Open the panel that keeps asking what the printer is doing."""
         connection = self._view_model.printer_connection
@@ -799,6 +834,7 @@ class MainWindow(QMainWindow):
         sliced = state.last_slice
         self._watch_action.setEnabled(sliced is not None and sliced.gcode_path is not None)
         self._send_action.setEnabled(self._view_model.can_send_to_printer)
+        self._detail_button.setVisible(self._view_model.can_rescue_detail)
 
     def _on_cad_outcome(self, outcome: Outcome) -> None:
         """Report what a CAD command did.
