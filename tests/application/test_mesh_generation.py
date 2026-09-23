@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from modelpop.application.mesh_generation_ports import (
+    Background,
     Detail,
     GeneratedMesh,
     GenerationOptions,
@@ -124,9 +125,12 @@ class TestWhatAGeneratedMeshRecords:
         for detail in Detail:
             assert detail.describe
 
-    def test_a_triangle_ceiling_is_set_by_default(self):
-        """These models produce millions and a printer cannot use them."""
-        assert 0 < GenerationOptions().target_triangles <= 1_000_000
+    def test_the_background_choice_explains_the_trade(self):
+        for background in Background:
+            assert background.describe
+
+    def test_the_default_is_the_good_background_keyer(self):
+        assert GenerationOptions().background is Background.AUTOMATIC
 
 
 class TestThroughTheWorkspace:
@@ -339,11 +343,33 @@ class TestTheCommandItBuilds:
     def test_no_seed_means_no_seed_argument(self, tmp_path):
         assert "--seed" not in self.command(tmp_path, GenerationOptions(seed=0))
 
-    def test_keeping_the_background_uses_the_simple_keyer(self, tmp_path):
-        """Also the way round the open bug in the smart one."""
-        command = self.command(tmp_path, GenerationOptions(remove_background=False))
+    def test_the_quick_keyer_is_asked_for_when_chosen(self, tmp_path):
+        """The way round a failure in the good one, and nothing else."""
+        command = self.command(tmp_path, GenerationOptions(background=Background.SIMPLE))
         assert "--bg-removal" in command
         assert "threshold" in command
+
+    def test_the_default_keyer_asks_for_nothing(self, tmp_path):
+        """The binary's own default already keeps an existing cut-out and uses
+        the good matting model otherwise. Naming it would only override that."""
+        assert "--bg-removal" not in self.command(tmp_path, GenerationOptions())
+
+    def test_it_refuses_to_fall_back_to_the_processor(self, tmp_path):
+        """A silent fall-back does not fail, it takes hours - which is worse."""
+        assert "--require-gpu" in self.command(tmp_path, GenerationOptions())
+
+    def test_the_processor_fall_back_can_be_allowed(self, tmp_path):
+        command = self.command(tmp_path, GenerationOptions(require_gpu=False))
+        assert "--require-gpu" not in command
+
+    def test_the_triangle_budget_is_left_to_the_binary(self, tmp_path):
+        """It already simplifies to a sane print budget. A second opinion here
+        would have no better information behind it."""
+        assert "--decim" not in self.command(tmp_path, GenerationOptions())
+
+    def test_using_the_quick_keyer_is_reported_to_the_user(self, tmp_path):
+        notes = self.generator(tmp_path)._notes(GenerationOptions(background=Background.SIMPLE))
+        assert any("holes" in note for note in notes)
 
     def test_the_weights_directory_is_named(self, tmp_path):
         assert "--models" in self.command(tmp_path, GenerationOptions())

@@ -118,3 +118,32 @@ goes, and the adapter is rewritten against the binary.
 Worth recording plainly: this is the second time in this project that a measured spike has overturned
 a plan written from reading (the first was ADR-0007, which moved the whole app off C#). Both times
 the plan was reasonable and the measurement was different.
+
+---
+
+## Addendum: what running `--help` changed
+
+The binary was downloaded and its help read, rather than the adapter being left
+to trust a README. Two things were wrong.
+
+**There is no "do not remove the background".** The choice is between the default
+`auto` - which keeps an already-matted image's alpha and otherwise uses the good
+matting model - and `--bg-removal threshold`, a crude keyer. The adapter had a
+boolean that mapped "keep the background" onto the threshold keyer, which still
+removes it, just badly. The port now names the two real choices.
+
+Better still, the help states the failure mode in its own words: *"The plain
+threshold matte cuts out specular highlights, which the flow then turns into
+holes."* That is now what the user is told when they pick it.
+
+**It falls back to the processor silently.** `--require-gpu` exists precisely to
+stop that, and without it a generation does not fail, it takes hours - which is
+worse. The adapter passes it by default.
+
+One thing it made unnecessary: `--decim` already defaults to simplifying to 300k
+faces at 1024 and 150k at 512. That is a sane print budget, so the adapter's own
+triangle ceiling was removed rather than becoming a second opinion with no better
+information behind it.
+
+Confirmed as built: positional `<image> <out.glb>`, `--models`, `--seed`,
+`--res`. The seed default is 42, so omitting it is still deterministic.

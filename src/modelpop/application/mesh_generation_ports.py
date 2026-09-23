@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "Background",
     "Detail",
     "GeneratedMesh",
     "GenerationOptions",
@@ -40,6 +41,31 @@ __all__ = [
 # Called with a fraction and a phrase. Generation takes tens of seconds and a
 # window with no sign of life reads as a crash.
 type Progress = Callable[[float, str], None]
+
+
+class Background(Enum):
+    """How to separate the subject from what is behind it.
+
+    Named for the two choices a generator actually offers, rather than a
+    boolean, because "do not remove the background" is not one of them: an
+    image that is already cut out keeps its own alpha under AUTOMATIC.
+    """
+
+    AUTOMATIC = "automatic"
+    """Keep an existing cut-out, or use the good matting model. The default."""
+
+    SIMPLE = "simple"
+    """A plain threshold. Faster and cruder - it cuts specular highlights out
+    of the alpha, and the generator then turns those into holes. Worth having
+    only as a way round a failure in the good one."""
+
+    @property
+    def describe(self) -> str:
+        """A phrase for the dialog."""
+        return {
+            Background.AUTOMATIC: "cut the subject out properly",
+            Background.SIMPLE: "a quick threshold; can leave holes in shiny objects",
+        }[self]
 
 
 class Detail(Enum):
@@ -75,13 +101,13 @@ class GenerationOptions:
     """Zero means "pick one". A stated seed makes a run repeatable, which is the
     only way to iterate on a prompt rather than gamble on it."""
 
-    remove_background: bool = True
-    """For an image: cut the subject out first. Almost always wanted, because a
-    photo's background otherwise becomes part of the model."""
+    background: Background = Background.AUTOMATIC
+    """How to cut the subject out. A photo's background otherwise becomes part
+    of the model, which is the commonest way a result comes out wrong."""
 
-    target_triangles: int = 200_000
-    """A ceiling. These models happily produce millions, and a printer cannot
-    use them - the slicer just takes longer to throw the detail away."""
+    require_gpu: bool = True
+    """Refuse to fall back to the processor. A generation that quietly drops to
+    the CPU does not fail - it takes hours, which is worse."""
 
     timeout_seconds: float = 600.0
 

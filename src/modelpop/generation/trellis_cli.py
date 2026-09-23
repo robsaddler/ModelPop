@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modelpop.application.mesh_generation_ports import (
+    Background,
     Detail,
     GeneratedMesh,
     GenerationOptions,
@@ -276,10 +277,12 @@ class TrellisCliGenerator:
             command += ["--models", str(self.weights)]
         if settings.seed:
             command += ["--seed", str(settings.seed)]
-        if not settings.remove_background:
-            # An already-matted image keeps its alpha and skips the background
-            # remover, which is also the way round issue #41.
+        if settings.background is Background.SIMPLE:
             command += ["--bg-removal", "threshold"]
+        if settings.require_gpu:
+            # Without this it silently falls back to the processor, where a
+            # single generation takes hours rather than failing.
+            command.append("--require-gpu")
         return command
 
     def _run(
@@ -341,6 +344,13 @@ class TrellisCliGenerator:
                 "Asked for fine detail, which this generator caps at 1024 - the higher "
                 "setting is not proven on a 16 GB card."
             )
+        if settings.background is Background.SIMPLE:
+            notes.append(
+                "Used the quick background keyer, which can leave holes where a shiny surface was."
+            )
+        # The binary simplifies to 300k faces at 1024 and 150k at 512 by
+        # default, which is already a sane print budget. Passing our own would
+        # be a second opinion with no better information behind it.
         return tuple(notes)
 
 
