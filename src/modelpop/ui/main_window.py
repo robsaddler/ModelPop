@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from modelpop.application.discovery_service import Discovery
     from modelpop.application.repository_ports import Download
 
+from modelpop.presentation.dragging import movement_in
 from modelpop.presentation.measuring import MeasuringTool
 from modelpop.presentation.sectioning import SectionTool
 from modelpop.ui.cad_panel import CadPanel, ThreadedRebuilder
@@ -317,6 +318,12 @@ class MainWindow(QMainWindow):
         self._section_action.toggled.connect(self._set_section)
         view_menu.addAction(self._section_action)
 
+        self._drag_action = QAction("&Drag it about", self)
+        self._drag_action.setCheckable(True)
+        self._drag_action.setShortcut(QKeySequence("Ctrl+D"))
+        self._drag_action.toggled.connect(self._set_dragging)
+        view_menu.addAction(self._drag_action)
+
     # -------------------------------------------------------------- measuring
 
     def _set_measuring(self, on: bool) -> None:
@@ -336,6 +343,62 @@ class MainWindow(QMainWindow):
             self._scene.clear_measurement()
             self._viewport.render()
         self.statusBar().showMessage(self._measuring.describe())
+
+    # -------------------------------------------------------------- dragging
+
+    def _set_dragging(self, on: bool) -> None:
+        """Put drag handles on the model, or take them off.
+
+        Only for a part with a feature tree. A drag ends as ``Move`` and
+        ``Rotate`` commands, and an imported mesh has nowhere to put them -
+        so rather than dragging something that springs back on the next
+        rebuild, it says why.
+        """
+        if not on:
+            self._scene.stop_dragging()
+            self._viewport.render()
+            self.statusBar().showMessage("The drag handles are off.")
+            return
+
+        if self._modelling.state.is_empty:
+            self._drag_action.setChecked(False)
+            QMessageBox.information(
+                self,
+                "ModelPop",
+                "Drag handles work on a part with a feature tree.\n\n"
+                "Start one in the CAD tools tab, or describe what you want.",
+            )
+            return
+
+        if not self._scene.start_dragging(self._dragged):
+            self._drag_action.setChecked(False)
+            self.statusBar().showMessage("There is nothing on the plate to drag.")
+            return
+
+        self._viewport.render()
+        self.statusBar().showMessage(
+            "Drag an arrow to move the part, or a ring to turn it. "
+            "Each drag joins the feature tree and undoes."
+        )
+
+    def _dragged(self, matrix: object) -> None:
+        """Turn a released drag into commands on the bus.
+
+        The actor's own transform is dropped first. The rebuilt model already
+        stands where it was dragged to, so leaving the transform on as well
+        would move the part twice as far as the user asked.
+        """
+        drag = movement_in(matrix)  # type: ignore[arg-type]
+        self._scene.forget_drag()
+
+        if not drag.did_anything:
+            self._viewport.render()
+            self.statusBar().showMessage(drag.describe())
+            return
+
+        for command in drag.commands:
+            self._modelling.apply_from_the_viewport(command)
+        self.statusBar().showMessage(drag.describe())
 
     # --------------------------------------------------------------- section
 
@@ -684,6 +747,12 @@ class MainWindow(QMainWindow):
         if self._section_panel is not None:
             self._section_panel.refresh()
         self._scene.set_section(self._section.plane)
+
+        # The handles were attached to the actor that has just been
+        # replaced, so they have to go back on the new one or they hover
+        # over a model they no longer move.
+        if self._drag_action.isChecked():
+            self._scene.start_dragging(self._dragged)
 
         self.setWindowTitle(f"ModelPop - {state.title}")
         self.statusBar().showMessage(state.describe())

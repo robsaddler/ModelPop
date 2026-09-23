@@ -30,6 +30,19 @@ def plotter():
     plot.close()
 
 
+@pytest.fixture
+def plotter_on_screen():
+    """A real window, for the few things that need a live interactor.
+
+    Marked ``renders`` wherever it is used, for the same reason as everything
+    else that rasterises: a GPU-less runner does not fail, it dies.
+    """
+    plot = pv.Plotter(window_size=(500, 400))
+    plot.show(auto_close=False, interactive=False, interactive_update=True)
+    yield plot
+    plot.close()
+
+
 class TestConversion:
     def test_a_mesh_becomes_drawable_geometry(self):
         poly = to_polydata(unit_cube(10))
@@ -422,3 +435,62 @@ class TestSayingWhatIsDrawing:
         """The settings panel shows this, and must open either way."""
         told = ViewportScene(plotter).describe_renderer()
         assert told == NO_RENDERER or told.startswith("Drawing on")
+
+
+class TestDragHandles:
+    """Handles on the model, and what happens to the actor underneath them.
+
+    The attaching needs a live interactor, which an off-screen plotter does not
+    have - so that half is marked ``renders``. The half that matters most is
+    not: the actor's own transform has to be cleared once a drag has been
+    turned into commands, because the rebuilt model already stands where it was
+    dragged to and leaving both on moves the part twice as far as it was
+    dragged.
+    """
+
+    def test_the_handles_go_on_a_model_and_say_that_they_did(self, plotter):
+        """The answer is what the menu item needs: a toggle that silently does
+        nothing is worse than one that is greyed out."""
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+
+        assert scene.start_dragging(lambda _: None) is True
+        assert scene.is_dragging
+
+    def test_there_is_nothing_to_drag_before_a_model_is_open(self, plotter):
+        assert ViewportScene(plotter).start_dragging(lambda _: None) is False
+
+    def test_stopping_when_nothing_was_started_is_safe(self, plotter):
+        ViewportScene(plotter).stop_dragging()
+
+    def test_forgetting_a_drag_clears_the_actor_transform(self, plotter):
+        """The bug this prevents: the part jumps twice as far as it was dragged."""
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        actor = plotter.renderer.actors["model"]
+
+        dragged = np.eye(4)
+        dragged[0:3, 3] = (15.0, 0.0, 0.0)
+        actor.user_matrix = dragged
+        scene.forget_drag()
+
+        assert np.allclose(np.asarray(actor.user_matrix), np.eye(4))
+
+    def test_forgetting_a_drag_with_no_model_is_safe(self, plotter):
+        ViewportScene(plotter).forget_drag()
+
+    @pytest.mark.renders
+    def test_the_handles_attach_and_survive_a_new_model(self, plotter_on_screen):
+        """A rebuild replaces the actor the handles are bolted to."""
+        scene = ViewportScene(plotter_on_screen)
+        scene.show_mesh(unit_cube(40).dropped_to_bed())
+
+        assert scene.start_dragging(lambda _: None)
+        assert scene.is_dragging
+
+        scene.show_mesh(unit_cube(20).dropped_to_bed())
+        assert not scene.is_dragging, "the handles stayed on the actor that went away"
+        assert scene.start_dragging(lambda _: None), "and cannot go back on the new one"
+
+        scene.stop_dragging()
+        assert not scene.is_dragging

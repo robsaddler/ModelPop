@@ -50,8 +50,7 @@ Phase 2.5 Find something   ── DONE  repository search, ranked gallery, licen
 Phase 3  Generate a mesh   ── DONE  a picture into a mesh on the local GPU (ADR-0010)
 Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-plate
 
-Phase 5  Edit it properly   ─ feature tree, profiles, patterns, sweep, loft, section view DONE;
-                             gizmos to come
+Phase 5  Edit it properly   ── DONE  tree, profiles, patterns, sweep, loft, section, drag handles
 Phase 7  Photos → replica   ─ scale from a reference in shot DONE; multi-photo reconstruction to come
 Phase 8  Make it delightful ─ detail rescue to come (multi-colour splitting, printer comms DONE)
 ```
@@ -144,8 +143,13 @@ in an integration test that checks the volume rather than the script.
 different heights) complete the profile vocabulary; **measurement** between two picked points; and a
 **section view** that cuts the viewport open, which is the only way to check a hollow by looking.
 
-**Still to come:** gizmos (drag handles in the viewport) and a sketcher with constraints. The profile
-dialog is the useful nine tenths of a sketcher and is honest about being it.
+**And gizmos**: drag an arrow to move the part, a ring to turn it. A released drag becomes the same
+``Move`` and ``Rotate`` commands the toolbar emits, so it joins the tree and undoes in one step - and
+a twist about two axes at once is *refused*, because the vocabulary says one axis and rounding it
+would put the part somewhere nobody asked for.
+
+**Still to come:** a sketcher with constraints. The profile dialog is the useful nine tenths of a
+sketcher and is honest about being it.
 
 ### Phase 6 — Edit by prompt *(done for generated parts)*
 Command schema exposed to the LLM as tools. Validation, clamping and rejection. Preview-then-apply.

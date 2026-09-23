@@ -400,6 +400,17 @@ class ModellingViewModel:
         """
         self._apply(command, Origin.ASSISTANT)
 
+    def apply_from_the_viewport(self, command: Command) -> None:
+        """Apply a command a drag in the viewport produced.
+
+        Recorded as the user's, because it was: dragging a handle is the user
+        moving the part, and marking it as anything else would make the tree
+        lie about who did what. The path is otherwise identical to a toolbar
+        click, which is the whole point of ADR-0001 - the viewport needs no
+        privileges the buttons do not have.
+        """
+        self._apply(command)
+
     def describe_a_change(self, instruction: str) -> None:
         """Ask a language model to change the model, in the user's own words.
 

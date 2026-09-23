@@ -11,7 +11,8 @@ that those figures were taken on the **integrated** GPU, so they are a floor.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import contextlib
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -133,6 +134,7 @@ class ViewportScene:
         self._model_actor: Any = None
         self._locator: Any = None
         self._measure_actors: list[Any] = []
+        self._drag_widget: Any = None
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._draw_build_volume()
@@ -190,6 +192,9 @@ class ViewportScene:
     def clear_model(self) -> None:
         """Remove the model, leaving the build volume in place."""
         self.clear_measurement()
+        # The handles belong to this actor. Left behind they would go on
+        # dragging geometry that is no longer in the scene.
+        self.stop_dragging()
         if self._model_actor is not None:
             self._plotter.remove_actor(self._model_actor, render=False)
         self._model_actor = None
@@ -230,6 +235,69 @@ class ViewportScene:
             return renderer_in(str(window.ReportCapabilities()))
         except (AttributeError, RuntimeError, TypeError):
             return NO_RENDERER
+
+    # ------------------------------------------------------------- dragging
+
+    def start_dragging(self, on_release: Callable[[Any], None]) -> bool:
+        """Put translate and rotate handles on the model.
+
+        Returns whether there was anything to put them on. The caller needs to
+        know: a menu item that silently does nothing is worse than one that is
+        greyed out.
+
+        The widget is re-made on every model, because it is attached to an
+        *actor* and every rebuild replaces that actor. Left alone it would go
+        on dragging a piece of geometry that is no longer in the scene - handles
+        floating over a model they do not move, which looks like the feature is
+        broken rather than stale.
+        """
+        self.stop_dragging()
+        if self._model_actor is None:
+            return False
+
+        try:
+            self._drag_widget = self._plotter.add_affine_transform_widget(
+                self._model_actor,
+                release_callback=on_release,
+                axes_colors=("#F2765A", "#6FCF97", "#6FA8DC"),
+            )
+        except (AttributeError, TypeError, RuntimeError):
+            # An off-screen plotter has no interactor to attach a widget to.
+            self._drag_widget = None
+            return False
+        return True
+
+    def stop_dragging(self) -> None:
+        """Take the handles off, and undo whatever they did to the actor.
+
+        Resetting the actor's own transform matters. The drag is recorded as
+        commands in the feature tree, and the rebuilt model already stands
+        where it was dragged to; leaving the actor's transform in place as well
+        would apply the move twice.
+        """
+        widget = self._drag_widget
+        self._drag_widget = None
+        if widget is not None:
+            with contextlib.suppress(AttributeError, RuntimeError):
+                widget.Off()
+        self.forget_drag()
+
+    def forget_drag(self) -> None:
+        """Put the actor's own transform back to nothing.
+
+        Called after a drag has been turned into commands. Without it the
+        transform and the rebuilt geometry both carry the same movement and the
+        part jumps twice as far as it was dragged.
+        """
+        if self._model_actor is None:
+            return
+        with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+            self._model_actor.user_matrix = np.eye(4)
+
+    @property
+    def is_dragging(self) -> bool:
+        """Whether the handles are currently on the model."""
+        return self._drag_widget is not None
 
     # ---------------------------------------------------------- section view
 
