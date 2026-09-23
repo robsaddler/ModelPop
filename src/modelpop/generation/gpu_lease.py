@@ -146,18 +146,54 @@ class GpuLease:
 def _is_running(pid: int) -> bool:
     """Whether a process id is alive.
 
-    ``os.kill`` with signal zero is the portable check and does not signal
-    anything. A permission error means it exists and belongs to someone else,
-    which still counts as running.
+    **Not** ``os.kill(pid, 0)`` on Windows. That is the portable POSIX idiom and
+    it is portable in the worst way: on Windows, CPython maps any signal other
+    than the two console events onto ``TerminateProcess``, so the "harmless
+    probe" *kills the process it is asking about*. Measured, not feared - a
+    sleeping child went from running to exit code 3221225794 on being probed,
+    and it took a CI run down with it.
+
+    So Windows gets the real question: open a handle and ask whether it has
+    finished. Everything else keeps the POSIX idiom, where it genuinely does
+    nothing.
     """
     if pid <= 0:
         return False
+    if os.name == "nt":
+        return _is_running_on_windows(pid)
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
+        # It exists and belongs to someone else, which still counts.
         return True
     except OSError:
         return False
     return True
+
+
+def _is_running_on_windows(pid: int) -> bool:
+    """Whether a process is alive, by waiting on it for no time at all.
+
+    ``SYNCHRONIZE`` is the least authority that answers the question, and a
+    zero-millisecond wait returns immediately: ``WAIT_TIMEOUT`` means it is
+    still going, anything else means it has finished.
+    """
+    import ctypes
+
+    synchronize = 0x00100000
+    wait_timeout = 0x00000102
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+        # No such process, or one we are not allowed to look at. Treating the
+        # second as "gone" is the safe way round: the worst case is that two
+        # generations run at once, rather than the lease never clearing.
+        return False
+    try:
+        return bool(kernel32.WaitForSingleObject(handle, 0) == wait_timeout)
+    finally:
+        kernel32.CloseHandle(handle)

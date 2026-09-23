@@ -8,6 +8,8 @@ and about how specifically the app says which piece is missing.
 
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -21,7 +23,12 @@ from modelpop.application.mesh_generation_ports import (
     MeshGenerator,
 )
 from modelpop.domain.mesh import Mesh
-from modelpop.generation.gpu_lease import STALE_AFTER_SECONDS, GpuBusyError, GpuLease
+from modelpop.generation.gpu_lease import (
+    STALE_AFTER_SECONDS,
+    GpuBusyError,
+    GpuLease,
+    _is_running,
+)
 from modelpop.generation.trellis_cli import (
     _WEIGHT_FILES,
     MODEL_NAME,
@@ -437,3 +444,62 @@ class TestWhereThingsAre:
         monkeypatch.setenv("MODELPOP_TRELLIS_MODELS", str(stray))
 
         assert find_weights() is None
+
+
+class TestAskingWhetherAProcessIsAlive:
+    """The check behind the lease, and the one that went badly wrong.
+
+    ``os.kill(pid, 0)`` is the portable POSIX idiom for "does this exist". On
+    Windows CPython maps any signal but the two console events onto
+    ``TerminateProcess``, so the harmless probe *kills the process it is asking
+    about*. It took a CI run down before anyone noticed, because locally it
+    only ever probed pids that were already gone.
+    """
+
+    def test_probing_a_live_process_does_not_kill_it(self):
+        """The whole reason this file exists."""
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            assert _is_running(child.pid), "it should see a process that is running"
+            time.sleep(0.5)
+            assert child.poll() is None, "the probe killed the process it was asking about"
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+
+    def test_a_process_that_has_finished_reads_as_gone(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait(timeout=30)
+        assert not _is_running(child.pid)
+
+    def test_a_pid_that_never_existed_reads_as_gone(self):
+        assert not _is_running(999_999_999)
+
+    def test_a_nonsense_pid_reads_as_gone(self):
+        assert not _is_running(0)
+        assert not _is_running(-1)
+
+    def test_our_own_process_reads_as_running(self):
+        assert _is_running(os.getpid())
+
+    def test_a_lease_held_by_a_dead_process_does_not_block_a_live_one(self, tmp_path):
+        """End to end: the lock file outlives the process that wrote it."""
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait(timeout=30)
+
+        lease = GpuLease.beside(tmp_path)
+        lease.path.write_text(json.dumps({"pid": child.pid, "at": time.time()}), encoding="utf-8")
+        assert lease.is_free
+
+    def test_a_lease_held_by_a_live_process_does_block(self, tmp_path):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            lease = GpuLease.beside(tmp_path)
+            lease.path.write_text(
+                json.dumps({"pid": child.pid, "at": time.time()}), encoding="utf-8"
+            )
+            assert not lease.is_free
+            assert str(child.pid) in lease.describe()
+        finally:
+            child.kill()
+            child.wait(timeout=10)
