@@ -24,7 +24,13 @@ import re
 from enum import Enum
 from typing import Any
 
-from modelpop.domain.cad_commands import EdgeSelector, Face, command_from, known_commands
+from modelpop.domain.cad_commands import (
+    EdgeSelector,
+    Face,
+    Plane,
+    command_from,
+    known_commands,
+)
 from modelpop.domain.commands import Command, Feature
 from modelpop.domain.result import Result, failure, success
 
@@ -57,6 +63,10 @@ def _vocabulary() -> str:
         "scale-to": "height_mm (the finished height of the whole part)",
         "text-on-surface": (
             f"text, face ({_choices(Face)}), size (mm), depth (mm), raised (true or false)"
+        ),
+        "extrude": (
+            f"points (a list of [x, y] corners in mm), height (mm), "
+            f"plane ({_choices(Plane)}), cut (true to remove it)"
         ),
     }
     missing = set(known_commands()) - set(shapes)
@@ -97,6 +107,12 @@ Rules:
 - A hole is a cylinder with "cut": true. Make it longer than the part it passes
   through, so it goes all the way. Position it with x, y and z, which are
   measured from the centre of the part.
+- "extrude" is how to make any shape the three primitives cannot describe - a
+  bracket, a gasket, a nameplate, a hexagon, anything with a constant
+  cross-section. Give at least three corners, in order round the outline, and
+  do not repeat the first corner at the end: it closes itself. The corners
+  describe the *shape*, not where it sits: the finished profile is centred on
+  the origin like every other shape, so use "move" to place it.
 - The first operation must add a shape. There is nothing to cut from yet.
 - Ask for the fewest operations that do what was requested. At most \
 {MAX_COMMANDS}.

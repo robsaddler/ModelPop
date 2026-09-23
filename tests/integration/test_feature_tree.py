@@ -17,10 +17,12 @@ from modelpop.domain.cad_commands import (
     CreateCylinder,
     CreateSphere,
     EdgeSelector,
+    Extrude,
     Face,
     Fillet,
     Hollow,
     Move,
+    Plane,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -408,3 +410,65 @@ def test_an_unlettered_model_offers_no_second_colour(model):
     assert model.apply(CreateBox(30, 30, 30)).ok
     assert not model.has_second_colour
     assert not model.colour_parts().ok
+
+
+@kernel_required
+def test_an_extruded_outline_has_the_area_it_encloses(model):
+    """The volume is the shoelace area times the height, and nothing else.
+
+    An L-shape is used deliberately: a rectangle would pass even if the
+    compiler silently built a bounding box instead of the outline.
+    """
+    assert model.apply(Extrude(((0, 0), (60, 0), (60, 20), (20, 20), (20, 40), (0, 40)), 8)).ok
+
+    size = model.state.measurements
+    assert size.volume_mm3 == pytest.approx(1600 * 8, rel=0.001), (
+        "a 60x20 leg and a 20x20 one, 8 mm thick"
+    )
+    assert size.width.millimetres == pytest.approx(60, abs=0.01)
+    assert size.depth.millimetres == pytest.approx(40, abs=0.01)
+    assert size.height.millimetres == pytest.approx(8, abs=0.01)
+    assert size.is_valid
+
+
+@kernel_required
+@pytest.mark.parametrize(
+    ("plane", "expected"),
+    [(Plane.XY, (30, 10, 5)), (Plane.XZ, (30, 5, 10)), (Plane.YZ, (5, 30, 10))],
+)
+def test_the_plane_decides_which_way_the_profile_faces(model, plane, expected):
+    assert model.apply(Extrude(((0, 0), (30, 0), (30, 10), (0, 10)), 5, plane)).ok
+
+    size = model.state.measurements
+    actual = (size.width.millimetres, size.depth.millimetres, size.height.millimetres)
+    assert actual == pytest.approx(expected, abs=0.01)
+
+
+@kernel_required
+def test_an_extruded_profile_can_be_cut_out_of_a_solid(model):
+    """A keyway in a plate: the operation a box cut cannot describe."""
+    assert model.apply(CreateBox(60, 60, 10)).ok
+    before = model.state.measurements.volume_mm3
+
+    assert model.apply(Extrude(((0, 0), (20, 0), (10, 25)), 30, cut=True)).ok
+
+    after = model.state.measurements
+    assert after.volume_mm3 == pytest.approx(before - 250 * 10, rel=0.001), (
+        "a triangle, all the way through: the profile is centred like the plate is"
+    )
+    assert after.solid_count == 1
+    assert after.height.millimetres == pytest.approx(10, abs=0.01), "the plate is no taller"
+
+
+@kernel_required
+def test_an_extruded_profile_takes_the_rest_of_the_vocabulary(model):
+    """The point of a profile is that everything downstream still works on it."""
+    assert model.apply(Extrude(((0, 0), (50, 0), (50, 30), (0, 30)), 12)).ok
+    square = model.state.measurements.volume_mm3
+
+    assert model.apply(Fillet(3, EdgeSelector.VERTICAL)).ok
+    assert model.apply(Hollow(2, Face.TOP)).ok
+
+    hollowed = model.state.measurements
+    assert hollowed.volume_mm3 < square * 0.5, "rounded and mostly air"
+    assert hollowed.is_valid

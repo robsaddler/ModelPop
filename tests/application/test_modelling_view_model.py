@@ -6,7 +6,7 @@ the only reason that is possible, and an import-linter contract keeps it so.
 """
 
 from modelpop.application.modelling import ModellingSession
-from modelpop.domain.cad_commands import EdgeSelector, Face, Fillet
+from modelpop.domain.cad_commands import EdgeSelector, Face, Fillet, Plane
 from modelpop.domain.result import failure, success
 from modelpop.domain.units import Length
 from modelpop.generation.command_loop import CommandEditRun
@@ -289,3 +289,53 @@ class TestDescribingAChange:
 
         assert seen[-1].refused
         assert "Settings" in seen[-1].detail
+
+
+class TestExtruding:
+    """An outline with thickness, driven with no display."""
+
+    SQUARE = ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0))
+
+    def test_it_joins_the_feature_tree_like_any_other_command(self):
+        model = view()
+        model.extrude(self.SQUARE, 6)
+
+        assert len(model.state.features) == 1
+        assert "Extrude a 4-point outline 6 mm" in model.state.features[0].label
+
+    def test_it_can_start_a_model(self):
+        """An outline is as good a way to begin a part as a box is."""
+        model = view()
+        model.extrude(self.SQUARE, 6)
+        assert not model.state.is_empty
+
+    def test_it_undoes(self):
+        model = view()
+        model.extrude(self.SQUARE, 6)
+        model.undo()
+        assert model.state.is_empty
+
+    def test_the_plane_and_the_cut_flag_reach_the_command(self):
+        model = view()
+        model.add_box(40, 40, 40)
+        model.extrude(self.SQUARE, 6, Plane.XZ, cut=True)
+
+        assert model.state.features[-1].label.startswith("Cut")
+        assert "front plane" in model.state.features[-1].label
+
+    def test_an_outline_that_encloses_nothing_is_refused_in_plain_words(self):
+        """Not passed to the kernel, whose message would say nothing useful."""
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        model.extrude(((0.0, 0.0), (10.0, 0.0)), 6)
+
+        assert seen[-1].refused
+        assert "three corners" in seen[-1].detail
+        assert model.state.is_empty, "and nothing was recorded"
+
+    def test_a_list_of_corners_is_accepted_as_readily_as_a_tuple(self):
+        """The dialog hands over whatever the parser produced."""
+        model = view()
+        model.extrude([(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], 6)
+        assert len(model.state.features) == 1

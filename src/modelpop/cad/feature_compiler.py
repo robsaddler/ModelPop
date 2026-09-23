@@ -31,10 +31,12 @@ from modelpop.domain.cad_commands import (
     CreateCylinder,
     CreateSphere,
     EdgeSelector,
+    Extrude,
     Face,
     Fillet,
     Hollow,
     Move,
+    Plane,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -209,6 +211,8 @@ def _fragment_for(command: Command, *, first: bool) -> str | None:
             return _shape(command, f"Cylinder({command.radius}, {command.height})", first=first)
         case CreateSphere():
             return _shape(command, f"Sphere({command.radius})", first=first)
+        case Extrude():
+            return _extrude_fragment(command, first=first)
         case _ if first:
             return None  # nothing to operate on yet
 
@@ -233,6 +237,57 @@ def _fragment_for(command: Command, *, first: bool) -> str | None:
             return _text_fragment(command)
         case _:
             return None
+
+
+_PLANES = {Plane.XY: "Plane.XY", Plane.XZ: "Plane.XZ", Plane.YZ: "Plane.YZ"}
+
+
+def _centre_of(points: tuple[tuple[float, float], ...]) -> tuple[float, float]:
+    """The middle of an outline's bounding box.
+
+    The bounding box rather than the centroid: a user reading "60 by 40 mm" off
+    the preview expects the part to straddle the origin by 30 and 20, and a
+    centroid puts an L-shape somewhere neither obvious nor useful.
+    """
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    return ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
+
+
+def _extrude_fragment(command: Extrude, *, first: bool) -> str | None:
+    """An outline given thickness.
+
+    Refused rather than built when the outline cannot enclose an area. Two
+    points are a line, and OCCT's complaint about extruding one names neither
+    the feature nor the problem.
+
+    The result is **centred on the origin**, in the plane and through the
+    thickness, because every other shape in the vocabulary is. Measured the
+    other way round first: an outline left where it was drawn and grown upwards
+    from the plane cut only half way through a 10 mm plate, because the plate
+    is centred and straddles the plane. The corners a user types are therefore
+    read as a shape, not as a position - ``move`` is what places it.
+    """
+    if not command.is_closed_enough:
+        return None
+
+    centre_x, centre_y = _centre_of(command.points)
+    points = ", ".join(f"({x - centre_x:g}, {y - centre_y:g})" for x, y in command.points)
+    plane = _PLANES[command.plane]
+    lines = [
+        f"_outline = Polyline([{points}], close=True)",
+        f"_profile = make_face({plane} * _outline)",
+        f"_solid = extrude(_profile, amount={command.height / 2}, both=True)",
+    ]
+
+    if first:
+        if command.cut:
+            return None  # nothing to cut from yet
+        lines.append("result = _solid")
+    else:
+        lines.append(f"result = result {'-' if command.cut else '+'} _solid")
+
+    return "\n".join(lines)
 
 
 def _shape(command: Any, expression: str, *, first: bool) -> str | None:

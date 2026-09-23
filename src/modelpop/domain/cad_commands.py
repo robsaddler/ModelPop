@@ -27,15 +27,19 @@ from modelpop.domain.commands import Command, Feature
 from modelpop.domain.units import Length
 
 __all__ = [
+    "MAX_OUTLINE_POINTS",
+    "MIN_OUTLINE_POINTS",
     "Chamfer",
     "CreateBox",
     "CreateCylinder",
     "CreateSphere",
     "EdgeSelector",
+    "Extrude",
     "Face",
     "Fillet",
     "Hollow",
     "Move",
+    "Plane",
     "Rotate",
     "ScaleTo",
     "TextOnSurface",
@@ -93,6 +97,65 @@ def _where(command: Any) -> str:
     if command.x == 0 and command.y == 0 and command.z == 0:
         return ""
     return f" at ({command.x:g}, {command.y:g}, {command.z:g})"
+
+
+# Three points is the fewest that can enclose an area. Below that there is
+# nothing to extrude.
+MIN_OUTLINE_POINTS = 3
+
+# An outline is drawn or described, not generated. Beyond this it is a mistake
+# or a model that has run away, and OCCT will be slow about it either way.
+MAX_OUTLINE_POINTS = 500
+
+
+def _tidy_outline(points: Any) -> tuple[tuple[float, float], ...]:
+    """Clean an outline into something a kernel can use.
+
+    Clamped, finite, capped in length, and with consecutive duplicates removed -
+    a repeated point makes a zero-length edge, which OCCT reports as a failure
+    with no hint about which point caused it.
+    """
+    cleaned: list[tuple[float, float]] = []
+    for point in list(points)[:MAX_OUTLINE_POINTS]:
+        try:
+            x, y = float(point[0]), float(point[1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        spot = (_clamp(x, -MAX_MM, MAX_MM), _clamp(y, -MAX_MM, MAX_MM))
+        if cleaned and _is_same_spot(cleaned[-1], spot):
+            continue
+        cleaned.append(spot)
+
+    # A closing point that repeats the first is redundant: the outline closes
+    # itself, and leaving it in makes another zero-length edge.
+    if len(cleaned) > 1 and _is_same_spot(cleaned[0], cleaned[-1]):
+        cleaned.pop()
+
+    return tuple(cleaned)
+
+
+def _is_same_spot(one: tuple[float, float], two: tuple[float, float]) -> bool:
+    """Whether two points are close enough to make a zero-length edge."""
+    return abs(one[0] - two[0]) < MIN_MM and abs(one[1] - two[1]) < MIN_MM
+
+
+class Plane(Enum):
+    """Which face of the world an outline is drawn on."""
+
+    XY = "floor"
+    """Flat on the bed, extruded upwards. What most parts want."""
+
+    XZ = "front"
+    YZ = "side"
+
+    @property
+    def describe(self) -> str:
+        """A phrase for the dialog."""
+        return {
+            Plane.XY: "flat on the bed, growing upwards",
+            Plane.XZ: "standing up, facing you",
+            Plane.YZ: "standing up, edge on",
+        }[self]
 
 
 class EdgeSelector(Enum):
@@ -463,6 +526,64 @@ class TextOnSurface(Command):
         return f'{how} "{self.text}" on the {self.face.value} at {self.size:g} mm'
 
 
+@dataclass(frozen=True, slots=True)
+class Extrude(Command):
+    """Draw a closed outline and give it thickness.
+
+    The operation CAD exists for, and the one the vocabulary was missing. A box,
+    a cylinder and a sphere between them describe very little; a profile
+    describes almost anything with a constant cross-section - a bracket, a
+    gasket, a nameplate, the side of a case.
+
+    The outline is a list of points in millimetres, closed automatically. Not a
+    parametric sketch with constraints: those need a solver, a user interface
+    to drive it, and a way to name edges that survives a rebuild. This is the
+    useful nine tenths of that, and it is honest about being it.
+    """
+
+    points: tuple[tuple[float, float], ...]
+    height: float
+    plane: Plane = Plane.XY
+    cut: bool = False
+
+    def __post_init__(self) -> None:
+        """Clamp the height and tidy the outline.
+
+        Points arrive from a language model as readily as from a mouse, so the
+        same rules apply: bounded, finite, and few enough to build.
+        """
+        object.__setattr__(self, "height", _clamp(self.height))
+        object.__setattr__(self, "points", _tidy_outline(self.points))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "extrude"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {
+            "points": [list(point) for point in self.points],
+            "height": self.height,
+            "plane": self.plane.value,
+            "cut": self.cut,
+        }
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        verb = "Cut" if self.cut else "Extrude"
+        return (
+            f"{verb} a {len(self.points)}-point outline {self.height:g} mm "
+            f"on the {self.plane.value} plane"
+        )
+
+    @property
+    def is_closed_enough(self) -> bool:
+        """Whether there are enough points to enclose an area at all."""
+        return len(self.points) >= MIN_OUTLINE_POINTS
+
+
 # --------------------------------------------------------------- rebuilding
 
 _BY_NAME: dict[str, Any] = {
@@ -475,6 +596,7 @@ _BY_NAME: dict[str, Any] = {
     "move": Move,
     "rotate": Rotate,
     "scale-to": ScaleTo,
+    "extrude": Extrude,
     "text-on-surface": TextOnSurface,
 }
 
@@ -506,6 +628,13 @@ def _construct(factory: Any, parameters: dict[str, Any]) -> Command:
         return Hollow(parameters["wall_thickness"], Face(opening) if opening else None)
     if factory is ScaleTo:
         return ScaleTo(Length.mm(parameters["height_mm"]))
+    if factory is Extrude:
+        return Extrude(
+            tuple(tuple(point) for point in parameters["points"]),
+            parameters["height"],
+            Plane(parameters.get("plane", "floor")),
+            bool(parameters.get("cut", False)),
+        )
     if factory is TextOnSurface:
         return TextOnSurface(
             parameters["text"],

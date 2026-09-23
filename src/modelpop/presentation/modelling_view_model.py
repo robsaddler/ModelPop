@@ -14,7 +14,7 @@ it without knowing where it came from.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -25,10 +25,12 @@ from modelpop.domain.cad_commands import (
     CreateCylinder,
     CreateSphere,
     EdgeSelector,
+    Extrude,
     Face,
     Fillet,
     Hollow,
     Move,
+    Plane,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -241,6 +243,32 @@ class ModellingViewModel:
     ) -> None:
         """Emboss or engrave text on a face."""
         self._apply(TextOnSurface(text, face, size, depth, raised))
+
+    def extrude(
+        self,
+        points: Sequence[tuple[float, float]],
+        height: float,
+        plane: Plane = Plane.XY,
+        *,
+        cut: bool = False,
+    ) -> None:
+        """Give a drawn outline thickness.
+
+        Refused here rather than in the kernel when the outline encloses
+        nothing, because "OCCT could not make that shape" tells a user with two
+        points on screen nothing about what to do next.
+        """
+        command = Extrude(tuple(points), height, plane, cut)
+        if not command.is_closed_enough:
+            self._announce(
+                Outcome(
+                    "That outline does not enclose anything",
+                    "An outline needs at least three corners to have an inside.",
+                    refused=True,
+                )
+            )
+            return
+        self._apply(command)
 
     def apply_from_assistant(self, command: Command) -> None:
         """Apply a command a language model asked for.

@@ -18,16 +18,20 @@ import pytest
 from modelpop.application.cad_ports import Part
 from modelpop.cad.feature_compiler import MAX_FEATURES, compile_document
 from modelpop.domain.cad_commands import (
+    MAX_MM,
+    MAX_OUTLINE_POINTS,
     MAX_RADIUS_MM,
     Chamfer,
     CreateBox,
     CreateCylinder,
     CreateSphere,
     EdgeSelector,
+    Extrude,
     Face,
     Fillet,
     Hollow,
     Move,
+    Plane,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -435,3 +439,117 @@ class TestSplittingIntoColours:
     def test_every_part_compiles_to_valid_python(self):
         for part in Part:
             compile(compile_document(self.lettered(), part).unwrap(), "<generated>", "exec")
+
+
+class TestOutlinesAndExtrusion:
+    """Drawing a profile and giving it thickness.
+
+    An outline arrives from a mouse or from a language model with equal ease,
+    so the same rules apply to both: finite, bounded, capped in length, and
+    free of the repeated points that OCCT rejects without saying which point
+    it meant.
+    """
+
+    SQUARE = ((0, 0), (10, 0), (10, 10), (0, 10))
+
+    def test_a_simple_outline_survives_intact(self):
+        assert Extrude(self.SQUARE, 5).points == (
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 10.0),
+            (0.0, 10.0),
+        )
+
+    def test_a_repeated_point_is_dropped(self):
+        """A zero-length edge is a kernel failure with no useful message."""
+        outline = Extrude(((0, 0), (10, 0), (10, 0), (10, 10)), 5).points
+        assert outline == ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0))
+
+    def test_a_closing_point_that_repeats_the_first_is_redundant(self):
+        """The outline closes itself; leaving it in makes another dead edge."""
+        assert Extrude(((0, 0), (10, 0), (10, 10), (0, 0)), 5).points == (
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 10.0),
+        )
+
+    def test_points_are_clamped_to_the_buildable_world(self):
+        for x, y in Extrude(((0, 0), (1e9, 0), (0, -1e9)), 5).points:
+            assert abs(x) <= MAX_MM and abs(y) <= MAX_MM
+
+    def test_nonsense_points_are_skipped_rather_than_crashing(self):
+        outline = Extrude(((0, 0), "nope", (10, 0), None, (10, 10)), 5).points
+        assert outline == ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0))
+
+    def test_a_runaway_outline_is_capped(self):
+        many = tuple((i * 0.5, i) for i in range(MAX_OUTLINE_POINTS * 3))
+        assert len(Extrude(many, 5).points) <= MAX_OUTLINE_POINTS
+
+    def test_the_height_is_clamped_like_every_other_length(self):
+        assert Extrude(self.SQUARE, 1e9).height <= MAX_MM
+        assert Extrude(self.SQUARE, -4).height > 0
+
+    def test_too_few_points_is_not_closed_enough(self):
+        assert not Extrude(((0, 0), (10, 0)), 5).is_closed_enough
+        assert Extrude(self.SQUARE, 5).is_closed_enough
+
+    def test_it_says_what_it_is(self):
+        assert "Extrude a 4-point outline 5 mm" in Extrude(self.SQUARE, 5).describe()
+        assert Extrude(self.SQUARE, 5, Plane.XZ, cut=True).describe().startswith("Cut")
+
+    def test_it_survives_a_round_trip_through_the_document(self):
+        original = Extrude(self.SQUARE, 5, Plane.YZ, cut=True)
+        rebuilt = command_from(tree(CreateBox(20, 20, 20), original).active_features[-1])
+
+        assert rebuilt == original
+
+    def test_it_compiles_to_a_closed_profile_given_thickness(self):
+        source = script_for(Extrude(self.SQUARE, 5))
+
+        assert "Polyline([(-5, -5), (5, -5), (5, 5), (-5, 5)], close=True)" in source
+        assert "make_face(Plane.XY * _outline)" in source
+        assert "result = _solid" in source
+
+    def test_the_profile_is_centred_on_the_origin_like_every_other_shape(self):
+        """Measured, not assumed.
+
+        An outline grown upwards from where it was drawn cut only half way
+        through a 10 mm plate, because the plate is centred and straddles the
+        plane. Everything in this vocabulary is centred, so an outline is too,
+        and the corners a user types describe a shape rather than a position.
+        """
+        source = script_for(Extrude(((0, 0), (60, 0), (60, 40), (0, 40)), 10))
+
+        assert "Polyline([(-30, -20), (30, -20), (30, 20), (-30, 20)]" in source
+        assert "extrude(_profile, amount=5.0, both=True)" in source
+
+    def test_the_plane_reaches_the_script(self):
+        assert "Plane.XZ * _outline" in script_for(Extrude(self.SQUARE, 5, Plane.XZ))
+        assert "Plane.YZ * _outline" in script_for(Extrude(self.SQUARE, 5, Plane.YZ))
+
+    def test_a_second_profile_is_added_to_the_first(self):
+        source = script_for(Extrude(self.SQUARE, 5), Extrude(self.SQUARE, 3))
+        assert "result = result + _solid" in source
+
+    def test_a_cut_profile_removes_material(self):
+        source = script_for(CreateBox(40, 40, 10), Extrude(self.SQUARE, 20, cut=True))
+        assert "result = result - _solid" in source
+
+    def test_a_cut_cannot_be_the_first_thing_in_the_model(self):
+        """There is nothing to cut it out of yet."""
+        result = compile_document(tree(Extrude(self.SQUARE, 5, cut=True)))
+        assert not result.ok
+
+    def test_an_outline_that_encloses_nothing_is_refused(self):
+        result = compile_document(tree(Extrude(((0, 0), (10, 0)), 5)))
+        assert not result.ok
+
+    def test_it_compiles_to_valid_python(self):
+        compile(
+            script_for(CreateBox(40, 40, 10), Extrude(self.SQUARE, 20, cut=True)),
+            "<generated>",
+            "exec",
+        )
+
+    def test_it_is_part_of_the_vocabulary_offered_to_a_model(self):
+        assert "extrude" in known_commands()
