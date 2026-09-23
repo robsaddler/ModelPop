@@ -8,6 +8,7 @@ system that executes generated code.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -21,6 +22,7 @@ __all__ = [
     "Dimension",
     "DimensionTable",
     "FeatureCompiler",
+    "Part",
     "ScriptResult",
     "SolidMeasurements",
 ]
@@ -139,6 +141,24 @@ class CadKernel(Protocol):
         ...
 
 
+class Part(Enum):
+    """Which piece of a model to build.
+
+    Raised lettering is a second colour waiting to happen: the body in one
+    filament, the letters in another. The same tree compiles three ways, which
+    is what lets a slicer be handed two objects instead of one.
+    """
+
+    WHOLE = "whole"
+    """Everything, fused. What the viewport shows."""
+
+    BODY = "body"
+    """Without the raised lettering. The first filament."""
+
+    DECORATION = "decoration"
+    """Only the raised lettering. The second filament."""
+
+
 @runtime_checkable
 class FeatureCompiler(Protocol):
     """Rebuilding a feature tree into geometry.
@@ -155,7 +175,7 @@ class FeatureCompiler(Protocol):
         """Whether a rebuild can run right now."""
         ...
 
-    def script_for(self, document: Document) -> Result[str]:
+    def script_for(self, document: Document, part: Part = Part.WHOLE) -> Result[str]:
         """The source this document compiles to, without running it.
 
         Exposed so the user can read what their model actually is. A model you
@@ -163,6 +183,15 @@ class FeatureCompiler(Protocol):
         """
         ...
 
-    def build(self, document: Document, timeout_seconds: float = 60.0) -> Result[ScriptResult]:
-        """Rebuild the whole tree and return the solid."""
+    def build(
+        self,
+        document: Document,
+        timeout_seconds: float = 60.0,
+        part: Part = Part.WHOLE,
+    ) -> Result[ScriptResult]:
+        """Rebuild the tree and return the solid."""
+        ...
+
+    def has_second_colour(self, document: Document) -> bool:
+        """Whether this model has raised lettering that could print separately."""
         ...

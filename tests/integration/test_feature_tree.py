@@ -343,3 +343,68 @@ def test_a_drilled_bracket_builds_and_saves(model, tmp_path):
     store = JsonProjectStore()
     saved = store.save(model.state.document, tmp_path / "bracket").unwrap()
     assert store.load(saved).unwrap().is_complete
+
+
+@kernel_required
+def test_a_lettered_model_splits_into_two_printable_parts(model, tmp_path):
+    """Rob's own example, as two filaments.
+
+    The interesting number is how little the lettering is: a fraction of a
+    percent of the model, which is the whole reason the AMS purge matters so
+    much for it.
+    """
+    from modelpop.mesh import TrimeshIO
+
+    for command in (
+        CreateBox(60, 20, 40),
+        Fillet(2, EdgeSelector.VERTICAL),
+        TextOnSurface("MSI", Face.FRONT, 14, 1.5),
+    ):
+        assert model.apply(command).ok, command.describe()
+
+    assert model.has_second_colour
+
+    lettered = ModellingSession(Build123dCompiler(Build123dKernel()), mesh_io=TrimeshIO())
+    for command in (
+        CreateBox(60, 20, 40),
+        Fillet(2, EdgeSelector.VERTICAL),
+        TextOnSurface("MSI", Face.FRONT, 14, 1.5),
+    ):
+        assert lettered.apply(command).ok
+
+    parts = lettered.colour_parts(tmp_path).unwrap()
+
+    assert parts.body_path is not None and parts.body_path.exists()
+    assert parts.decoration_path is not None and parts.decoration_path.exists()
+
+    # the two add up to the whole, which is the property that makes this a split
+    whole = model.state.measurements.volume_mm3
+    assert parts.body.volume + parts.decoration.volume == pytest.approx(whole, rel=0.01)
+
+    # and the lettering is a sliver, which is the point worth knowing
+    assert 0 < parts.decoration_fraction < 0.05
+    assert "lettering" in parts.describe()
+
+
+@kernel_required
+def test_the_body_alone_has_no_lettering_on_it(tmp_path):
+    """Measured rather than read off the script: the body must be smaller."""
+    from modelpop.mesh import TrimeshIO
+
+    session = ModellingSession(Build123dCompiler(Build123dKernel()), mesh_io=TrimeshIO())
+    session.apply(CreateBox(60, 20, 40))
+    plain = session.state.measurements.volume_mm3
+
+    session.apply(TextOnSurface("MSI", Face.FRONT, 14, 1.5))
+    lettered = session.state.measurements.volume_mm3
+    assert lettered > plain, "the lettering should have added material"
+
+    parts = session.colour_parts().unwrap()
+    assert parts.body.volume == pytest.approx(plain, rel=0.01)
+
+
+@kernel_required
+def test_an_unlettered_model_offers_no_second_colour(model):
+    assert model.apply(CreateBox(30, 30, 30)).ok
+    assert not model.has_second_colour
+    assert not model.colour_parts().ok

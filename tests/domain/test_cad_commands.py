@@ -15,6 +15,7 @@ import math
 
 import pytest
 
+from modelpop.application.cad_ports import Part
 from modelpop.cad.feature_compiler import MAX_FEATURES, compile_document
 from modelpop.domain.cad_commands import (
     MAX_RADIUS_MM,
@@ -366,3 +367,71 @@ class TestCuttingAndPlacing:
         assert restored is not None
         assert restored.parameters["x"] == 0.0
         assert restored.parameters["cut"] is False
+
+
+class TestSplittingIntoColours:
+    """Raised lettering is a second colour waiting to happen.
+
+    The compiled scripts are asserted on directly, because a wrong split still
+    produces *a* pair of shapes and geometry alone would not catch it.
+    """
+
+    def lettered(self):
+        return tree(
+            CreateBox(60, 20, 40),
+            Fillet(2, EdgeSelector.VERTICAL),
+            TextOnSurface("MSI", Face.FRONT, 14, 1.5),
+        )
+
+    def test_the_body_leaves_the_lettering_out(self):
+        source = compile_document(self.lettered(), Part.BODY).unwrap()
+        assert "Text(" not in source
+        assert "Box(" in source
+
+    def test_the_lettering_is_only_the_lettering(self):
+        source = compile_document(self.lettered(), Part.DECORATION).unwrap()
+        assert source.rstrip().endswith("result = _decoration")
+
+    def test_the_lettering_still_needs_the_body_to_sit_on(self):
+        """It is placed on a face, so the face has to exist first."""
+        source = compile_document(self.lettered(), Part.DECORATION).unwrap()
+        assert "Box(" in source
+        assert "faces()" in source
+
+    def test_the_whole_thing_is_still_one_object(self):
+        source = compile_document(self.lettered(), Part.WHOLE).unwrap()
+        assert "result = result + _relief" in source
+        assert not source.rstrip().endswith("result = _decoration")
+
+    def test_several_letters_accumulate_rather_than_replacing_each_other(self):
+        document = tree(
+            CreateBox(60, 20, 40),
+            TextOnSurface("MSI", Face.FRONT, 12, 1.5),
+            TextOnSurface("P2S", Face.BACK, 12, 1.5),
+        )
+        source = compile_document(document, Part.DECORATION).unwrap()
+        assert source.count("_decoration = _relief if _decoration is None") == 2
+
+    def test_engraved_text_is_not_a_second_colour(self):
+        """It is a hole in the body. There is no second solid to print."""
+        document = tree(
+            CreateBox(60, 20, 40),
+            TextOnSurface("MSI", Face.FRONT, 12, 1.5, raised=False),
+        )
+        result = compile_document(document, Part.DECORATION)
+
+        assert not result.ok
+        assert "nothing to print in a second colour" in result.error
+
+    def test_a_model_with_no_lettering_is_refused_with_a_reason(self):
+        result = compile_document(tree(CreateBox(10, 10, 10)), Part.DECORATION)
+        assert not result.ok
+        assert "Add raised text" in result.detail
+
+    def test_the_body_of_an_unlettered_model_is_just_the_model(self):
+        plain = tree(CreateBox(10, 10, 10), Fillet(1))
+        assert compile_document(plain, Part.BODY).unwrap() == compile_document(plain).unwrap()
+
+    def test_every_part_compiles_to_valid_python(self):
+        for part in Part:
+            compile(compile_document(self.lettered(), part).unwrap(), "<generated>", "exec")

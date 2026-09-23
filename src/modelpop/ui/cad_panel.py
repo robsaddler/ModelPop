@@ -11,6 +11,7 @@ interface thread, because a rebuild is a subprocess and takes a second or two.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -398,6 +400,14 @@ class CadPanel(QWidget):
         history_row.addWidget(new_model)
         rows.addLayout(history_row)
 
+        self._split_button = QPushButton("Split into two colours...")
+        self._split_button.setToolTip(
+            "Write the body and the raised lettering as separate files, so a "
+            "slicer can give each its own filament"
+        )
+        self._split_button.clicked.connect(self._split_colours)
+        rows.addWidget(self._split_button)
+
         return group
 
     # --------------------------------------------------------------- commands
@@ -413,6 +423,12 @@ class CadPanel(QWidget):
         index = self._opening.currentIndex()
         opening = None if index == 0 else _FACE_CHOICES[index - 1][1]
         self._view.hollow(self._wall.value(), opening)
+
+    def _split_colours(self) -> None:
+        """Ask where the two files should go, then write them."""
+        directory = QFileDialog.getExistingDirectory(self, "Where should the two parts go?")
+        if directory:
+            self._view.split_colours(Path(directory))
 
     def _describe_a_change(self) -> None:
         self._view.describe_a_change(self._instruction.text())
@@ -462,6 +478,7 @@ class CadPanel(QWidget):
 
         self._describe_button.setEnabled(self._view.can_describe_a_change)
         self._instruction.setEnabled(self._view.can_describe_a_change)
+        self._split_button.setEnabled(self._view.can_split_colours)
         self._undo_button.setEnabled(self._view.can_undo)
         self._redo_button.setEnabled(self._view.can_redo)
         self._undo_button.setToolTip(self._view.state.undo_label)

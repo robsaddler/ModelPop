@@ -338,6 +338,40 @@ class ModellingViewModel:
         self._announce_state()
         self._announce(Outcome("Started a new model."))
 
+    # ------------------------------------------------------------- colours
+
+    @property
+    def can_split_colours(self) -> bool:
+        """Whether this model has a second colour worth separating."""
+        return self._session.has_second_colour and not self._busy
+
+    def split_colours(self, into: Path) -> None:
+        """Write the model out as one file per filament.
+
+        Two builds, so it goes to the worker like any other rebuild. The result
+        is reported with what each part weighs, because the interesting fact is
+        almost always how *little* the lettering is.
+        """
+        if self._busy:
+            self._announce(Outcome("Still rebuilding; that was ignored.", refused=True))
+            return
+
+        self._set_busy(True)
+
+        def finish() -> None:
+            try:
+                outcome = self._session.colour_parts(into)
+                if isinstance(outcome, Failure):
+                    self._announce(Outcome(outcome.reason, outcome.detail, refused=True))
+                    return
+                parts = outcome.unwrap()
+                self._announce(Outcome(parts.describe(), f"Written to {into}."))
+            finally:
+                self._set_busy(False)
+                self._announce_state()
+
+        self._runner(finish)
+
     # -------------------------------------------------------------- reading
 
     def script(self) -> str:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from modelpop.application.cad_ports import Part
 from modelpop.domain.cad_commands import (
     Chamfer,
     CreateBox,
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
 __all__ = ["Build123dCompiler", "compile_document"]
 
+
 # A rebuild replays everything, so the cost is linear in the tree. This is far
 # above anything a person builds by hand and low enough that a runaway loop of
 # model-emitted commands cannot make a rebuild take minutes.
@@ -57,6 +59,10 @@ from build123d import *
 
 # Built from a ModelPop feature tree. Every line below came from one recorded
 # feature, in order. Editing this file changes nothing: the tree is the model.
+
+# Raised lettering accumulates here as well as being fused into the body, so the
+# same tree can be compiled as one object or as two colours.
+_decoration = None
 """
 
 _EDGE_FILTERS: dict[EdgeSelector, str] = {
@@ -79,13 +85,18 @@ _FACE_PICKERS: dict[Face, str] = {
 }
 
 
-def compile_document(document: Document) -> Result[str]:
+def compile_document(document: Document, part: Part = Part.WHOLE) -> Result[str]:
     """Turn a feature tree into a build123d script.
 
     Pure: no kernel, no file system, no subprocess. That is what makes the
     generated script assertable in a millisecond test, which matters because
     getting the script wrong is the failure mode with no visible symptom - it
     produces *a* shape, just not the right one.
+
+    Args:
+        document: the feature tree.
+        part: which piece to build. The default is the whole model; the other
+            two separate a lettered model into its two colours.
     """
     features = document.active_features
     if not features:
@@ -110,6 +121,9 @@ def compile_document(document: Document) -> Result[str]:
             unknown.append(feature.name)
             continue
 
+        if part is Part.BODY and _is_decoration(command):
+            continue
+
         fragment = _fragment_for(command, first=not started)
         if fragment is None:
             unknown.append(feature.name)
@@ -126,12 +140,31 @@ def compile_document(document: Document) -> Result[str]:
             f"Unrecognised: {', '.join(unknown)}." if unknown else "The tree is empty.",
         )
 
+    if part is Part.DECORATION:
+        if not any(_is_decoration(command_from(f)) for f in features):
+            return failure(
+                "There is nothing to print in a second colour",
+                "Add raised text to the model first.",
+            )
+        lines.append("# Only the raised lettering, for the second filament.")
+        lines.append("result = _decoration")
+        lines.append("")
+
     if unknown:
         # Said out loud rather than skipped silently. A document saved by a
         # newer build must open here, but the user has to know it is not whole.
         lines.append(f"# Skipped, not understood by this version: {', '.join(unknown)}")
 
     return success("\n".join(lines))
+
+
+def _is_decoration(command: Command | None) -> bool:
+    """Whether a feature is lettering that stands proud of the body.
+
+    Engraved text is *not* decoration: it is a hole in the body, and there is no
+    second solid to print in another colour.
+    """
+    return isinstance(command, TextOnSurface) and command.raised
 
 
 def _known_to_fail(features: tuple[Feature, ...]) -> Result[str] | None:
@@ -259,7 +292,12 @@ def _text_fragment(command: TextOnSurface) -> str:
         "_centred = (Align.CENTER, Align.CENTER)\n"
         f"_glyphs = _plane * Text({safe}, font_size={command.size}, align=_centred)\n"
         f"_relief = extrude(_glyphs, amount={sign}{command.depth})\n"
-        f"result = result {'+' if command.raised else '-'} _relief"
+        + (
+            "_decoration = _relief if _decoration is None else _decoration + _relief\n"
+            if command.raised
+            else ""
+        )
+        + f"result = result {'+' if command.raised else '-'} _relief"
     )
 
 
@@ -279,17 +317,26 @@ class Build123dCompiler:
         """Whether a rebuild can run right now."""
         return self._kernel.is_available()
 
-    def script_for(self, document: Document) -> Result[str]:
+    def script_for(self, document: Document, part: Part = Part.WHOLE) -> Result[str]:
         """The build123d source this document compiles to.
 
         Exposed so the user can read what their model actually is, and so a
         test can assert on the script without paying for a subprocess.
         """
-        return compile_document(document)
+        return compile_document(document, part)
 
-    def build(self, document: Document, timeout_seconds: float = 60.0) -> Result[ScriptResult]:
-        """Rebuild the whole tree and return the solid."""
-        script = compile_document(document)
+    def build(
+        self,
+        document: Document,
+        timeout_seconds: float = 60.0,
+        part: Part = Part.WHOLE,
+    ) -> Result[ScriptResult]:
+        """Rebuild the tree and return the solid."""
+        script = compile_document(document, part)
         if not script.ok:
             return script  # type: ignore[return-value]
         return self._kernel.run(script.unwrap(), timeout_seconds)
+
+    def has_second_colour(self, document: Document) -> bool:
+        """Whether this model has raised lettering that could print separately."""
+        return any(_is_decoration(command_from(f)) for f in document.active_features)

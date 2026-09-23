@@ -6,10 +6,16 @@ trustworthy, and that a refused change leaves nothing behind.
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
-from modelpop.application.cad_ports import FeatureCompiler, ScriptResult, SolidMeasurements
+from modelpop.application.cad_ports import (
+    FeatureCompiler,
+    Part,
+    ScriptResult,
+    SolidMeasurements,
+)
 from modelpop.application.modelling import ModellingSession
 from modelpop.domain.cad_commands import (
     Chamfer,
@@ -71,16 +77,30 @@ class FakeCompiler:
     """Refuse any document holding a feature with this name. Stands in for a
     kernel rejecting geometry it cannot make."""
 
+    refuse_part: Part | None = None
+    """Refuse one piece of a colour split. A body that builds and lettering that
+    does not is a real outcome, and the message has to name which."""
+
     builds: list[Document] = field(default_factory=list)
 
     def is_available(self) -> bool:
         return self.available
 
-    def script_for(self, document: Document) -> Result[str]:
+    def script_for(self, document: Document, part: Part = Part.WHOLE) -> Result[str]:
         return success("\n".join(f.name for f in document.active_features))
 
-    def build(self, document: Document, timeout_seconds: float = 60.0) -> Result[ScriptResult]:
+    def has_second_colour(self, document: Document) -> bool:
+        return any(f.name == "text-on-surface" for f in document.active_features)
+
+    def build(
+        self,
+        document: Document,
+        timeout_seconds: float = 60.0,
+        part: Part = Part.WHOLE,
+    ) -> Result[ScriptResult]:
         self.builds.append(document)
+        if self.refuse_part is not None and part is self.refuse_part:
+            return failure("The kernel refused it", f"the {part.value} could not be made.")
         if self.refuse_containing and any(
             f.name == self.refuse_containing for f in document.active_features
         ):
@@ -96,6 +116,25 @@ class FakeCompiler:
                 ),
             )
         )
+
+
+@dataclass
+class FakeIO:
+    """Writes a mesh by noting where it was asked to put it."""
+
+    written: list[Path] = field(default_factory=list)
+    error: str = ""
+
+    def load(self, path: Path) -> Result[Mesh]:
+        return failure("not used here")
+
+    def save(self, mesh: Mesh, path: Path) -> Result[Path]:
+        if self.error:
+            return failure(self.error)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"solid fake\nendsolid fake\n")
+        self.written.append(path)
+        return success(path)
 
 
 def session(**kwargs) -> ModellingSession:
@@ -341,3 +380,77 @@ class TestReadingTheModel:
         two.apply(CreateCylinder(5, 10))
 
         assert one.state.document.content_hash != two.state.document.content_hash
+
+
+class TestColourParts:
+    """Splitting a model into the two filaments it would print in."""
+
+    def lettered(self, **kwargs) -> ModellingSession:
+        session = ModellingSession(FakeCompiler(**kwargs), mesh_io=FakeIO())
+        session.apply(CreateBox(60, 20, 40))
+        session.apply(TextOnSurface("MSI", Face.FRONT, 14, 1.5))
+        return session
+
+    def test_a_lettered_model_reports_a_second_colour(self):
+        assert self.lettered().has_second_colour
+
+    def test_a_plain_model_does_not(self):
+        session = ModellingSession(FakeCompiler(), mesh_io=FakeIO())
+        session.apply(CreateBox(10, 10, 10))
+        assert not session.has_second_colour
+
+    def test_both_parts_are_built(self):
+        compiler = FakeCompiler()
+        session = ModellingSession(compiler, mesh_io=FakeIO())
+        session.apply(CreateBox(60, 20, 40))
+        session.apply(TextOnSurface("MSI"))
+
+        before = len(compiler.builds)
+        assert session.colour_parts().ok
+        assert len(compiler.builds) - before == 2, "one build per filament"
+
+    def test_a_model_with_no_lettering_is_refused(self):
+        session = ModellingSession(FakeCompiler(), mesh_io=FakeIO())
+        session.apply(CreateBox(10, 10, 10))
+
+        result = session.colour_parts()
+        assert not result.ok
+        assert "second colour" in result.error
+
+    def test_without_a_kernel_it_says_so(self):
+        assert not ModellingSession(None).colour_parts().ok
+
+    def test_they_are_written_side_by_side_named_for_what_they_are(self, tmp_path):
+        result = self.lettered().colour_parts(tmp_path)
+        parts = result.unwrap()
+
+        assert parts.body_path is not None and parts.body_path.name == "body.stl"
+        assert parts.decoration_path is not None
+        assert parts.decoration_path.name == "lettering.stl"
+
+    def test_nothing_is_written_when_no_directory_is_given(self, tmp_path):
+        parts = self.lettered().colour_parts().unwrap()
+        assert parts.body_path is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_build_that_fails_names_which_part(self):
+        """A body that builds and lettering that does not is a real outcome."""
+        session = self.lettered(refuse_part=Part.DECORATION)
+        result = session.colour_parts()
+
+        assert not result.ok
+        assert "decoration" in result.error
+
+    def test_a_body_that_will_not_build_is_named_too(self):
+        result = self.lettered(refuse_part=Part.BODY).colour_parts()
+        assert not result.ok
+        assert "body" in result.error
+
+    def test_a_write_that_fails_says_which_file(self, tmp_path):
+        session = ModellingSession(FakeCompiler(), mesh_io=FakeIO(error="the disk is full"))
+        session.apply(CreateBox(60, 20, 40))
+        session.apply(TextOnSurface("MSI"))
+
+        result = session.colour_parts(tmp_path)
+        assert not result.ok
+        assert "could not be saved" in result.error

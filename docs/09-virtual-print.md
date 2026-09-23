@@ -136,7 +136,28 @@ Section 3's arithmetic is now **unblocked**, because the two inputs it needs are
   is now computed from the stated length and diameter: a 30x30x20 mm box is 7.42 g, not nothing.
   (Also: the header's volume line is labelled `cm^3` and carries cubic millimetres. It is not used.)
 
-The remaining piece is a multi-colour model to slice, which needs the part-splitting work in Phase 8.
-When it lands, the comparison should be made **by slicing both ways and reading the slicer's own
-numbers**, not by modelling the cost of a tool change - the slicer already prices that, and an
-invented per-change constant would look measured without being measured.
+The comparison is built, in `modelpop.printing.ams`, and made **by slicing both ways and reading
+the slicer's own numbers** rather than by modelling the cost of a tool change. The slicer already
+prices that, and an invented per-change constant would look measured without being measured.
+
+### And the model can now be split
+
+`ColourParts` compiles a lettered model three ways - whole, body, lettering - and writes the last
+two as separate files a slicer can give different filaments. Compiled apart rather than cut apart:
+recovering the lettering by subtracting meshes afterwards would be slow, fragile at the seam, and
+would throw away the exactness that made it worth building in a kernel.
+
+Measured on a 60 x 20 x 40 mm block with "MSI" raised 1.5 mm on its front:
+
+| | |
+|---|---|
+| Body | 47.9 cm3 |
+| Lettering | 0.14 cm3 |
+| The lettering as a share | **0.3%** |
+
+That number is the whole argument. One filament change on this profile purges **280 mm3** - so
+printing that lettering on the AMS throws away **twice as much filament as the lettering contains**.
+Printed as two plates it wastes nothing and costs one plate change.
+
+This is exactly the trade the comparison exists to show, and it is not obvious until the numbers are
+side by side.

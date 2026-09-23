@@ -16,22 +16,57 @@ in a state that builds - which is the invariant that makes undo trustworthy.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modelpop.application.cad_ports import Part
 from modelpop.domain.cad_commands import command_from
 from modelpop.domain.commands import CommandBus, Document, DocumentHistory, Origin
 from modelpop.domain.result import Result, failure, success
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from modelpop.application.cad_ports import FeatureCompiler, SolidMeasurements
+    from modelpop.application.ports import MeshIO
     from modelpop.application.project_ports import ProjectStore
     from modelpop.domain.commands import Command, Feature
     from modelpop.domain.mesh import Mesh
 
-__all__ = ["FeatureLine", "ModelState", "ModellingSession"]
+__all__ = ["ColourParts", "FeatureLine", "ModelState", "ModellingSession"]
+
+
+@dataclass(frozen=True, slots=True)
+class ColourParts:
+    """A model split into the two filaments it would print in.
+
+    Two separate solids rather than one, so a slicer can be told which filament
+    each takes. Compiled apart rather than cut apart: a boolean on two meshes to
+    recover the lettering would be slow, fragile at the seam, and would throw
+    away the exactness that made it worth building in a kernel.
+    """
+
+    body: Mesh
+    decoration: Mesh
+    body_path: Path | None = None
+    decoration_path: Path | None = None
+
+    @property
+    def decoration_fraction(self) -> float:
+        """How much of the model is the second colour.
+
+        Usually a fraction of a percent - lettering on a large body - which is
+        exactly why the AMS purge matters so much for it.
+        """
+        total = self.body.volume + self.decoration.volume
+        return self.decoration.volume / total if total > 0 else 0.0
+
+    def describe(self) -> str:
+        """A line for the user."""
+        return (
+            f"Split into two: the body at {self.body.volume / 1000:.1f} cm3 and the "
+            f"lettering at {self.decoration.volume / 1000:.2f} cm3 "
+            f"({self.decoration_fraction:.1%} of it)."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +161,7 @@ class ModellingSession:
         self,
         compiler: FeatureCompiler | None = None,
         projects: ProjectStore | None = None,
+        mesh_io: MeshIO | None = None,
     ) -> None:
         """Wire the session to a compiler and a place to keep projects.
 
@@ -134,9 +170,12 @@ class ModellingSession:
                 still starts when the CAD kernel failed to load - the tree can
                 be read and edited, it just cannot be built.
             projects: reads and writes project files.
+            mesh_io: writes the colour parts out. Optional: without it they can
+                still be built and looked at, just not saved.
         """
         self._compiler = compiler
         self._projects = projects
+        self._io = mesh_io
         self._bus = CommandBus()
         self._state = ModelState()
 
@@ -234,6 +273,67 @@ class ModellingSession:
         """
         self._bus = CommandBus(_history_for(document))
         return self._rebuild()
+
+    # ------------------------------------------------------------- colours
+
+    @property
+    def has_second_colour(self) -> bool:
+        """Whether this model has raised lettering that could print separately."""
+        return self._compiler is not None and self._compiler.has_second_colour(self._bus.document)
+
+    def colour_parts(self, into: Path | None = None) -> Result[ColourParts]:
+        """Build the model as two solids, one per filament.
+
+        Two builds rather than one, so it costs two subprocesses - which is the
+        right trade for an export nobody runs in a loop, and far better than
+        recovering the lettering by subtracting meshes afterwards.
+        """
+        if self._compiler is None:
+            return failure(
+                "The CAD kernel is unavailable",
+                "build123d could not be loaded, so the model cannot be split.",
+            )
+        if not self.has_second_colour:
+            return failure(
+                "There is nothing to print in a second colour",
+                "Add raised text to the model first.",
+            )
+
+        built: dict[Part, Mesh] = {}
+        for part in (Part.BODY, Part.DECORATION):
+            outcome = self._compiler.build(self._bus.document, part=part)
+            if not outcome.ok:
+                return failure(
+                    f"The {part.value} could not be built",
+                    outcome.error,
+                )
+            built[part] = outcome.unwrap().mesh
+
+        parts = ColourParts(body=built[Part.BODY], decoration=built[Part.DECORATION])
+        if into is None or self._io is None:
+            return success(parts)
+        return self._write(parts, into)
+
+    def _write(self, parts: ColourParts, into: Path) -> Result[ColourParts]:
+        """Save both parts beside each other, named for what they are."""
+        assert self._io is not None
+        into.mkdir(parents=True, exist_ok=True)
+
+        written: dict[str, Path] = {}
+        for name, mesh in (("body", parts.body), ("lettering", parts.decoration)):
+            target = into / f"{name}.stl"
+            saved = self._io.save(mesh, target)
+            if not saved.ok:
+                return failure(f"The {name} could not be saved", saved.error)
+            written[name] = target
+
+        return success(
+            replace(
+                parts,
+                body_path=written["body"],
+                decoration_path=written["lettering"],
+            )
+        )
 
     # -------------------------------------------------------------- reading
 

@@ -85,7 +85,11 @@ def main() -> int:
     window = MainWindow(
         build_workspace(),
         lambda: build_discovery(secrets),
-        ModellingSession(Build123dCompiler(Build123dKernel()), JsonProjectStore()),
+        ModellingSession(
+            Build123dCompiler(Build123dKernel()),
+            JsonProjectStore(),
+            TrimeshIO(),
+        ),
     )
     window.show()
     return app.exec()

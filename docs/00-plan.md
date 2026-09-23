@@ -52,7 +52,7 @@ Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-p
 
 Phase 5  Edit it properly   ─ feature tree, commands and projects DONE; sketches and gizmos to come
 Phase 7  Photos → replica   ─ multi-photo reconstruction, scale from a reference in shot
-Phase 8  Make it delightful ─ detail rescue, multi-colour splitting, printer comms
+Phase 8  Make it delightful ─ detail rescue, printer comms (multi-colour splitting DONE)
 ```
 
 **Phases 4 and 6 arrived early, out of order.** Once the CAD kernel was in place, generating a
