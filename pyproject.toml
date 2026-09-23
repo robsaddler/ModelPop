@@ -134,8 +134,18 @@ module = [
     "pymeshfix.*", "pymeshlab.*",
     # optional extras: the app runs without them and says so
     "anthropic.*", "keyring.*",
+    # installed only in the separate generation environment, never here
+    "torch.*", "trellis.*", "triposg.*", "rembg.*", "PIL.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The generation worker runs in a SEPARATE interpreter with PyTorch and a
+# generative model installed. Those packages are deliberately not dependencies
+# of ModelPop and never will be, so there is nothing here for mypy to find.
+module = ["modelpop.generation.mesh_worker"]
+disallow_untyped_calls = false
+disallow_untyped_defs = false
 
 [[tool.mypy.overrides]]
 # trimesh ships partial type information, so calls into it read as untyped.

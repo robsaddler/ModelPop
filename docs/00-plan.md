@@ -48,7 +48,7 @@ Phase 6  Edit by prompt    ── DONE  for generated parts: the script is the d
 Phase 2b Verify the G-code ── DONE  unsupported islands and first-layer area, from the toolpath
 Phase 2.5 Find something   ── DONE  repository search, ranked gallery, licence tick (ADR-0008)
 
-Phase 3   Generate a mesh   ─ generation venv, TRELLIS.2, GPU lease
+Phase 3   Generate a mesh   ─ port, worker, GPU lease and setup DONE; a backend still to install
 Phase 5   Edit it properly  ─ feature tree, CAD commands, save/open DONE; sketches and gizmos to come
 Phase 7   Photos → replica  ─ COLMAP/OpenMVS, ArUco scale
 Phase 8   Make it delightful─ detail rescue, hollowing, multi-colour, printer comms
