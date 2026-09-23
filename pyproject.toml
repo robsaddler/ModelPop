@@ -69,6 +69,7 @@ addopts = "-q --strict-markers --strict-config"
 markers = [
     "integration: touches a real external dependency (slicer, network, GPU). Excluded from the fast loop.",
     "eval: scored AI eval; costs credits. Opt-in only.",
+    "renders: needs a working OpenGL context. Crashes the process on a headless runner.",
 ]
 filterwarnings = ["error::DeprecationWarning:modelpop.*"]
 

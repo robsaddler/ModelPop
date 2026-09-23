@@ -8,6 +8,12 @@ on:
 jobs:
   check:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      # 3.13 is the floor declared in pyproject; 3.14 is what the app is
+      # developed and run on. Testing only one of them lets the other rot.
+      matrix:
+        python: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
@@ -17,7 +23,7 @@ jobs:
           enable-cache: true
 
       - name: Create the environment
-        run: uv venv --python 3.13
+        run: uv venv --python ${{ matrix.python }}
 
       - name: Install
         run: uv pip install -e . --group dev
@@ -35,12 +41,18 @@ jobs:
         run: uv run lint-imports
 
       - name: Fast tests
-        run: uv run pytest -m "not integration and not eval" --cov --cov-report=term-missing
+        # `renders` is excluded, not skipped: VTK does not fail on a GPU-less
+        # GitHub runner, it takes the whole process down with an access
+        # violation, so there is nothing for pytest to catch. Those tests run
+        # locally, where there is a real context to render into.
+        run: >
+          uv run pytest -m "not integration and not eval and not renders"
+          --cov --cov-report=term-missing
 
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage
+          name: coverage-${{ matrix.python }}
           path: .coverage
           if-no-files-found: ignore

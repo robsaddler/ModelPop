@@ -3,6 +3,12 @@
 Runs without a window, so it belongs in the fast suite. What it proves is that
 the scene really draws something and that picking is accurate - the two failures
 that are invisible until a user complains.
+
+The one test that actually rasterises is marked ``renders``. A GPU-less CI
+runner does not fail that test, it dies mid-render with an access violation and
+takes the whole suite with it, so CI deselects the marker rather than pretending
+to skip it. Everything else here - conversion, camera, picking - is pure VTK
+object work and runs anywhere.
 """
 
 import numpy as np
@@ -103,6 +109,7 @@ class TestScene:
 
 
 class TestRendering:
+    @pytest.mark.renders
     def test_the_scene_actually_draws_pixels(self, plotter):
         """A viewport that silently renders nothing is the worst kind of bug.
 
