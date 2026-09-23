@@ -98,14 +98,47 @@ def test_the_result_is_something_the_rest_of_the_app_can_use(picture, tmp_path):
 
 @generator_required
 def test_the_same_seed_gives_the_same_shape(picture, tmp_path):
-    """Without this a prompt cannot be iterated on, only gambled on."""
+    """Without this a picture cannot be iterated on, only gambled on.
+
+    The same shape, but **not** bit-identical: measured at 141,214 against
+    140,856 triangles for one seed, a quarter of a percent apart. GPU
+    arithmetic is not reproducible - reductions and atomics finish in whatever
+    order the scheduler chose - so the flow lands in a fractionally different
+    place and the mesh extraction rounds differently.
+
+    That is fine for the thing seeds are for: change the prompt, see what
+    changed. It is not fine to claim byte-for-byte reproducibility, so this
+    asserts what is actually true.
+    """
     options = GenerationOptions(detail=Detail.DRAFT, seed=1234)
 
     first = generator().from_image(picture, options)
     second = generator().from_image(picture, options)
 
     assert first.ok and second.ok
-    assert first.unwrap().mesh.triangle_count == second.unwrap().mesh.triangle_count
+    one, two = first.unwrap().mesh, second.unwrap().mesh
+
+    assert one.triangle_count == pytest.approx(two.triangle_count, rel=0.02)
+
+    # and the same size, which is what "the same shape" means to a printer
+    for left, right in (
+        (one.bounds.width, two.bounds.width),
+        (one.bounds.depth, two.bounds.depth),
+        (one.bounds.height, two.bounds.height),
+    ):
+        assert left.millimetres == pytest.approx(right.millimetres, rel=0.05)
+
+
+@generator_required
+def test_different_seeds_give_different_shapes(picture, tmp_path):
+    """Otherwise the seed is decoration, and the test above proves nothing."""
+    first = generator().from_image(picture, GenerationOptions(detail=Detail.DRAFT, seed=1))
+    second = generator().from_image(picture, GenerationOptions(detail=Detail.DRAFT, seed=90210))
+
+    assert first.ok and second.ok
+    one, two = first.unwrap().mesh, second.unwrap().mesh
+
+    assert one.triangle_count != two.triangle_count or one.volume != two.volume
 
 
 @generator_required

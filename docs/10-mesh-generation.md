@@ -98,6 +98,13 @@ architectural cost.
   remover, which is also the way round an open bug in it.
 - **Records provenance.** Which model, which seed, which image. Six months later
   "did I make this or did a model?" has no other answer.
+- **Honours a seed, but not bit-for-bit.** The same seed gives the same shape.
+  Measured, it does not give the *same file*: 141,214 triangles against 140,856
+  for one seed, a quarter of a percent apart. GPU arithmetic is not
+  reproducible - reductions and atomics finish in whatever order the scheduler
+  chose - so the flow lands fractionally differently and the mesh extraction
+  rounds differently. Fine for what seeds are for; not a basis for claiming
+  reproducibility.
 - **Holds a lease on the card.** One large model at a time. Two does not fail
   cleanly - it fails as an out-of-memory error a minute in, and sometimes takes
   the driver with it. The lease survives a crash, because a lock file nobody
@@ -112,6 +119,20 @@ to it is text to image first, which is another model and another decision.
 
 **Rigging, texturing, colour.** A printed model in one filament does not need
 them, and the AMS colour path is multi-colour part splitting, not texture.
+
+## Measured on this machine
+
+A 512x512 drawing, `--res 512`, on an RTX 4090 Laptop (16 GB):
+
+| | |
+|---|---|
+| Time | **36 seconds**, including loading the weights |
+| Output | 49,848 faces, a textured GLB of 1.8 MB |
+| At `--res 1024` | about 52 seconds, roughly 141,000 faces |
+
+The binary reports its stages as it goes, so the window shows progress rather
+than freezing. It also writes a `.ply` and a base-colour `.png` beside the GLB,
+which ModelPop ignores - it wants the geometry.
 
 ## Once you have a mesh
 

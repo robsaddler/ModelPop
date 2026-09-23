@@ -98,8 +98,13 @@ class GenerationOptions:
 
     detail: Detail = Detail.STANDARD
     seed: int = 0
-    """Zero means "pick one". A stated seed makes a run repeatable, which is the
-    only way to iterate on a prompt rather than gamble on it."""
+    """Zero means "pick one".
+
+    A stated seed gives the same shape again, which is the only way to iterate
+    on a picture rather than gamble on it. **Not bit-identical**: GPU arithmetic
+    is not reproducible, so the triangle count moves by a fraction of a percent
+    between runs. Measured, not assumed - see the integration test.
+    """
 
     background: Background = Background.AUTOMATIC
     """How to cut the subject out. A photo's background otherwise becomes part

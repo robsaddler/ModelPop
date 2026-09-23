@@ -47,11 +47,12 @@ Phase 4  Generate a part   ── DONE  build123d codegen loop with gates
 Phase 6  Edit by prompt    ── DONE  for generated parts: the script is the document
 Phase 2b Verify the G-code ── DONE  unsupported islands and first-layer area, from the toolpath
 Phase 2.5 Find something   ── DONE  repository search, ranked gallery, licence tick (ADR-0008)
+Phase 3  Generate a mesh   ── DONE  a picture into a mesh on the local GPU (ADR-0010)
+Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-plate
 
-Phase 3   Generate a mesh   ─ port, adapter and GPU lease DONE; trellis.cpp still to install
-Phase 5   Edit it properly  ─ feature tree, CAD commands, save/open DONE; sketches and gizmos to come
-Phase 7   Photos → replica  ─ COLMAP/OpenMVS, ArUco scale
-Phase 8   Make it delightful─ detail rescue, hollowing, multi-colour, printer comms
+Phase 5  Edit it properly   ─ feature tree, commands and projects DONE; sketches and gizmos to come
+Phase 7  Photos → replica   ─ multi-photo reconstruction, scale from a reference in shot
+Phase 8  Make it delightful ─ detail rescue, multi-colour splitting, printer comms
 ```
 
 **Phases 4 and 6 arrived early, out of order.** Once the CAD kernel was in place, generating a

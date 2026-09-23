@@ -31,13 +31,15 @@ Bambu retired its own first-generation AI tools in September 2026 for exactly th
 | **Find something to start from** | Search MyMiniFactory and Thingiverse at once, ranked with reasons, with a licence badge on every card. |
 | **Check the toolpath** | Reads the sliced G-code back and finds material starting in mid-air, plus tip-over risk and by-object collisions. |
 | **Watch it print** | Scrub through the print, coloured by the slicer's own feature names, with the nozzle where it will be. |
+| **Weigh the AMS against it** | One plate with filament swaps, or one plate per colour. Measured from the slicer's own purge volumes and times, not modelled. |
+| **Make one from a picture** | A photo or a drawing into a printable mesh, on your own GPU. 36 seconds for a draft on a 4090. |
 
 ### Not yet built
 
-Photos to a scaled replica, and the model that turns a picture into a mesh - the whole path around
-it is built and PyTorch is installed, but a backend still has to be chosen. Sketches and gizmos.
-Multi-colour splitting, and the AMS-versus-multi-plate comparison that depends on it.
-See `docs/00-plan.md`.
+Multi-photo photogrammetry. Sketches and gizmos. Multi-colour part splitting - the AMS comparison
+works on any multi-colour slice you bring it, but ModelPop cannot yet split a model into colours
+itself. Text straight to a mesh: the generator is image-to-3D and refuses rather than making you
+something you did not ask for. See `docs/00-plan.md`.
 
 ## Running it
 
@@ -57,9 +59,9 @@ Everything except generation works without a key, and everything except slicing 
 Bambu Studio.
 
 Searching for models needs a free key from MyMiniFactory or Thingiverse, also in **File →
-Settings**. Making a model from a picture needs its own Python environment with PyTorch - one
-command, see [`docs/10-mesh-generation.md`](docs/10-mesh-generation.md). Each of these is optional
-and each says so specifically when it is missing, rather than failing at the click.
+Settings**. Making a model from a picture needs a CUDA graphics card and a one-off download - see
+[`docs/10-mesh-generation.md`](docs/10-mesh-generation.md). Each of these is optional, and each says
+specifically which piece is missing rather than failing at the click.
 
 ## Developing
 
