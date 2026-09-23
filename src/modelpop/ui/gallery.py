@@ -88,6 +88,12 @@ class LicensingDialog(QDialog):
         return self._tick.isChecked()
 
 
+class _GallerySignals(QObject):
+    """Carries the view-model's announcements back to the interface thread."""
+
+    changed = Signal(object)
+
+
 class GalleryDialog(QDialog):
     """Search several sources, look at what came back, pick one."""
 
@@ -111,7 +117,14 @@ class GalleryDialog(QDialog):
         self._into = into
         self._on_chosen = on_chosen
         self._view = GalleryViewModel(discovery, _ThreadedRunner(self))
-        self._view.on_change(self._show)
+
+        # A search runs on a worker thread, so the view-model announces from
+        # there. Touching a widget from a non-interface thread is undefined,
+        # and in practice the list silently stops updating. The signal crosses
+        # back, which is what makes the results appear.
+        self._signals = _GallerySignals()
+        self._signals.changed.connect(self._show)
+        self._view.on_change(self._signals.changed.emit)
 
         self.setWindowTitle("Find a model to start from")
         self.setMinimumSize(820, 560)
@@ -273,15 +286,17 @@ class _ThreadedRunner:
     to a thread; in a test it runs inline, which is why the whole journey is
     testable with no event loop and no display.
 
-    The live threads are held here rather than on the window, because a QThread
-    with no Python reference is collected mid-run and takes the interface with
-    it. That is not defensive - it happens.
+    Both the thread **and** the worker are held for as long as the work lasts.
+    Keeping only the thread is the obvious version and it silently does nothing:
+    the worker has no parent, so it is collected the moment this returns, and
+    the queued ``started`` connection dies with it. The thread then starts, runs
+    an empty event loop, and waits forever.
     """
 
     def __init__(self, owner: QWidget) -> None:
-        """Hold the threads for as long as they run."""
+        """Hold the threads and their workers for as long as they run."""
         self._owner = owner
-        self._live: list[QThread] = []
+        self._live: list[tuple[QThread, _Worker]] = []
 
     def __call__(self, work: Callable[[], None]) -> None:
         """Start one piece of work on its own thread."""
@@ -291,15 +306,18 @@ class _ThreadedRunner:
 
         thread.started.connect(worker.run)
         worker.done.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
         thread.finished.connect(lambda: self._forget(thread))
 
-        self._live.append(thread)
+        self._live.append((thread, worker))
         thread.start()
 
     def _forget(self, thread: QThread) -> None:
-        if thread in self._live:
-            self._live.remove(thread)
+        self._live = [pair for pair in self._live if pair[0] is not thread]
+
+    @property
+    def running(self) -> int:
+        """How many searches are in flight. For tests, and for diagnostics."""
+        return len(self._live)
 
 
 class _Worker(QObject):

@@ -202,6 +202,20 @@ class WorkspaceViewModel:
         report = self._state.readiness
         return bool(self._state.has_model and report is not None and report.is_printable)
 
+    def adopt(self, mesh: Mesh) -> None:
+        """Take geometry that came from somewhere other than a file.
+
+        The seam between the CAD tools and everything downstream: the feature
+        tree rebuilds, hands its mesh here, and the viewport, the readiness
+        panel and the slicer all pick it up without knowing where it came from.
+
+        Not routed through the runner. The expensive part already happened in
+        the rebuild; assessing a mesh that is already in memory is fast, and
+        putting it on a second thread would only mean the viewport shows the
+        old shape for a frame.
+        """
+        self._set_state(self._workspace.adopt(mesh))
+
     def open(self, path: Path) -> None:
         """Load a model from disk."""
         self._run(

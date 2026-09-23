@@ -14,8 +14,9 @@ from PySide6.QtWidgets import QApplication
 from modelpop.ai import AnthropicProvider, default_store
 from modelpop.ai.secrets import LayeredSecretStore
 from modelpop.application.discovery_service import Discovery
+from modelpop.application.modelling import ModellingSession
 from modelpop.application.workspace import Workspace
-from modelpop.cad import Build123dKernel
+from modelpop.cad import Build123dCompiler, Build123dKernel
 from modelpop.domain.printer import PrinterProfile
 from modelpop.generation import CadLoopGenerator
 from modelpop.mesh import TrimeshIO, TrimeshOps
@@ -78,7 +79,11 @@ def main() -> int:
     app.setApplicationName("ModelPop")
 
     secrets = default_store()
-    window = MainWindow(build_workspace(), lambda: build_discovery(secrets))
+    window = MainWindow(
+        build_workspace(),
+        lambda: build_discovery(secrets),
+        ModellingSession(Build123dCompiler(Build123dKernel())),
+    )
     window.show()
     return app.exec()
 

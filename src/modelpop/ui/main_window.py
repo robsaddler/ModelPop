@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStatusBar,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -28,8 +29,10 @@ from pyvistaqt import QtInteractor
 
 from modelpop.ai import default_store
 from modelpop.application.ai_ports import AiSettings
+from modelpop.application.modelling import ModellingSession
 from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, WorkspaceState
 from modelpop.domain.readiness import Severity
+from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
 from modelpop.rendering.viewport import ViewportScene
 
@@ -39,6 +42,7 @@ if TYPE_CHECKING:
     from modelpop.application.discovery_service import Discovery
     from modelpop.application.repository_ports import Download
 
+from modelpop.ui.cad_panel import CadPanel, ThreadedRebuilder
 from modelpop.ui.dialogs import (
     EditDialog,
     GenerateDialog,
@@ -65,8 +69,17 @@ class MainWindow(QMainWindow):
         self,
         workspace: Workspace,
         discovery: Callable[[], Discovery] | None = None,
+        modelling: ModellingSession | None = None,
     ) -> None:
-        """Build the window around a workspace."""
+        """Build the window around a workspace.
+
+        Args:
+            workspace: operations on the open mesh.
+            discovery: builds a repository search, on demand, so a credential
+                changed in Settings applies to the next search.
+            modelling: the parametric CAD session. Optional, so the window
+                still opens when the kernel failed to load.
+        """
         super().__init__()
         # Work runs inline for now: the operations in Phase 1 are fast enough
         # that a worker thread would add risk without adding responsiveness.
@@ -79,6 +92,16 @@ class MainWindow(QMainWindow):
         # would keep the key the user just replaced.
         self._discovery = discovery
         self._ai_settings = AiSettings()
+
+        # The two view-models own different things - a mesh and a feature tree -
+        # and the tree hands its geometry to the workspace after every rebuild,
+        # so the viewport, the readiness panel and the slicer all work on it
+        # without knowing it came from the CAD tools.
+        self._modelling = ModellingViewModel(
+            modelling or ModellingSession(),
+            ThreadedRebuilder(self),
+            self._view_model.adopt,
+        )
 
         self.setWindowTitle("ModelPop")
         self.resize(1400, 900)
@@ -136,9 +159,17 @@ class MainWindow(QMainWindow):
             button.setEnabled(False)
             side.addWidget(button)
 
-        panel = QWidget()
-        panel.setLayout(side)
-        panel.setFixedWidth(380)
+        readiness = QWidget()
+        readiness.setLayout(side)
+
+        # Tabs rather than two stacked panels: the CAD tools and the readiness
+        # report are used at different moments, and showing both at once leaves
+        # no room for either.
+        panel = QTabWidget()
+        panel.addTab(readiness, "Print readiness")
+        self._cad_panel = CadPanel(self._modelling)
+        panel.addTab(self._cad_panel, "CAD tools")
+        panel.setFixedWidth(420)
 
         layout = QHBoxLayout()
         layout.addWidget(self._viewport.interactor, stretch=1)
@@ -206,6 +237,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(frame_action)
 
     def _connect(self) -> None:
+        self._modelling.on_outcome(self._on_cad_outcome)
         self._view_model.on_state_changed(self._on_state_changed)
         self._view_model.on_notification(self._on_notification)
         self._view_model.on_busy_changed(self._on_busy_changed)
@@ -368,6 +400,16 @@ class MainWindow(QMainWindow):
         self._edit_button.setEnabled(self._view_model.can_edit_by_description)
         sliced = state.last_slice
         self._watch_action.setEnabled(sliced is not None and sliced.gcode_path is not None)
+
+    def _on_cad_outcome(self, outcome: Outcome) -> None:
+        """Report what a CAD command did.
+
+        A refused command is shown in the status bar rather than a dialog: the
+        model is untouched and still correct, so interrupting the user with a
+        modal would overstate it.
+        """
+        message = f"{outcome.message}. {outcome.detail}" if outcome.detail else outcome.message
+        self.statusBar().showMessage(message, 10000)
 
     def _on_notification(self, notification: Notification) -> None:
         self.statusBar().showMessage(notification.message, 8000)
