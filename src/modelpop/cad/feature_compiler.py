@@ -35,6 +35,7 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Loft,
     Mirror,
     Move,
     Plane,
@@ -43,6 +44,7 @@ from modelpop.domain.cad_commands import (
     Revolve,
     Rotate,
     ScaleTo,
+    Sweep,
     TextOnSurface,
     command_from,
 )
@@ -193,6 +195,12 @@ def _known_to_fail(features: tuple[Feature, ...]) -> Result[str] | None:
     radii: list[float] = []
     for feature in features:
         command = command_from(feature)
+        if isinstance(command, Sweep | Loft) and command.problem is not None:
+            # These two carry their own diagnosis, because they have several
+            # ways to be wrong and "could not build that shape" names none of
+            # them. Reported here rather than compiled to nothing, which would
+            # read as a feature this version does not understand.
+            return failure(f"{command.describe()} cannot be built", command.problem)
         if isinstance(command, Fillet):
             radii.append(round(command.radius, 6))
         elif isinstance(command, Hollow):
@@ -238,6 +246,10 @@ def _fragment_for(command: Command, *, first: bool, copy: str = "") -> str | Non
             return _extrude_fragment(command, first=first, copy=copy)
         case Revolve():
             return _revolve_fragment(command, first=first, copy=copy)
+        case Sweep():
+            return _sweep_fragment(command, first=first, copy=copy)
+        case Loft():
+            return _loft_fragment(command, first=first, copy=copy)
         case _ if first:
             return None  # nothing to operate on yet
 
@@ -352,6 +364,95 @@ def _revolve_fragment(command: Revolve, *, first: bool, copy: str = "") -> str |
     return "\n".join(lines)
 
 
+# Recentring by the *built* bounding box rather than by arithmetic on the
+# points. A sweep's solid reaches wider than its path and a loft can bulge
+# between its sections, so neither centre can be worked out before the kernel
+# has built the thing - and "every shape is centred on the origin" is what
+# mirror and the patterns rely on.
+_CENTRE_ON_ORIGIN = (
+    "_middle = _solid.bounding_box().center()\n"
+    "_solid = Pos(-_middle.X, -_middle.Y, -_middle.Z) * _solid"
+)
+
+
+def _sweep_fragment(command: Sweep, *, first: bool, copy: str = "") -> str | None:
+    """An outline pushed along a path.
+
+    Two things here are not obvious and both were measured rather than assumed.
+
+    The section is placed **square to the first leg of the path**, not on a
+    named plane. A section lying in the plane its path travels in sweeps to a
+    volume of exactly zero and OCCT reports success, so letting the user choose
+    the plane offers them a silent way to build nothing.
+
+    The path's corners are **rounded before it is swept**. A mitred corner
+    folds through itself: a 10 x 10 section along a right-angled 70 mm path
+    measured 3200 mm3 against the 7000 it should be, again with no error. Any
+    bend radius at all makes it exact, which is why the domain enforces a floor
+    rather than offering a choice.
+    """
+    if command.problem is not None:
+        return None
+
+    centre_x, centre_y = _centre_of(command.points)
+    outline = ", ".join(f"({x - centre_x:g}, {y - centre_y:g})" for x, y in command.points)
+    start = command.path[0]
+    heading = command.path[1]
+    route = ", ".join(f"({x:g}, {y:g}, {z:g})" for x, y, z in command.path)
+
+    lines = [
+        f"_outline = Polyline([{outline}], close=True)",
+        f"_start = Vector({start[0]:g}, {start[1]:g}, {start[2]:g})",
+        f"_heading = Vector({heading[0]:g}, {heading[1]:g}, {heading[2]:g}) - _start",
+        "_section = make_face(Plane(origin=_start, z_dir=_heading) * _outline)",
+        f"_path = Polyline([{route}])",
+    ]
+    if command.turns:
+        lines.append(f"_path = fillet(_path.vertices(), radius={command.bend_radius:g})")
+    lines.append("_solid = sweep(_section, path=_path)")
+    lines.append(_CENTRE_ON_ORIGIN)
+
+    return _finish_solid(lines, first=first, cut=command.cut, copy=copy)
+
+
+def _loft_fragment(command: Loft, *, first: bool, copy: str = "") -> str | None:
+    """Outlines at different heights, blended into one solid.
+
+    The sections keep the x and y they were drawn with: a loft that leans, or
+    one whose top is off to one side, is a real shape somebody meant. Only the
+    finished solid is recentred.
+    """
+    if command.problem is not None:
+        return None
+
+    faces = [
+        f"    make_face(Plane.XY.offset({section.height:g}) * Polyline(["
+        + ", ".join(f"({x:g}, {y:g})" for x, y in section.points)
+        + "], close=True)),"
+        for section in command.sections
+    ]
+    lines = ["_sections = [", *faces, "]", "_solid = loft(_sections)", _CENTRE_ON_ORIGIN]
+
+    return _finish_solid(lines, first=first, cut=command.cut, copy=copy)
+
+
+def _finish_solid(lines: list[str], *, first: bool, cut: bool, copy: str) -> str | None:
+    """Place a built ``_solid``, then add it to the model or cut it out.
+
+    Shared by the two operations that build into ``_solid`` and then have to
+    join the tree the same way every other shape does.
+    """
+    if copy:
+        lines.append(f"_solid = {copy} * _solid")
+    if first:
+        if cut:
+            return None  # nothing to cut from yet
+        lines.append("result = _solid")
+    else:
+        lines.append(f"result = result {'-' if cut else '+'} _solid")
+    return "\n".join(lines)
+
+
 def _is_a_shape(command: Command) -> bool:
     """Whether a feature adds or removes material in its own right.
 
@@ -359,7 +460,9 @@ def _is_a_shape(command: Command) -> bool:
     and quietly repeating the shape before it instead would produce a model
     that is not what anyone asked for.
     """
-    return isinstance(command, CreateBox | CreateCylinder | CreateSphere | Extrude | Revolve)
+    return isinstance(
+        command, CreateBox | CreateCylinder | CreateSphere | Extrude | Revolve | Sweep | Loft
+    )
 
 
 def _pattern_fragment(command: Repeat | RepeatAround, shape: Command | None) -> str | None:

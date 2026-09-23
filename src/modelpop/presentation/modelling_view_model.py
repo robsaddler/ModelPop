@@ -29,6 +29,7 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Loft,
     Mirror,
     Move,
     Plane,
@@ -37,6 +38,8 @@ from modelpop.domain.cad_commands import (
     Revolve,
     Rotate,
     ScaleTo,
+    Section,
+    Sweep,
     TextOnSurface,
 )
 from modelpop.domain.commands import Origin
@@ -309,6 +312,58 @@ class ModellingViewModel:
             )
             return
         self._apply(command)
+
+    def sweep(
+        self,
+        points: Sequence[tuple[float, float]],
+        path: Sequence[tuple[float, float, float]],
+        bend_radius: float = 2.0,
+        *,
+        cut: bool = False,
+    ) -> None:
+        """Push a drawn outline along a path.
+
+        The bend radius may come back smaller than asked for: it is fitted to
+        the straight runs the path actually has. Said out loud when that
+        happens, because a corner that looks tighter than the number typed
+        otherwise reads as the command having been ignored.
+        """
+        command = Sweep(tuple(points), tuple(path), bend_radius)
+        if self._refused(command.problem, "That sweep cannot be built"):
+            return
+        command = Sweep(tuple(points), tuple(path), bend_radius, cut)
+        self._apply(command)
+        if command.turns and command.bend_radius < bend_radius - 1e-6:
+            self._announce(
+                Outcome(
+                    f"The bend was eased to {command.bend_radius:.2g} mm",
+                    "That is the largest bend the straight runs between the corners can take.",
+                )
+            )
+
+    def loft(
+        self,
+        sections: Sequence[tuple[Sequence[tuple[float, float]], float]],
+        *,
+        cut: bool = False,
+    ) -> None:
+        """Blend between outlines stacked at different heights."""
+        built = Loft(tuple(Section(tuple(points), height) for points, height in sections), cut)
+        if self._refused(built.problem, "That blend cannot be built"):
+            return
+        self._apply(built)
+
+    def _refused(self, problem: str | None, headline: str) -> bool:
+        """Announce why a drawing cannot be built, and whether it was refused.
+
+        Refused here rather than in the kernel, for the same reason an outline
+        with two corners is: "OCCT could not make that shape" tells somebody
+        looking at their own drawing nothing about which part of it is wrong.
+        """
+        if problem is None:
+            return False
+        self._announce(Outcome(headline, problem, refused=True))
+        return True
 
     def mirror(self, plane: Plane = Plane.YZ, *, keep_original: bool = True) -> None:
         """Reflect the part about a plane through the origin."""

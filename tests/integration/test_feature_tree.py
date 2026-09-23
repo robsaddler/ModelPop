@@ -23,6 +23,7 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Loft,
     Mirror,
     Move,
     Plane,
@@ -31,6 +32,8 @@ from modelpop.domain.cad_commands import (
     Revolve,
     Rotate,
     ScaleTo,
+    Section,
+    Sweep,
     TextOnSurface,
 )
 from modelpop.domain.units import Length
@@ -597,3 +600,169 @@ def test_a_spun_shape_takes_the_rest_of_the_vocabulary(model):
 
     assert model.state.measurements.is_valid
     assert model.state.measurements.solid_count == 1
+
+
+@kernel_required
+def test_a_swept_bar_has_the_volume_its_path_length_says(model):
+    """The check that catches the failure OCCT does not report.
+
+    A 10 x 10 section along this path should be its length times 100 mm2. Swept
+    over a mitred corner it measures 3200 mm3 instead of 7000 - no exception, no
+    warning, just a solid that has folded through itself. Rounding the corner
+    first makes it exact, and this is what proves the compiler still does.
+    """
+    bar = ((-5, -5), (5, -5), (5, 5), (-5, 5))
+    elbow = ((0, 0, 0), (0, 0, 40), (30, 0, 40))
+
+    assert model.apply(Sweep(bar, elbow, 3.0)).ok
+
+    # 70 mm of path, less the corner the 3 mm bend cuts off.
+    volume = model.state.measurements.volume_mm3
+    assert volume == pytest.approx(6871.2, rel=1e-3)
+    assert volume > 6000, "a mitred corner would come back at about half this"
+
+
+@kernel_required
+def test_a_path_that_runs_flat_still_sweeps_something(model):
+    """The other silent failure: a section in the plane its path travels in.
+
+    Swept on a plane the user names, this comes back at a volume of exactly
+    zero and the kernel reports success. The section is placed square to the
+    path instead, so there is nothing to get wrong.
+    """
+    bar = ((-3, -3), (3, -3), (3, 3), (-3, 3))
+    flat = ((0, 0, 0), (30, 0, 0), (30, 30, 0), (0, 30, 0))
+
+    assert model.apply(Sweep(bar, flat, 6.0)).ok
+    assert model.state.measurements.volume_mm3 > 1000
+
+
+@kernel_required
+@pytest.mark.parametrize(
+    "path",
+    [
+        ((0, 0, 0), (0, 0, 40), (30, 0, 40)),
+        ((0, 0, 0), (40, 0, 0), (40, 0, 30)),
+        ((0, 0, 0), (0, 40, 0), (0, 40, 30)),
+        ((0, 0, 0), (20, 20, 20), (40, 20, 20)),
+    ],
+    ids=["up then along", "along then up", "along Y then up", "diagonal"],
+)
+def test_a_sweep_works_whichever_way_the_path_starts(model, path):
+    """Every starting direction, because the section plane is derived from it."""
+    bar = ((-4, -4), (4, -4), (4, 4), (-4, 4))
+
+    assert model.apply(Sweep(bar, path, 3.0)).ok
+    assert model.state.measurements.volume_mm3 > 500
+
+
+@kernel_required
+def test_a_swept_shape_takes_the_rest_of_the_vocabulary(model):
+    """A handle is a sweep; a handle on a box is a sweep and a box."""
+    bar = ((-4, -4), (4, -4), (4, 4), (-4, 4))
+    handle = ((-20, 0, 0), (-20, 0, 25), (20, 0, 25), (20, 0, 0))
+
+    assert model.apply(CreateBox(80, 40, 10)).ok
+    assert model.apply(Sweep(bar, handle, 5.0)).ok
+    assert model.apply(Fillet(1, EdgeSelector.TOP)).ok
+    assert model.state.has_geometry
+
+
+@kernel_required
+def test_a_taper_blends_between_its_two_ends(model):
+    """A square base narrowing to a smaller square, measured rather than eyeballed."""
+    wide = ((-20, -20), (20, -20), (20, 20), (-20, 20))
+    narrow = ((-8, -8), (8, -8), (8, 8), (-8, 8))
+
+    assert model.apply(Loft((Section(wide, 0.0), Section(narrow, 30.0)))).ok
+
+    size = model.state.measurements
+    assert size.volume_mm3 == pytest.approx(24960.0, rel=1e-3)
+    assert size.width.millimetres == pytest.approx(40.0, abs=0.1)
+    assert size.height.millimetres == pytest.approx(30.0, abs=0.1)
+
+
+@kernel_required
+def test_a_blend_passes_through_every_section_it_is_given(model):
+    """The middle section is the widest, so it has to show in the finished size."""
+
+    def square(half: float, height: float) -> Section:
+        return Section(((-half, -half), (half, -half), (half, half), (-half, half)), height)
+
+    assert model.apply(Loft((square(15, 0), square(25, 20), square(10, 45)))).ok
+
+    size = model.state.measurements
+    assert size.width.millimetres == pytest.approx(50.0, abs=0.1)
+    assert size.height.millimetres == pytest.approx(45.0, abs=0.1)
+
+
+@kernel_required
+def test_a_blend_can_change_the_number_of_corners_on_the_way_up(model):
+    """A square duct meeting a triangular one, which extrude cannot describe."""
+    square = Section(((-20, -20), (20, -20), (20, 20), (-20, 20)), 0.0)
+    triangle = Section(((-10, -10), (10, -10), (0, 12)), 25.0)
+
+    assert model.apply(Loft((square, triangle))).ok
+    assert model.state.measurements.volume_mm3 > 5000
+
+
+@kernel_required
+def test_a_blend_can_be_hollowed_into_a_plant_pot(model):
+    """The thing a taper is actually for, built the way somebody would build it."""
+
+    def square(half: float, height: float) -> Section:
+        return Section(((-half, -half), (half, -half), (half, half), (-half, half)), height)
+
+    assert model.apply(Loft((square(18, 0), square(30, 50)))).ok
+    solid = model.state.measurements.volume_mm3
+
+    assert model.apply(Hollow(2.5, Face.TOP)).ok
+    assert model.state.measurements.volume_mm3 < solid / 2, "a pot is mostly air"
+
+
+@kernel_required
+@pytest.mark.parametrize(
+    "command",
+    [
+        Sweep(((-4, -4), (4, -4), (4, 4), (-4, 4)), ((0, 0, 0), (0, 0, 30), (25, 0, 30)), 4.0),
+        Loft(
+            (
+                Section(((-15, -15), (15, -15), (15, 15), (-15, 15)), 0.0),
+                Section(((-6, -6), (6, -6), (6, 6), (-6, 6)), 25.0),
+            )
+        ),
+    ],
+    ids=["sweep", "loft"],
+)
+def test_the_new_shapes_land_centred_on_the_origin(model, command):
+    """What mirror and both patterns rely on every shape in the vocabulary doing."""
+    assert model.apply(command).ok
+
+    mesh = model.state.mesh
+    assert mesh is not None
+    middle = (mesh.vertices.min(axis=0) + mesh.vertices.max(axis=0)) / 2
+    assert middle == pytest.approx([0.0, 0.0, 0.0], abs=0.01)
+
+
+@kernel_required
+def test_a_row_of_swept_ribs_makes_every_one_of_them(model):
+    """A pattern re-emits the shape, so the copies have to sweep too.
+
+    The plate is long enough for every rib to land fully on it. A copy hanging
+    off the end fuses less of itself into the plate and adds *more* volume than
+    the ones that do not, which looks like the pattern having miscounted.
+    """
+    rib = ((-2, -2), (2, -2), (2, 2), (-2, 2))
+    arch = ((-10, 0, 0), (-10, 0, 15), (10, 0, 15), (10, 0, 0))
+
+    assert model.apply(CreateBox(180, 20, 4)).ok
+    plate = model.state.measurements.volume_mm3
+
+    assert model.apply(Sweep(rib, arch, 3.0)).ok
+    one = model.state.measurements.volume_mm3
+
+    assert model.apply(Repeat(3, 30)).ok
+    three = model.state.measurements.volume_mm3
+
+    added = one - plate
+    assert three - plate == pytest.approx(added * 3, rel=0.05)

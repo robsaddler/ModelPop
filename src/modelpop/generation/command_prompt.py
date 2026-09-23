@@ -80,6 +80,16 @@ def _vocabulary() -> str:
             f"points (a list of [x, y] corners in mm), height (mm), "
             f"plane ({_choices(Plane)}), cut (true to remove it)"
         ),
+        "sweep": (
+            "points (a list of [x, y] corners describing the cross-section), "
+            "path (a list of [x, y, z] points the cross-section travels along), "
+            "bend_radius (mm, how much the corners of the path are rounded), "
+            "cut (true to remove it)"
+        ),
+        "loft": (
+            'sections (a list of {"points": [[x, y], ...], "height": mm} '
+            "outlines, each at its own height), cut (true to remove it)"
+        ),
     }
     missing = set(known_commands()) - set(shapes)
     lines = [f"- {name}: {shapes[name]}" for name in known_commands() if name in shapes]
@@ -134,6 +144,14 @@ Rules:
   sided cup 30 mm across and 50 mm tall with 3 mm walls is
   [[0,0],[15,0],[15,50],[12,50],[12,3],[0,3]]. It always spins about the
   upright axis; use "rotate" afterwards to lay the result down.
+- "sweep" is for anything with a constant cross-section that does not run in a
+  straight line: a grab handle, a cable channel, a length of trim, a bent tube.
+  The cross-section is placed square to the start of the path automatically, so
+  draw it around its own centre. Give the path room between its corners: the
+  bend radius is fitted to the shortest straight run.
+- "loft" blends between outlines at different heights, which is how a shape
+  whose cross-section *changes* is made - a tapered pot, a funnel, a square
+  duct meeting a round one. Every outline needs its own height.
 - "mirror" reflects the whole part about a plane through the origin, so model
   one half of a symmetrical part and reflect it rather than building both.
 - The first operation must add a shape. There is nothing to cut from yet.

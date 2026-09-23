@@ -439,3 +439,115 @@ class TestSpinningAProfile:
         assert seen[-1].refused
         assert "three corners" in seen[-1].detail
         assert model.state.is_empty
+
+
+class TestSweepingAndBlending:
+    """The two operations that finish the profile vocabulary, with no display."""
+
+    BAR = ((-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0))
+    ELBOW = ((0.0, 0.0, 0.0), (0.0, 0.0, 40.0), (30.0, 0.0, 40.0))
+    WIDE = ((-20.0, -20.0), (20.0, -20.0), (20.0, 20.0), (-20.0, 20.0))
+    NARROW = ((-8.0, -8.0), (8.0, -8.0), (8.0, 8.0), (-8.0, 8.0))
+
+    def test_a_sweep_joins_the_feature_tree_like_any_other_command(self):
+        model = view()
+        model.sweep(self.BAR, self.ELBOW)
+
+        assert len(model.state.features) == 1
+        assert "Sweep a 4-point outline along a 70 mm path" in model.state.features[0].label
+
+    def test_a_blend_joins_the_feature_tree_like_any_other_command(self):
+        model = view()
+        model.loft([(self.WIDE, 0.0), (self.NARROW, 30.0)])
+
+        assert "Blend between 2 outlines over 30 mm" in model.state.features[0].label
+
+    def test_both_can_start_a_model(self):
+        swept = view()
+        swept.sweep(self.BAR, self.ELBOW)
+        blended = view()
+        blended.loft([(self.WIDE, 0.0), (self.NARROW, 30.0)])
+
+        assert not swept.state.is_empty
+        assert not blended.state.is_empty
+
+    def test_both_undo(self):
+        model = view()
+        model.sweep(self.BAR, self.ELBOW)
+        model.loft([(self.WIDE, 0.0), (self.NARROW, 30.0)])
+        model.undo()
+        model.undo()
+
+        assert model.state.is_empty
+
+    def test_a_cut_reaches_the_command(self):
+        model = view()
+        model.add_box(60, 60, 60)
+        model.sweep(self.BAR, self.ELBOW, cut=True)
+
+        assert model.state.features[-1].label.startswith("Cut by sweeping")
+
+    def test_a_section_that_encloses_nothing_is_refused_in_plain_words(self):
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        model.sweep(((0.0, 0.0), (5.0, 5.0)), self.ELBOW)
+
+        assert seen[-1].refused
+        assert "three corners" in seen[-1].detail
+        assert model.state.is_empty, "and nothing was recorded"
+
+    def test_a_path_going_nowhere_is_refused_in_plain_words(self):
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        model.sweep(self.BAR, ((0.0, 0.0, 0.0),))
+
+        assert seen[-1].refused
+        assert "two points" in seen[-1].detail
+
+    def test_two_outlines_at_the_same_height_are_refused_by_name(self):
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        model.loft([(self.WIDE, 5.0), (self.NARROW, 5.0)])
+
+        assert seen[-1].refused
+        assert "both at 5 mm" in seen[-1].detail
+        assert model.state.is_empty
+
+    def test_one_outline_is_refused_as_not_being_a_blend(self):
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        model.loft([(self.WIDE, 0.0)])
+
+        assert seen[-1].refused
+        assert "at least two" in seen[-1].detail
+
+    def test_an_eased_bend_is_said_out_loud(self):
+        """A corner tighter than the number typed otherwise reads as an ignored click."""
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        zigzag = ((0.0, 0.0, 0.0), (0.0, 0.0, 30.0), (20.0, 0.0, 30.0), (20.0, 0.0, 60.0))
+        model.sweep(self.BAR, zigzag, bend_radius=40)
+
+        assert any("eased to" in outcome.message for outcome in seen)
+        assert len(model.state.features) == 1, "and it was still applied"
+
+    def test_a_bend_that_fits_is_not_mentioned(self):
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        model.sweep(self.BAR, self.ELBOW, bend_radius=3)
+
+        assert not any("eased" in outcome.message for outcome in seen)
+
+    def test_lists_are_accepted_as_readily_as_tuples(self):
+        """The dialog hands over whatever the parser produced."""
+        model = view()
+        model.sweep([(-2.0, -2.0), (2.0, -2.0), (0.0, 3.0)], [(0.0, 0.0, 0.0), (0.0, 0.0, 20.0)])
+        model.loft([([(-5.0, -5.0), (5.0, -5.0), (0.0, 6.0)], 0.0), (self.NARROW, 12.0)])
+
+        assert len(model.state.features) == 2

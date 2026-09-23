@@ -392,8 +392,9 @@ class CadPanel(QWidget):
 
         self._outline_button = QPushButton("Profile...")
         self._outline_button.setToolTip(
-            "Draw a closed profile and give it thickness or spin it round - a "
-            "bracket, a gasket, a nameplate, a vase, a knob, a wheel"
+            "Draw a closed profile and give it thickness, spin it round, push "
+            "it along a path or blend it into another - a bracket, a gasket, a "
+            "nameplate, a vase, a knob, a grab handle, a tapered pot"
         )
         self._outline_button.clicked.connect(self._add_outline)
         size_row.addWidget(self._outline_button)
@@ -518,10 +519,20 @@ class CadPanel(QWidget):
         the view-model is what says so.
         """
         dialog = OutlineDialog(self)
-        if not dialog.exec() or not dialog.points:
+        if not dialog.exec():
+            return
+
+        if dialog.operation is Operation.LOFT:
+            if len(dialog.sections) >= 2:
+                self._view.loft(dialog.sections, cut=dialog.cut)
+            return
+
+        if not dialog.points:
             return
         if dialog.operation is Operation.REVOLVE:
             self._view.revolve(dialog.points, dialog.degrees, cut=dialog.cut)
+        elif dialog.operation is Operation.SWEEP:
+            self._view.sweep(dialog.points, dialog.path, dialog.bend_radius, cut=dialog.cut)
         else:
             self._view.extrude(dialog.points, dialog.thickness, dialog.plane, cut=dialog.cut)
 

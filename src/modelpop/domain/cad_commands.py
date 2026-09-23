@@ -19,8 +19,10 @@ which is what keeps the domain free of OCCT.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
+from itertools import pairwise
 from typing import Any
 
 from modelpop.domain.commands import Command, Feature
@@ -29,7 +31,11 @@ from modelpop.domain.units import Length
 __all__ = [
     "MAX_COPIES",
     "MAX_OUTLINE_POINTS",
+    "MAX_PATH_POINTS",
+    "MAX_SECTIONS",
+    "MIN_BEND_MM",
     "MIN_OUTLINE_POINTS",
+    "MIN_PATH_POINTS",
     "Chamfer",
     "CreateBox",
     "CreateCylinder",
@@ -39,6 +45,7 @@ __all__ = [
     "Face",
     "Fillet",
     "Hollow",
+    "Loft",
     "Mirror",
     "Move",
     "Plane",
@@ -47,9 +54,12 @@ __all__ = [
     "Revolve",
     "Rotate",
     "ScaleTo",
+    "Section",
+    "Sweep",
     "TextOnSurface",
     "command_from",
     "known_commands",
+    "widest_bend",
 ]
 
 # Nothing on a P2S can be bigger than its build volume, and a value larger than
@@ -809,6 +819,302 @@ class Revolve(Command):
         return max((radius for radius, _ in self.points), default=0.0)
 
 
+# ------------------------------------------------------- along and between
+
+# A path is drawn or described, like an outline. The same cap applies for the
+# same reason: beyond this it is a runaway rather than a request.
+MAX_PATH_POINTS = 200
+
+# Two points is the fewest that describe a direction to travel in.
+MIN_PATH_POINTS = 2
+
+# A swept corner with no bend radius at all is not a sharp corner - it is
+# **wrong geometry**, silently. Measured: a 10 x 10 section along a right-angled
+# 70 mm path came back at 3200 mm3 instead of 7000, with no error, because the
+# outside of the miter folds through itself. Any bend at all fixes it exactly,
+# so there is a floor rather than a choice.
+MIN_BEND_MM = 0.1
+
+# Two sections closer together than this are the same height as far as OCCT is
+# concerned, and lofting between them fails with `StdFail_NotDone`.
+MIN_SECTION_GAP_MM = 0.01
+
+
+def _tidy_path(points: Any) -> tuple[tuple[float, float, float], ...]:
+    """Clean a three-dimensional path into something a kernel can travel along.
+
+    The same rules as an outline, with one difference: a path is **not**
+    closed, so a last point that repeats the first is a real instruction to
+    come back, not a redundant closing point.
+    """
+    cleaned: list[tuple[float, float, float]] = []
+    for point in list(points)[:MAX_PATH_POINTS]:
+        try:
+            x, y, z = float(point[0]), float(point[1]), float(point[2])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        spot = (
+            _clamp(x, -MAX_MM, MAX_MM),
+            _clamp(y, -MAX_MM, MAX_MM),
+            _clamp(z, -MAX_MM, MAX_MM),
+        )
+        if cleaned and _is_same_place(cleaned[-1], spot):
+            continue
+        cleaned.append(spot)
+    return tuple(cleaned)
+
+
+def _is_same_place(one: tuple[float, float, float], two: tuple[float, float, float]) -> bool:
+    """Whether two path points are close enough to make a zero-length segment."""
+    return all(abs(a - b) < MIN_MM for a, b in zip(one, two, strict=True))
+
+
+def _segment_lengths(path: tuple[tuple[float, float, float], ...]) -> list[float]:
+    """How long each straight run of a path is."""
+    return [math.dist(start, end) for start, end in pairwise(path)]
+
+
+def _corner_reach(path: tuple[tuple[float, float, float], ...]) -> list[float]:
+    """How much straight run each corner eats per millimetre of bend radius.
+
+    Rounding a corner of interior angle *theta* replaces it with an arc that
+    starts ``r / tan(theta / 2)`` back along each leg. A right angle therefore
+    eats exactly the radius; a hairpin eats several times it. Returning the
+    multiplier rather than the length keeps this usable as a bound on *r*.
+
+    Zero for a corner that is not one: three points in a line have nothing to
+    round, and dividing by ``tan(90 degrees)`` would say so as infinity.
+    """
+    reaches: list[float] = []
+    for before, corner, after in zip(path, path[1:], path[2:], strict=False):
+        first = _unit(before, corner)
+        second = _unit(after, corner)
+        if first is None or second is None:
+            reaches.append(0.0)
+            continue
+        cosine = max(-1.0, min(1.0, sum(a * b for a, b in zip(first, second, strict=True))))
+        half = math.acos(cosine) / 2
+        # Straight through: no corner, nothing eaten. Doubled back: everything.
+        if half >= math.pi / 2 - 1e-9:
+            reaches.append(0.0)
+        elif half <= 1e-9:
+            reaches.append(float("inf"))
+        else:
+            reaches.append(1.0 / math.tan(half))
+    return reaches
+
+
+def _unit(point: tuple[float, float, float], origin: tuple[float, float, float]) -> Any:
+    """The direction from ``origin`` to ``point``, or ``None`` if there is none."""
+    away = tuple(a - b for a, b in zip(point, origin, strict=True))
+    length = math.sqrt(sum(component * component for component in away))
+    if length < 1e-9:
+        return None
+    return tuple(component / length for component in away)
+
+
+def widest_bend(path: tuple[tuple[float, float, float], ...]) -> float:
+    """The largest bend radius this path's corners can actually take.
+
+    Each straight run has to be long enough for the bends at both of its ends.
+    Measured against OCCT: a path of 30, 20, 30, 20 mm runs accepts a 10 mm
+    bend and refuses 11, which is exactly what this returns.
+
+    Infinite when there is nothing to round, so a straight path never has its
+    radius clamped to something meaningless.
+    """
+    runs = _segment_lengths(path)
+    reaches = _corner_reach(path)
+    if not runs or not any(reaches):
+        return math.inf
+
+    # Run i lies between corner i-1 and corner i, counting corners from the
+    # second point of the path. The runs at either end serve one corner only.
+    limits: list[float] = []
+    for index, run in enumerate(runs):
+        claimed = 0.0
+        if index - 1 >= 0:
+            claimed += reaches[index - 1]
+        if index < len(reaches):
+            claimed += reaches[index]
+        if claimed > 0:
+            limits.append(run / claimed)
+    return min(limits) if limits else math.inf
+
+
+@dataclass(frozen=True, slots=True)
+class Sweep(Command):
+    """Push an outline along a path to make a rail, a handle, a pipe or a trim.
+
+    The third thing a profile is for, after growing it upwards and spinning it
+    round. Anything with a constant cross-section that does *not* run in a
+    straight line is this: a grab handle, a cable channel, a skirting trim, the
+    tube in a bottle carrier.
+
+    The cross-section is placed **square to the start of the path** rather than
+    on a plane the user names. Getting that wrong produces no error: a section
+    lying in the plane the path travels in sweeps to a volume of exactly zero,
+    which looks like the command did nothing at all.
+
+    ``bend_radius`` is not decoration. A mitred corner in a sweep folds through
+    itself and OCCT reports no problem, so there is a floor on it - see
+    ``MIN_BEND_MM``. It is also clamped to what the path's straight runs can
+    give up, because a bend that does not fit fails in the kernel instead.
+    """
+
+    points: tuple[tuple[float, float], ...]
+    path: tuple[tuple[float, float, float], ...]
+    bend_radius: float = 2.0
+    cut: bool = False
+
+    def __post_init__(self) -> None:
+        """Tidy both drawings, then fit the bend to the path it has to round."""
+        object.__setattr__(self, "points", _tidy_outline(self.points))
+        object.__setattr__(self, "path", _tidy_path(self.path))
+
+        room = widest_bend(self.path)
+        wanted = _clamp(self.bend_radius, MIN_BEND_MM, MAX_RADIUS_MM)
+        object.__setattr__(self, "bend_radius", min(wanted, room))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "sweep"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {
+            "points": [list(point) for point in self.points],
+            "path": [list(point) for point in self.path],
+            "bend_radius": self.bend_radius,
+            "cut": self.cut,
+        }
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        verb = "Cut by sweeping" if self.cut else "Sweep"
+        return f"{verb} a {len(self.points)}-point outline along a {self.length:g} mm path"
+
+    @property
+    def problem(self) -> str | None:
+        """Why this cannot be built, in words the user can act on."""
+        if len(self.points) < MIN_OUTLINE_POINTS:
+            return "An outline needs at least three corners to have an inside."
+        if len(self.path) < MIN_PATH_POINTS:
+            return "A path needs at least two points to have a direction."
+        if self.bend_radius < MIN_BEND_MM:
+            return (
+                "The path turns too sharply for the straight runs between its "
+                "corners. Move the corners further apart."
+            )
+        return None
+
+    @property
+    def length(self) -> float:
+        """How far the outline travels, along the corners as drawn."""
+        return sum(_segment_lengths(self.path))
+
+    @property
+    def turns(self) -> bool:
+        """Whether the path bends at all, rather than running straight."""
+        return any(_corner_reach(self.path))
+
+
+@dataclass(frozen=True, slots=True)
+class Section:
+    """One outline at one height, as a step in a loft.
+
+    A value rather than a pair of loose lists, because the two travel together
+    everywhere and a loft with its heights and its outlines out of step is a
+    shape nobody asked for.
+    """
+
+    points: tuple[tuple[float, float], ...]
+    height: float
+
+    def __post_init__(self) -> None:
+        """Tidy the outline and keep the height inside the world."""
+        object.__setattr__(self, "points", _tidy_outline(self.points))
+        object.__setattr__(self, "height", _clamp(self.height, -MAX_MM, MAX_MM))
+
+    @property
+    def is_closed_enough(self) -> bool:
+        """Whether this outline encloses an area at all."""
+        return len(self.points) >= MIN_OUTLINE_POINTS
+
+
+# Every section is a surface OCCT has to blend through. This is far beyond what
+# anyone draws and low enough that a runaway list cannot stall a rebuild.
+MAX_SECTIONS = 40
+
+
+@dataclass(frozen=True, slots=True)
+class Loft(Command):
+    """Blend between outlines stacked at different heights.
+
+    What extrude cannot do: a cross-section that *changes* on the way up. A
+    tapered plant pot, a funnel, a boat hull, a wedge that starts rectangular
+    and finishes round, the transition between a round duct and a square one.
+
+    The sections are sorted by height rather than taken in the order given,
+    because a list that arrives out of order describes the same solid and
+    refusing it would be pedantry. Two at the same height are refused: OCCT
+    fails on them with ``StdFail_NotDone``, and there is no sensible reading of
+    what shape was meant.
+    """
+
+    sections: tuple[Section, ...]
+    cut: bool = False
+
+    def __post_init__(self) -> None:
+        """Sort the sections by height and cap how many there may be."""
+        ordered = tuple(sorted(self.sections[:MAX_SECTIONS], key=lambda s: s.height))
+        object.__setattr__(self, "sections", ordered)
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "loft"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {
+            "sections": [
+                {"points": [list(point) for point in s.points], "height": s.height}
+                for s in self.sections
+            ],
+            "cut": self.cut,
+        }
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        verb = "Cut by blending" if self.cut else "Blend"
+        return f"{verb} between {len(self.sections)} outlines over {self.rise:g} mm"
+
+    @property
+    def problem(self) -> str | None:
+        """Why this cannot be built, in words the user can act on."""
+        if len(self.sections) < 2:
+            return "A blend needs at least two outlines to blend between."
+        if any(not section.is_closed_enough for section in self.sections):
+            return "Every outline needs at least three corners to have an inside."
+        for lower, upper in pairwise(self.sections):
+            if upper.height - lower.height < MIN_SECTION_GAP_MM:
+                return (
+                    f"Two outlines are both at {lower.height:g} mm. Give each one its own height."
+                )
+        return None
+
+    @property
+    def rise(self) -> float:
+        """How tall the blend is, bottom section to top."""
+        if len(self.sections) < 2:
+            return 0.0
+        return self.sections[-1].height - self.sections[0].height
+
+
 # --------------------------------------------------------------- rebuilding
 
 _BY_NAME: dict[str, Any] = {
@@ -826,6 +1132,8 @@ _BY_NAME: dict[str, Any] = {
     "repeat": Repeat,
     "repeat-around": RepeatAround,
     "revolve": Revolve,
+    "sweep": Sweep,
+    "loft": Loft,
     "text-on-surface": TextOnSurface,
 }
 
@@ -868,6 +1176,21 @@ def _construct(factory: Any, parameters: dict[str, Any]) -> Command:
         return Revolve(
             tuple(tuple(point) for point in parameters["points"]),
             parameters.get("degrees", 360.0),
+            bool(parameters.get("cut", False)),
+        )
+    if factory is Sweep:
+        return Sweep(
+            tuple(tuple(point) for point in parameters["points"]),
+            tuple(tuple(point) for point in parameters["path"]),
+            parameters.get("bend_radius", 2.0),
+            bool(parameters.get("cut", False)),
+        )
+    if factory is Loft:
+        return Loft(
+            tuple(
+                Section(tuple(tuple(point) for point in s["points"]), s["height"])
+                for s in parameters["sections"]
+            ),
             bool(parameters.get("cut", False)),
         )
     if factory is Mirror:

@@ -22,6 +22,8 @@ from modelpop.domain.cad_commands import (
     MAX_MM,
     MAX_OUTLINE_POINTS,
     MAX_RADIUS_MM,
+    MAX_SECTIONS,
+    MIN_BEND_MM,
     Chamfer,
     CreateBox,
     CreateCylinder,
@@ -31,6 +33,7 @@ from modelpop.domain.cad_commands import (
     Face,
     Fillet,
     Hollow,
+    Loft,
     Mirror,
     Move,
     Plane,
@@ -39,9 +42,12 @@ from modelpop.domain.cad_commands import (
     Revolve,
     Rotate,
     ScaleTo,
+    Section,
+    Sweep,
     TextOnSurface,
     command_from,
     known_commands,
+    widest_bend,
 )
 from modelpop.domain.commands import Command, CommandBus, Document, Feature, Origin
 from modelpop.domain.units import Length
@@ -750,3 +756,224 @@ class TestSpinningAProfile:
 
     def test_it_compiles_to_valid_python(self):
         compile(script_for(Revolve(self.CUP, 270)), "<generated>", "exec")
+
+
+class TestSweepingAlongAPath:
+    """An outline pushed along a path.
+
+    Two of these guard failures OCCT does not report at all. A section lying in
+    the plane its path travels in sweeps to a volume of zero, and a mitred
+    corner folds through itself and comes back roughly half the size it should
+    be - both with no error anywhere. The compiler avoids the first by
+    construction and the domain forbids the second, so the tests are about
+    keeping those two properties true rather than about the happy path.
+    """
+
+    BAR = ((-5, -5), (5, -5), (5, 5), (-5, 5))
+    ELBOW = ((0, 0, 0), (0, 0, 40), (30, 0, 40))
+
+    def test_the_path_survives_intact(self):
+        assert Sweep(self.BAR, self.ELBOW).path == tuple(
+            (float(x), float(y), float(z)) for x, y, z in self.ELBOW
+        )
+
+    def test_it_knows_how_far_the_outline_travels(self):
+        assert Sweep(self.BAR, self.ELBOW).length == pytest.approx(70.0)
+
+    def test_a_repeated_path_point_is_dropped(self):
+        """A zero-length segment fails inside OCCT naming neither end of it."""
+        doubled = ((0, 0, 0), (0, 0, 0), (0, 0, 40))
+        assert len(Sweep(self.BAR, doubled).path) == 2
+
+    def test_a_path_that_returns_to_its_start_keeps_both_ends(self):
+        """Unlike an outline, a path is not closed: coming back is an instruction."""
+        there_and_back = ((0, 0, 0), (0, 0, 40), (0, 0, 0))
+        assert len(Sweep(self.BAR, there_and_back).path) == 3
+
+    def test_a_sharp_corner_is_impossible_to_ask_for(self):
+        """Measured: a mitred right angle comes back at 3200 mm3 against 7000.
+
+        There is no error, so this is a floor rather than a choice.
+        """
+        assert Sweep(self.BAR, self.ELBOW, bend_radius=0).bend_radius >= MIN_BEND_MM
+
+    def test_a_bend_bigger_than_the_path_can_take_is_eased_to_fit(self):
+        """Measured against OCCT: this path accepts 10 mm and refuses 11."""
+        zigzag = ((0, 0, 0), (0, 0, 30), (20, 0, 30), (20, 0, 60), (40, 0, 60))
+        assert widest_bend(zigzag) == pytest.approx(10.0)
+        assert Sweep(self.BAR, zigzag, bend_radius=50).bend_radius == pytest.approx(10.0)
+
+    def test_a_sharper_corner_eats_more_of_the_run_than_a_right_angle_does(self):
+        """The arc starts r / tan(half the angle) back, so a hairpin costs more."""
+        square = ((0, 0, 0), (0, 0, 20), (20, 0, 20))
+        hairpin = ((0, 0, 0), (0, 0, 20), (2, 0, 0))
+        assert widest_bend(hairpin) < widest_bend(square)
+
+    def test_a_straight_path_leaves_the_bend_alone(self):
+        """Nothing to round, so nothing to fit it to."""
+        assert Sweep(self.BAR, ((0, 0, 0), (0, 0, 40)), bend_radius=8).bend_radius == 8.0
+
+    def test_three_points_in_a_line_are_not_a_corner(self):
+        straight = ((0, 0, 0), (0, 0, 20), (0, 0, 40))
+        assert not Sweep(self.BAR, straight).turns
+        assert Sweep(self.BAR, straight, bend_radius=8).bend_radius == 8.0
+
+    def test_a_bent_path_knows_that_it_turns(self):
+        assert Sweep(self.BAR, self.ELBOW).turns
+
+    def test_a_path_with_one_point_is_refused_with_a_reason(self):
+        assert "two points" in (Sweep(self.BAR, ((0, 0, 0),)).problem or "")
+
+    def test_a_section_that_encloses_nothing_is_refused_with_a_reason(self):
+        assert "three corners" in (Sweep(((0, 0), (5, 5)), self.ELBOW).problem or "")
+
+    def test_a_buildable_sweep_has_no_complaint(self):
+        assert Sweep(self.BAR, self.ELBOW).problem is None
+
+    def test_it_says_what_it_does(self):
+        assert Sweep(self.BAR, self.ELBOW).describe() == (
+            "Sweep a 4-point outline along a 70 mm path"
+        )
+        assert Sweep(self.BAR, self.ELBOW, cut=True).describe().startswith("Cut by sweeping")
+
+    def test_it_survives_a_round_trip_through_the_document(self):
+        original = Sweep(self.BAR, self.ELBOW, 3.0, cut=True)
+        document = tree(CreateBox(60, 60, 60), original)
+        assert command_from(document.active_features[-1]) == original
+
+    def test_the_section_is_placed_square_to_the_start_of_the_path(self):
+        """The rule that has no symptom: get it wrong and the volume is zero."""
+        source = script_for(Sweep(self.BAR, self.ELBOW))
+
+        assert "Plane(origin=_start, z_dir=_heading)" in source
+        assert "_heading = Vector(0, 0, 40) - _start" in source
+
+    def test_the_path_corners_are_rounded_before_it_is_swept(self):
+        assert "fillet(_path.vertices(), radius=3)" in script_for(Sweep(self.BAR, self.ELBOW, 3.0))
+
+    def test_a_straight_path_is_not_filleted_at_all(self):
+        source = script_for(Sweep(self.BAR, ((0, 0, 0), (0, 0, 40))))
+        assert "fillet(" not in source
+
+    def test_the_outline_is_centred_on_the_path_rather_than_where_it_was_drawn(self):
+        """Drawn off to one side, the bar would otherwise miss its own path."""
+        off_centre = ((0, 0), (10, 0), (10, 10), (0, 10))
+        source = script_for(Sweep(off_centre, ((0, 0, 0), (0, 0, 40))))
+        assert "[(-5, -5), (5, -5), (5, 5), (-5, 5)]" in source
+
+    def test_the_finished_solid_is_centred_on_the_origin(self):
+        """What mirror and the patterns rely on every shape doing."""
+        assert "_solid.bounding_box().center()" in script_for(Sweep(self.BAR, self.ELBOW))
+
+    def test_a_swept_shape_can_cut(self):
+        source = script_for(CreateBox(60, 60, 60), Sweep(self.BAR, self.ELBOW, cut=True))
+        assert "result = result - _solid" in source
+
+    def test_a_cut_cannot_be_the_first_thing_in_the_model(self):
+        assert not compile_document(tree(Sweep(self.BAR, self.ELBOW, cut=True))).ok
+
+    def test_a_swept_shape_patterns_like_anything_else(self):
+        once = script_for(CreateBox(90, 30, 5), Sweep(self.BAR, self.ELBOW))
+        thrice = script_for(CreateBox(90, 30, 5), Sweep(self.BAR, self.ELBOW), Repeat(3, 25))
+        assert thrice.count("sweep(") == 3 > once.count("sweep(")
+
+    def test_an_unbuildable_sweep_is_reported_with_its_own_reason(self):
+        """Not "this version does not understand that", which would be a lie."""
+        result = compile_document(tree(Sweep(((0, 0), (5, 5)), self.ELBOW)))
+        assert not result.ok
+        assert "three corners" in result.detail
+
+    def test_it_is_part_of_the_vocabulary_offered_to_a_model(self):
+        assert "sweep" in known_commands()
+
+    def test_it_compiles_to_valid_python(self):
+        compile(script_for(Sweep(self.BAR, self.ELBOW, 3.0)), "<generated>", "exec")
+
+
+class TestBlendingBetweenOutlines:
+    """A cross-section that changes on the way up.
+
+    The one failure worth guarding is two sections at the same height: OCCT
+    reports ``StdFail_NotDone`` and there is no reading of what shape was meant.
+    """
+
+    WIDE = ((-20, -20), (20, -20), (20, 20), (-20, 20))
+    NARROW = ((-8, -8), (8, -8), (8, 8), (-8, 8))
+
+    def taper(self, cut: bool = False) -> Loft:
+        return Loft((Section(self.WIDE, 0.0), Section(self.NARROW, 30.0)), cut)
+
+    def test_it_knows_how_tall_it_is(self):
+        assert self.taper().rise == pytest.approx(30.0)
+
+    def test_sections_are_sorted_by_height_however_they_arrive(self):
+        """The same solid either way, so refusing the order would be pedantry."""
+        upside_down = Loft((Section(self.NARROW, 30.0), Section(self.WIDE, 0.0)))
+        assert [s.height for s in upside_down.sections] == [0.0, 30.0]
+
+    def test_one_outline_is_not_a_blend(self):
+        assert "at least two" in (Loft((Section(self.WIDE, 0.0),)).problem or "")
+
+    def test_two_outlines_at_the_same_height_are_refused_by_name(self):
+        """OCCT fails on this with StdFail_NotDone and names neither of them."""
+        stacked = Loft((Section(self.WIDE, 5.0), Section(self.NARROW, 5.0)))
+        assert "both at 5 mm" in (stacked.problem or "")
+
+    def test_an_outline_that_encloses_nothing_is_refused(self):
+        thin = Loft((Section(self.WIDE, 0.0), Section(((0, 0), (5, 5)), 20.0)))
+        assert "three corners" in (thin.problem or "")
+
+    def test_a_buildable_blend_has_no_complaint(self):
+        assert self.taper().problem is None
+
+    def test_too_many_sections_are_capped(self):
+        many = Loft(tuple(Section(self.WIDE, float(h)) for h in range(200)))
+        assert len(many.sections) <= MAX_SECTIONS
+
+    def test_it_says_what_it_does(self):
+        assert self.taper().describe() == "Blend between 2 outlines over 30 mm"
+        assert self.taper(cut=True).describe().startswith("Cut by blending")
+
+    def test_it_survives_a_round_trip_through_the_document(self):
+        original = self.taper(cut=True)
+        document = tree(CreateBox(60, 60, 60), original)
+        assert command_from(document.active_features[-1]) == original
+
+    def test_each_outline_compiles_onto_its_own_height(self):
+        source = script_for(self.taper())
+
+        assert "Plane.XY.offset(0)" in source
+        assert "Plane.XY.offset(30)" in source
+        assert "loft(_sections)" in source
+
+    def test_the_outlines_keep_the_position_they_were_drawn_at(self):
+        """A blend that leans is a real shape; centring each section kills it."""
+        leaning = Loft((Section(self.WIDE, 0.0), Section(((22, 22), (38, 22), (38, 38)), 30.0)))
+        assert "(22, 22), (38, 22), (38, 38)" in script_for(leaning)
+
+    def test_the_finished_solid_is_centred_on_the_origin(self):
+        assert "_solid.bounding_box().center()" in script_for(self.taper())
+
+    def test_a_blended_shape_can_cut(self):
+        source = script_for(CreateBox(60, 60, 60), self.taper(cut=True))
+        assert "result = result - _solid" in source
+
+    def test_a_cut_cannot_be_the_first_thing_in_the_model(self):
+        assert not compile_document(tree(self.taper(cut=True))).ok
+
+    def test_a_blended_shape_patterns_like_anything_else(self):
+        once = script_for(CreateBox(120, 60, 5), self.taper())
+        thrice = script_for(CreateBox(120, 60, 5), self.taper(), Repeat(3, 40))
+        assert thrice.count("loft(") == 3 > once.count("loft(")
+
+    def test_an_unbuildable_blend_is_reported_with_its_own_reason(self):
+        stacked = Loft((Section(self.WIDE, 5.0), Section(self.NARROW, 5.0)))
+        result = compile_document(tree(stacked))
+        assert not result.ok
+        assert "both at 5 mm" in result.detail
+
+    def test_it_is_part_of_the_vocabulary_offered_to_a_model(self):
+        assert "loft" in known_commands()
+
+    def test_it_compiles_to_valid_python(self):
+        compile(script_for(self.taper()), "<generated>", "exec")
