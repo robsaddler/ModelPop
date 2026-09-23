@@ -49,6 +49,7 @@ from modelpop.ui.dialogs import (
     EditDialog,
     GenerateDialog,
     GenerateFromImageDialog,
+    ResizeDialog,
     RunLogDialog,
     SettingsDialog,
 )
@@ -154,11 +155,13 @@ class MainWindow(QMainWindow):
         side.addWidget(self._how_button)
 
         self._repair_button = QPushButton("Repair")
+        self._resize_button = QPushButton("Resize...")
         self._prepare_button = QPushButton("Place on bed")
         self._simplify_button = QPushButton(f"Simplify to {DEFAULT_TRIANGLE_BUDGET // 1000}k")
         self._slice_button = QPushButton("Slice")
         for button in (
             self._repair_button,
+            self._resize_button,
             self._prepare_button,
             self._simplify_button,
             self._slice_button,
@@ -268,6 +271,7 @@ class MainWindow(QMainWindow):
         self._edit_button.clicked.connect(self._edit_by_description)
         self._how_button.clicked.connect(self._show_run_log)
         self._repair_button.clicked.connect(self._view_model.repair)
+        self._resize_button.clicked.connect(self._resize)
         self._prepare_button.clicked.connect(self._view_model.prepare_for_bed)
         self._simplify_button.clicked.connect(
             lambda: self._view_model.simplify(DEFAULT_TRIANGLE_BUDGET)
@@ -395,6 +399,22 @@ class MainWindow(QMainWindow):
         if path:
             self._modelling.save_to(Path(path))
 
+    def _resize(self) -> None:
+        """Set the model's real size.
+
+        The operation the user asked for by name - "about six inches tall" -
+        and the one that makes a shape from a picture printable, since its
+        scale is arbitrary until somebody says otherwise.
+        """
+        state = self._view_model.state
+        if not state.has_model or state.mesh is None:
+            return
+
+        current = state.mesh.bounds.largest_dimension.format()
+        dialog = ResizeDialog(current, self)
+        if dialog.exec() and dialog.size_wanted is not None:
+            self._view_model.scale_to_fit(dialog.size_wanted)
+
     def _watch_print(self) -> None:
         """Play back the last slice.
 
@@ -486,6 +506,7 @@ class MainWindow(QMainWindow):
         """Enable only what the current state actually allows."""
         state = self._view_model.state
         self._repair_button.setEnabled(self._view_model.can_repair)
+        self._resize_button.setEnabled(state.has_model)
         self._prepare_button.setEnabled(state.has_model)
         self._simplify_button.setEnabled(state.has_model)
         self._slice_button.setEnabled(self._view_model.can_slice)

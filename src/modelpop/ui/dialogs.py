@@ -33,6 +33,7 @@ from modelpop.application.mesh_generation_ports import (
     Detail,
     GenerationOptions,
 )
+from modelpop.domain.units import Length
 from modelpop.repositories import (
     ACCESS_WARNING,
     MYMINIFACTORY_KEY_NAME,
@@ -529,3 +530,75 @@ class GenerateFromImageDialog(QDialog):
             background=list(Background)[self._background.currentIndex()],
             seed=int(self._seed.value()),
         )
+
+
+class ResizeDialog(QDialog):
+    """Ask how big the model really is.
+
+    Typed rather than dialled, because people say "6 inches" and "150mm", not
+    "152.4". The parsing lives in the domain, so this box accepts anything the
+    rest of the app understands.
+    """
+
+    def __init__(self, current: str = "", parent: QWidget | None = None) -> None:
+        """Build the dialog, showing what it measures now."""
+        super().__init__(parent)
+        self.setWindowTitle("Resize the model")
+        self.setMinimumWidth(400)
+
+        form = QFormLayout(self)
+        if current:
+            form.addRow(QLabel(f"It is currently <b>{current}</b> at its largest."))
+
+        self._size = QLineEdit()
+        self._size.setPlaceholderText("6 inches, or 150mm")
+        self._size.textChanged.connect(self._check)
+        form.addRow("Make it", self._size)
+
+        self._reading = QLabel()
+        self._reading.setStyleSheet(_HINT_STYLE)
+        form.addRow(self._reading)
+
+        note = QLabel(
+            "Scales the whole model so its largest dimension is that size. Useful "
+            "for anything that came out of a picture, where the scale is arbitrary "
+            "until you say otherwise."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(_HINT_STYLE)
+        form.addRow(note)
+
+        self._buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self._buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+        form.addRow(self._buttons)
+
+    def _check(self, text: str) -> None:
+        """Show what was understood, as it is typed.
+
+        Reading the number back is the only way the user finds out that "6" on
+        its own means six millimetres before they apply it.
+        """
+        size = self.size_wanted
+        usable = size is not None and size.millimetres > 0
+        self._buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(usable)
+        if not text.strip():
+            self._reading.setText("")
+        elif usable and size is not None:
+            self._reading.setText(f"Read as {size.format()}.")
+        else:
+            self._reading.setText("Not understood. Try \u201c6 inches\u201d or \u201c150mm\u201d.")
+
+    @property
+    def size_wanted(self) -> Length | None:
+        """What was typed, as a length, or ``None`` if it made no sense."""
+        text = self._size.text().strip()
+        if not text:
+            return None
+        try:
+            return Length.parse(text)
+        except (ValueError, TypeError):
+            return None
