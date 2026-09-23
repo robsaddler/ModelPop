@@ -402,10 +402,14 @@ class TestSendingFromTheViewModel:
         assert gateway.jobs[0].connection == REACHABLE
 
     def test_the_status_can_be_asked_for(self, tmp_path):
-        view, seen = self.model(Recording())
-        view.read_printer_status()
+        """Handed back rather than announced: the monitoring panel polls it on a
+        clock, and a reading on the status bar every ten seconds for the length
+        of a print would be its own kind of failure."""
+        view, _ = self.model(Recording())
+        outcome = view.printer_status(REACHABLE)
 
-        assert "idle" in seen[-1].message
+        assert outcome.ok
+        assert "idle" in outcome.unwrap().describe()
 
     def test_the_view_model_sends_nothing_unless_it_is_asked_for_explicitly(self, tmp_path):
         gateway = Recording()

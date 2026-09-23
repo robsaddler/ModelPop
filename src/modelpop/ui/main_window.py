@@ -57,6 +57,7 @@ from modelpop.ui.dialogs import (
     RunLogDialog,
     SettingsDialog,
 )
+from modelpop.ui.monitor_dialog import MonitorDialog
 from modelpop.ui.section_dialog import SectionDialog
 
 __all__ = ["MainWindow"]
@@ -285,7 +286,7 @@ class MainWindow(QMainWindow):
         print_menu.addAction(self._send_action)
 
         self._printer_status_action = QAction("What is the printer &doing?", self)
-        self._printer_status_action.triggered.connect(self._view_model.read_printer_status)
+        self._printer_status_action.triggered.connect(self._watch_the_printer)
         print_menu.addAction(self._printer_status_action)
 
         view_menu = self.menuBar().addMenu("&View")
@@ -648,6 +649,16 @@ class MainWindow(QMainWindow):
             return
 
         PrintWindow(report.gcode_path, self._view_model.printer, self).exec()
+
+    def _watch_the_printer(self) -> None:
+        """Open the panel that keeps asking what the printer is doing."""
+        connection = self._view_model.printer_connection
+        problem = connection.problem
+        if problem is not None:
+            QMessageBox.information(self, "ModelPop", f"{problem}\n\nAdd it in File > Settings.")
+            return
+
+        MonitorDialog(self._view_model.printer_status, connection, self).show()
 
     def _send_to_printer(self) -> None:
         """Send the last sliced job, after asking once whether to start it.

@@ -52,7 +52,8 @@ Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-p
 
 Phase 5  Edit it properly   ── DONE  tree, profiles, patterns, sweep, loft, section, drag handles
 Phase 7  Photos → replica   ─ scale from a reference in shot DONE; multi-photo reconstruction to come
-Phase 8  Make it delightful ─ detail rescue to come (multi-colour splitting, printer comms DONE)
+Phase 8  Make it delightful ─ detail rescue and variants to come (colour splitting, printer
+                             comms, print monitoring DONE)
 ```
 
 **Phases 4 and 6 arrived early, out of order.** Once the CAD kernel was in place, generating a
@@ -174,9 +175,16 @@ never lets one read like the other.
 **Done when:** photos of an object against a reference produce a replica that measures correctly
 with calipers.
 
-### Phase 8 — Delight
+### Phase 8 — Delight *(most of it shipped)*
 Texture→displacement detail rescue. Hollowing with drain holes. Multi-colour part splitting for the
 AMS. Generation history and variants. Print monitoring.
+
+**Built:** hollowing with a face left open to drain; multi-colour splitting into one file per
+filament; and **print monitoring** - a panel that polls the printer, backs off when it does not
+answer, gives up after enough misses, and stops of its own accord when the print ends.
+
+**Still to come:** texture-to-displacement detail rescue, which the plan has always said is genuine
+research, and generation variants.
 
 ## Working method
 

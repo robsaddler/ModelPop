@@ -27,6 +27,7 @@ from modelpop.domain.units import Length
 if TYPE_CHECKING:
     from modelpop.application.cad_ports import DimensionTable
     from modelpop.application.mesh_generation_ports import GenerationOptions, Progress
+    from modelpop.application.printer_ports import PrinterStatus
     from modelpop.domain.mesh import Mesh
 
 __all__ = ["Notification", "WorkspaceViewModel"]
@@ -382,28 +383,16 @@ class WorkspaceViewModel:
 
         self._runner(work)
 
-    def read_printer_status(self) -> None:
-        """Ask the printer what it is doing, and say so."""
-        if self._busy:
-            return
+    def printer_status(self, connection: PrinterConnection) -> Result[PrinterStatus]:
+        """Ask the printer what it is doing, and hand back the answer.
 
-        connection = self._connection
-        self._set_busy(True)
-
-        def work() -> None:
-            try:
-                outcome = self._workspace.printer_status(connection)
-            finally:
-                self._set_busy(False)
-
-            if not outcome.ok:
-                self._notify(
-                    Notification("The printer did not answer", Severity.WARNING, outcome.error)
-                )
-                return
-            self._notify(Notification(outcome.unwrap().describe(), Severity.INFO))
-
-        self._runner(work)
+        Returned rather than announced, and taking the printer as an argument
+        rather than reading the stored one. Both are for the monitoring panel,
+        which polls this from its own worker thread on a clock of its own: a
+        method that announced through the view-model's listeners would put a
+        reading on the status bar every ten seconds for the length of a print.
+        """
+        return self._workspace.printer_status(connection)
 
     # --------------------------------------------------------------- internal
 
