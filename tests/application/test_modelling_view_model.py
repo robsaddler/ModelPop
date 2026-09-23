@@ -393,3 +393,41 @@ class TestMirroringAndPatterns:
         model.mirror(Plane.XZ, keep_original=False)
 
         assert "replace it" in model.state.features[-1].label
+
+
+class TestSpinningAProfile:
+    """The revolve path, driven with no display."""
+
+    CUP = ((0.0, 0.0), (15.0, 0.0), (15.0, 50.0), (12.0, 50.0), (12.0, 3.0), (0.0, 3.0))
+
+    def test_it_joins_the_feature_tree(self):
+        model = view()
+        model.revolve(self.CUP)
+
+        assert "Spin a 6-point profile all the way round" in model.state.features[0].label
+
+    def test_it_can_start_a_model_and_undoes(self):
+        model = view()
+        model.revolve(self.CUP)
+        assert not model.state.is_empty
+        model.undo()
+        assert model.state.is_empty
+
+    def test_a_partial_turn_and_a_cut_reach_the_command(self):
+        model = view()
+        model.add_box(60, 60, 60)
+        model.revolve(self.CUP, 90, cut=True)
+
+        label = model.state.features[-1].label
+        assert label.startswith("Cut by spinning")
+        assert "90 degrees" in label
+
+    def test_a_profile_that_encloses_nothing_is_refused_in_plain_words(self):
+        seen: list[Outcome] = []
+        model = view()
+        model.on_outcome(seen.append)
+        model.revolve(((0.0, 0.0), (10.0, 0.0)))
+
+        assert seen[-1].refused
+        assert "three corners" in seen[-1].detail
+        assert model.state.is_empty

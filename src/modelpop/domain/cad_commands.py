@@ -44,6 +44,7 @@ __all__ = [
     "Plane",
     "Repeat",
     "RepeatAround",
+    "Revolve",
     "Rotate",
     "ScaleTo",
     "TextOnSurface",
@@ -175,6 +176,33 @@ def _clamp_count(value: Any) -> int:
     except (TypeError, ValueError):
         return 2
     return max(1, min(count, MAX_COPIES))
+
+
+def _clamp_arc(value: Any) -> float:
+    """How far round to sweep. A full turn is the default and the maximum."""
+    try:
+        degrees = float(value)
+    except (TypeError, ValueError):
+        return 360.0
+    return min(max(degrees, 1.0), 360.0)
+
+
+def _against_the_axis(
+    points: tuple[tuple[float, float], ...],
+) -> tuple[tuple[float, float], ...]:
+    """Push a profile out of the axis it will spin around.
+
+    A radius below zero is the same material swept twice, which OCCT reports
+    as a self-intersection. Shifting the whole profile keeps its shape, which
+    is what somebody who drew it in the wrong corner actually wanted; clamping
+    each corner separately would flatten one side of it instead.
+    """
+    if not points:
+        return points
+    inside = min(radius for radius, _ in points)
+    if inside >= 0:
+        return points
+    return tuple((radius - inside, height) for radius, height in points)
 
 
 class EdgeSelector(Enum):
@@ -723,6 +751,64 @@ class RepeatAround(Command):
         return 360.0 / self.times
 
 
+@dataclass(frozen=True, slots=True)
+class Revolve(Command):
+    """Spin a profile round the upright axis to make a solid of revolution.
+
+    The other half of what a profile is for. Anything round in plan - a vase, a
+    knob, a wheel, a bottle, a lampshade, a funnel - is one outline and this.
+
+    Each corner is a *radius* and a *height*, not an x and a y: the first
+    number is how far that corner sits from the axis, the second how high. A
+    profile that strays inside the axis is pushed back out rather than refused,
+    because a corner at -2 mm is somebody drawing in the wrong corner rather
+    than asking for something impossible.
+
+    Only the upright axis. A shape lying down is this followed by a ``rotate``,
+    and offering three axes where two of them are rarely what anyone meant is
+    worse than offering the one that is.
+    """
+
+    points: tuple[tuple[float, float], ...]
+    degrees: float = 360.0
+    cut: bool = False
+
+    def __post_init__(self) -> None:
+        """Tidy the profile and keep it out of the axis."""
+        object.__setattr__(self, "degrees", _clamp_arc(self.degrees))
+        object.__setattr__(self, "points", _against_the_axis(_tidy_outline(self.points)))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "revolve"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {
+            "points": [list(point) for point in self.points],
+            "degrees": self.degrees,
+            "cut": self.cut,
+        }
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        verb = "Cut by spinning" if self.cut else "Spin"
+        arc = "all the way round" if self.degrees >= 360.0 else f"{self.degrees:g} degrees"
+        return f"{verb} a {len(self.points)}-point profile {arc}"
+
+    @property
+    def is_closed_enough(self) -> bool:
+        """Whether there are enough corners to enclose an area at all."""
+        return len(self.points) >= MIN_OUTLINE_POINTS
+
+    @property
+    def widest(self) -> float:
+        """The finished radius, in millimetres."""
+        return max((radius for radius, _ in self.points), default=0.0)
+
+
 # --------------------------------------------------------------- rebuilding
 
 _BY_NAME: dict[str, Any] = {
@@ -739,6 +825,7 @@ _BY_NAME: dict[str, Any] = {
     "mirror": Mirror,
     "repeat": Repeat,
     "repeat-around": RepeatAround,
+    "revolve": Revolve,
     "text-on-surface": TextOnSurface,
 }
 
@@ -775,6 +862,12 @@ def _construct(factory: Any, parameters: dict[str, Any]) -> Command:
             tuple(tuple(point) for point in parameters["points"]),
             parameters["height"],
             Plane(parameters.get("plane", "floor")),
+            bool(parameters.get("cut", False)),
+        )
+    if factory is Revolve:
+        return Revolve(
+            tuple(tuple(point) for point in parameters["points"]),
+            parameters.get("degrees", 360.0),
             bool(parameters.get("cut", False)),
         )
     if factory is Mirror:

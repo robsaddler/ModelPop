@@ -34,6 +34,7 @@ from modelpop.domain.cad_commands import (
     Plane,
     Repeat,
     RepeatAround,
+    Revolve,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -267,6 +268,31 @@ class ModellingViewModel:
                 Outcome(
                     "That outline does not enclose anything",
                     "An outline needs at least three corners to have an inside.",
+                    refused=True,
+                )
+            )
+            return
+        self._apply(command)
+
+    def revolve(
+        self,
+        points: Sequence[tuple[float, float]],
+        degrees: float = 360.0,
+        *,
+        cut: bool = False,
+    ) -> None:
+        """Spin a drawn profile round the upright axis.
+
+        Refused here rather than in the kernel when the profile encloses
+        nothing, for the same reason as an extrusion: a kernel that says only
+        "could not make that shape" leaves the user with nothing to act on.
+        """
+        command = Revolve(tuple(points), degrees, cut)
+        if not command.is_closed_enough:
+            self._announce(
+                Outcome(
+                    "That profile does not enclose anything",
+                    "A profile needs at least three corners to have an inside.",
                     refused=True,
                 )
             )

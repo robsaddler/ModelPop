@@ -40,6 +40,7 @@ from modelpop.domain.cad_commands import (
     Plane,
     Repeat,
     RepeatAround,
+    Revolve,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -235,6 +236,8 @@ def _fragment_for(command: Command, *, first: bool, copy: str = "") -> str | Non
             return _shape(command, f"Sphere({command.radius})", first=first, copy=copy)
         case Extrude():
             return _extrude_fragment(command, first=first, copy=copy)
+        case Revolve():
+            return _revolve_fragment(command, first=first, copy=copy)
         case _ if first:
             return None  # nothing to operate on yet
 
@@ -317,6 +320,38 @@ def _extrude_fragment(command: Extrude, *, first: bool, copy: str = "") -> str |
     return "\n".join(lines)
 
 
+def _revolve_fragment(command: Revolve, *, first: bool, copy: str = "") -> str | None:
+    """A profile spun round the upright axis.
+
+    Centred through its height, like everything else here, but *not* across
+    its width: the first number in each corner is a radius, and moving the
+    profile sideways would change the shape rather than where it sits.
+    """
+    if not command.is_closed_enough:
+        return None
+
+    heights = [height for _, height in command.points]
+    middle = (min(heights) + max(heights)) / 2
+    points = ", ".join(f"({radius:g}, {height - middle:g})" for radius, height in command.points)
+    lines = [
+        f"_outline = Polyline([{points}], close=True)",
+        "_profile = make_face(Plane.XZ * _outline)",
+        f"_solid = revolve(_profile, axis=Axis.Z, revolution_arc={command.degrees:g})",
+    ]
+
+    if copy:
+        lines.append(f"_solid = {copy} * _solid")
+
+    if first:
+        if command.cut:
+            return None  # nothing to cut from yet
+        lines.append("result = _solid")
+    else:
+        lines.append(f"result = result {'-' if command.cut else '+'} _solid")
+
+    return "\n".join(lines)
+
+
 def _is_a_shape(command: Command) -> bool:
     """Whether a feature adds or removes material in its own right.
 
@@ -324,7 +359,7 @@ def _is_a_shape(command: Command) -> bool:
     and quietly repeating the shape before it instead would produce a model
     that is not what anyone asked for.
     """
-    return isinstance(command, CreateBox | CreateCylinder | CreateSphere | Extrude)
+    return isinstance(command, CreateBox | CreateCylinder | CreateSphere | Extrude | Revolve)
 
 
 def _pattern_fragment(command: Repeat | RepeatAround, shape: Command | None) -> str | None:

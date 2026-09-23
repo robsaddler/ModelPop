@@ -67,6 +67,10 @@ def _vocabulary() -> str:
         "mirror": f"plane ({_choices(Plane)}), keep_original (true or false)",
         "repeat": "times (a whole number), dx, dy, dz (mm between copies)",
         "repeat-around": "times (a whole number), axis (X, Y or Z)",
+        "revolve": (
+            "points (a list of [radius, height] corners in mm), degrees (how far "
+            "round, up to 360), cut (true to remove it)"
+        ),
         "extrude": (
             f"points (a list of [x, y] corners in mm), height (mm), "
             f"plane ({_choices(Plane)}), cut (true to remove it)"
@@ -120,6 +124,11 @@ Rules:
   they must follow one. A row of mounting holes is one cut cylinder followed by
   a "repeat"; a bolt circle is one off-centre cut cylinder followed by a
   "repeat-around". Put one after a fillet or a hollow and it is discarded.
+- "revolve" makes anything round in plan - a vase, a knob, a wheel, a bottle.
+  Each corner is a radius from the upright axis and a height, so a straight-
+  sided cup 30 mm across and 50 mm tall with 3 mm walls is
+  [[0,0],[15,0],[15,50],[12,50],[12,3],[0,3]]. It always spins about the
+  upright axis; use "rotate" afterwards to lay the result down.
 - "mirror" reflects the whole part about a plane through the origin, so model
   one half of a symmetrical part and reflect it rather than building both.
 - The first operation must add a shape. There is nothing to cut from yet.

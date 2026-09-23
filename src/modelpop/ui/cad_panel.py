@@ -40,7 +40,7 @@ from modelpop.application.modelling import ModelState
 from modelpop.domain.cad_commands import MAX_COPIES, EdgeSelector, Face
 from modelpop.domain.units import Length
 from modelpop.presentation.modelling_view_model import ModellingViewModel
-from modelpop.ui.outline_dialog import OutlineDialog
+from modelpop.ui.outline_dialog import Operation, OutlineDialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -390,10 +390,10 @@ class CadPanel(QWidget):
         repeat_row.addWidget(self._mirror_button)
         rows.addLayout(repeat_row)
 
-        self._outline_button = QPushButton("Outline...")
+        self._outline_button = QPushButton("Profile...")
         self._outline_button.setToolTip(
-            "Draw a closed profile and give it thickness - a bracket, a gasket, "
-            "a nameplate, anything with a constant cross-section"
+            "Draw a closed profile and give it thickness or spin it round - a "
+            "bracket, a gasket, a nameplate, a vase, a knob, a wheel"
         )
         self._outline_button.clicked.connect(self._add_outline)
         size_row.addWidget(self._outline_button)
@@ -495,21 +495,19 @@ class CadPanel(QWidget):
         self._view.repeat(self._copies.value(), *(step * axis for axis in unit))
 
     def _add_outline(self) -> None:
-        """Draw a profile and extrude it.
+        """Draw a profile, and either give it thickness or spin it.
 
-        Offered even on an empty model, because an outline is as good a way to
+        Offered even on an empty model, because a profile is as good a way to
         start a part as a box is. A cut still needs something to cut into, and
         the view-model is what says so.
         """
         dialog = OutlineDialog(self)
         if not dialog.exec() or not dialog.points:
             return
-        self._view.extrude(
-            dialog.points,
-            dialog.thickness,
-            dialog.plane,
-            cut=dialog.cut,
-        )
+        if dialog.operation is Operation.REVOLVE:
+            self._view.revolve(dialog.points, dialog.degrees, cut=dialog.cut)
+        else:
+            self._view.extrude(dialog.points, dialog.thickness, dialog.plane, cut=dialog.cut)
 
     def _add_text(self) -> None:
         dialog = TextDialog(self)

@@ -28,6 +28,7 @@ from modelpop.domain.cad_commands import (
     Plane,
     Repeat,
     RepeatAround,
+    Revolve,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -549,3 +550,50 @@ def test_a_patterned_shape_still_takes_the_rest_of_the_vocabulary(model):
     assert size.is_valid
     assert size.solid_count == 1
     assert size.width.millimetres == pytest.approx(80, abs=0.01)
+
+
+@kernel_required
+def test_a_spun_profile_has_the_volume_pappus_says_it_should(model):
+    """A ring of square section: area times the circle its centroid travels."""
+    assert model.apply(Revolve(((10, 0), (14, 0), (14, 4), (10, 4)), 360)).ok
+
+    section, centroid = 4 * 4, 12
+    size = model.state.measurements
+    assert size.volume_mm3 == pytest.approx(section * 2 * math.pi * centroid, rel=0.002)
+    assert size.width.millimetres == pytest.approx(28, abs=0.01), "the outer diameter"
+    assert size.height.millimetres == pytest.approx(4, abs=0.01)
+    assert size.is_valid
+
+
+@kernel_required
+def test_a_cup_comes_out_hollow(model):
+    """The user's shape, not a test shape: walls, a base, and an open top."""
+    assert model.apply(Revolve(((0, 0), (15, 0), (15, 50), (12, 50), (12, 3), (0, 3)))).ok
+
+    size = model.state.measurements
+    solid = math.pi * 15**2 * 50
+    assert size.volume_mm3 < solid * 0.4, "mostly air"
+    assert size.width.millimetres == pytest.approx(30, abs=0.01)
+    assert size.height.millimetres == pytest.approx(50, abs=0.01)
+    assert size.solid_count == 1
+    assert size.is_valid
+
+
+@kernel_required
+def test_a_partial_turn_leaves_a_wedge(model):
+    assert model.apply(Revolve(((0, 0), (20, 0), (20, 10), (0, 10)), 90)).ok
+
+    quarter = model.state.measurements
+    assert quarter.volume_mm3 == pytest.approx(math.pi * 20**2 * 10 / 4, rel=0.002)
+    assert quarter.is_valid
+
+
+@kernel_required
+def test_a_spun_shape_takes_the_rest_of_the_vocabulary(model):
+    """A knob: spun, then flattened on one side and rounded over."""
+    assert model.apply(Revolve(((0, 0), (18, 0), (18, 10), (12, 16), (12, 22), (0, 22)))).ok
+    assert model.apply(CreateBox(6, 40, 40, x=16, cut=True)).ok
+    assert model.apply(Fillet(1, EdgeSelector.TOP)).ok
+
+    assert model.state.measurements.is_valid
+    assert model.state.measurements.solid_count == 1

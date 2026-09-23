@@ -16,9 +16,12 @@ from PySide6.QtWidgets import QApplication, QDialogButtonBox
 from modelpop.domain.cad_commands import Plane
 from modelpop.ui.outline_dialog import (
     PRESETS,
+    SPIN_PRESETS,
+    Operation,
     OutlineDialog,
     OutlinePreview,
     describe_outline,
+    describe_profile,
     enclosed_area,
     parse_outline,
 )
@@ -142,3 +145,63 @@ class TestTheDialog:
         preview = OutlinePreview()
         for corners in ([], [(0.0, 0.0)], [(1.0, 1.0), (1.0, 1.0)]):
             preview.show_outline(corners)
+
+
+class TestSpinningInstead:
+    """The same dialog, asked for a solid of revolution.
+
+    One dialog for both operations, so the thing worth testing is that it says
+    the right thing for whichever is chosen - a profile described as a flat
+    outline when it is about to be spun would mislead about the finished size.
+    """
+
+    CUP = ((0.0, 0.0), (15.0, 0.0), (15.0, 50.0), (12.0, 50.0), (12.0, 3.0), (0.0, 3.0))
+
+    def test_a_spun_profile_is_described_by_what_it_becomes(self):
+        told = describe_profile(list(self.CUP))
+        assert "30 mm across" in told, "twice the widest radius"
+        assert "50 mm tall" in told
+
+    def test_a_spun_profile_that_encloses_nothing_says_so(self):
+        assert "at least 3" in describe_profile([(0.0, 0.0)])
+        assert "no area" in describe_profile([(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)])
+
+    @pytest.mark.parametrize("name", list(SPIN_PRESETS))
+    def test_every_spin_preset_encloses_something(self, name):
+        assert enclosed_area(list(SPIN_PRESETS[name])) > 1.0
+
+    @pytest.mark.parametrize("name", list(SPIN_PRESETS))
+    def test_no_spin_preset_strays_inside_the_axis(self, name):
+        """A negative radius sweeps the same material twice."""
+        assert min(radius for radius, _ in SPIN_PRESETS[name]) >= 0
+
+    def test_choosing_to_spin_changes_the_presets_on_offer(self, app):
+        dialog = OutlineDialog()
+        started_as = dialog.operation
+        offered_first = [dialog._preset.itemText(i) for i in range(1, dialog._preset.count())]
+
+        dialog._operation.setCurrentIndex(list(Operation).index(Operation.REVOLVE))
+        offered_now = [dialog._preset.itemText(i) for i in range(1, dialog._preset.count())]
+
+        assert started_as is Operation.EXTRUDE, "the commoner of the two"
+        assert offered_first == list(PRESETS)
+        assert offered_now == list(SPIN_PRESETS)
+
+    def test_a_spin_preset_can_be_chosen_and_read_back(self, app):
+        dialog = OutlineDialog()
+        dialog._operation.setCurrentIndex(list(Operation).index(Operation.REVOLVE))
+        dialog.set_outline(SPIN_PRESETS["Washer"])
+
+        assert dialog.points == SPIN_PRESETS["Washer"]
+        assert dialog.degrees == pytest.approx(360.0), "a full turn by default"
+
+    def test_the_summary_follows_the_operation(self, app):
+        dialog = OutlineDialog()
+        dialog.set_outline(self.CUP)
+        flat = dialog._summary.text()
+
+        dialog._operation.setCurrentIndex(list(Operation).index(Operation.REVOLVE))
+        dialog.set_outline(self.CUP)
+
+        assert "sq cm" in flat, "an outline is described by the area it encloses"
+        assert "30 mm across" in dialog._summary.text()

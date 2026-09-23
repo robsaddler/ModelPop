@@ -36,6 +36,7 @@ from modelpop.domain.cad_commands import (
     Plane,
     Repeat,
     RepeatAround,
+    Revolve,
     Rotate,
     ScaleTo,
     TextOnSurface,
@@ -664,3 +665,88 @@ class TestMirroringAndPatterns:
             CreateCylinder(30, 8), CreateCylinder(3, 20, x=20, cut=True), RepeatAround(6), Mirror()
         )
         compile(source, "<generated>", "exec")
+
+
+class TestSpinningAProfile:
+    """A profile round the upright axis - the other half of what a profile is for.
+
+    The rule with no visible symptom is the axis one: a corner at a negative
+    radius sweeps the same material twice, and OCCT calls that a
+    self-intersection without saying which corner it meant.
+    """
+
+    CUP = ((0, 0), (15, 0), (15, 50), (12, 50), (12, 3), (0, 3))
+
+    def test_a_profile_survives_intact(self):
+        assert Revolve(self.CUP, 360).points == tuple((float(r), float(h)) for r, h in self.CUP)
+
+    def test_a_profile_inside_the_axis_is_pushed_out_whole(self):
+        """Shifted, not clamped: clamping would flatten one side of it."""
+        assert Revolve(((-5, 0), (10, 0), (10, 20)), 360).points == (
+            (0.0, 0.0),
+            (15.0, 0.0),
+            (15.0, 20.0),
+        )
+
+    def test_a_profile_already_clear_of_the_axis_is_left_where_it_is(self):
+        """A washer is a ring, and moving it to the axis would make it a disc."""
+        assert Revolve(((6, 0), (14, 0), (14, 3), (6, 3)), 360).points[0] == (6.0, 0.0)
+
+    def test_the_arc_is_bounded_to_one_turn(self):
+        assert Revolve(self.CUP, 100_000).degrees == 360.0
+        assert Revolve(self.CUP, -40).degrees == 1.0
+        assert Revolve(self.CUP, "round").degrees == 360.0
+
+    def test_it_knows_how_wide_it_will_end_up(self):
+        assert Revolve(self.CUP, 360).widest == 15.0
+
+    def test_it_says_what_it_does(self):
+        assert "all the way round" in Revolve(self.CUP, 360).describe()
+        assert "90 degrees" in Revolve(self.CUP, 90).describe()
+        assert Revolve(self.CUP, 360, cut=True).describe().startswith("Cut by spinning")
+
+    def test_it_survives_a_round_trip_through_the_document(self):
+        original = Revolve(self.CUP, 270, cut=True)
+        document = tree(CreateBox(60, 60, 60), original)
+        assert command_from(document.active_features[-1]) == original
+
+    def test_it_compiles_to_a_profile_spun_about_the_upright_axis(self):
+        source = script_for(Revolve(self.CUP, 360))
+
+        assert "make_face(Plane.XZ * _outline)" in source
+        assert "revolve(_profile, axis=Axis.Z, revolution_arc=360)" in source
+        assert "result = _solid" in source
+
+    def test_the_profile_is_centred_through_its_height_but_not_across_it(self):
+        """Moving it sideways would change the shape, not where it sits."""
+        source = script_for(Revolve(((0, 0), (15, 0), (15, 50)), 360))
+
+        assert "(0, -25), (15, -25), (15, 25)" in source
+
+    def test_a_partial_turn_reaches_the_script(self):
+        assert "revolution_arc=90" in script_for(Revolve(self.CUP, 90))
+
+    def test_a_spun_shape_can_cut(self):
+        source = script_for(CreateBox(60, 60, 60), Revolve(self.CUP, 360, cut=True))
+        assert "result = result - _solid" in source
+
+    def test_a_cut_cannot_be_the_first_thing_in_the_model(self):
+        assert not compile_document(tree(Revolve(self.CUP, 360, cut=True))).ok
+
+    def test_a_profile_that_encloses_nothing_is_refused(self):
+        assert not compile_document(tree(Revolve(((0, 0), (10, 0)), 360))).ok
+
+    def test_a_spun_shape_patterns_like_anything_else(self):
+        source = script_for(CreateCylinder(40, 5), Revolve(((10, 0), (14, 0), (14, 8)), 360))
+        spun = script_for(
+            CreateCylinder(40, 5),
+            Revolve(((10, 0), (14, 0), (14, 8)), 360),
+            RepeatAround(3),
+        )
+        assert spun.count("revolve(") == 3 > source.count("revolve(")
+
+    def test_it_is_part_of_the_vocabulary_offered_to_a_model(self):
+        assert "revolve" in known_commands()
+
+    def test_it_compiles_to_valid_python(self):
+        compile(script_for(Revolve(self.CUP, 270)), "<generated>", "exec")

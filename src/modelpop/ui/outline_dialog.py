@@ -13,6 +13,7 @@ every rule about what counts as an outline is tested without a display.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPointF, Qt
@@ -35,12 +36,23 @@ if TYPE_CHECKING:
     from PySide6.QtGui import QPaintEvent
 
 __all__ = [
+    "SPIN_PRESETS",
+    "Operation",
     "OutlineDialog",
     "OutlinePreview",
     "describe_outline",
+    "describe_profile",
     "enclosed_area",
     "parse_outline",
 ]
+
+
+class Operation(Enum):
+    """What to do with a profile once it is drawn."""
+
+    EXTRUDE = "give it thickness"
+    REVOLVE = "spin it round"
+
 
 _HINT_STYLE = "color: #9AA5B1; font-size: 11px;"
 _OUTLINE_COLOUR = "#9FC5E8"
@@ -67,6 +79,31 @@ PRESETS: dict[str, tuple[tuple[float, float], ...]] = {
     "Hexagon": ((0, 17), (10, 0), (30, 0), (40, 17), (30, 34), (10, 34)),
     "Rounded tab": ((0, 0), (40, 0), (40, 20), (34, 26), (6, 26), (0, 20)),
 }
+
+
+# Profiles for spinning, as radius-from-the-axis and height. Each is a thing
+# somebody would actually print, and each is easier to edit than to invent.
+SPIN_PRESETS: dict[str, tuple[tuple[float, float], ...]] = {
+    "Cup": ((0, 0), (25, 0), (25, 60), (22, 60), (22, 3), (0, 3)),
+    "Vase": ((0, 0), (20, 0), (20, 4), (34, 30), (30, 60), (16, 80), (13, 80), (17, 60), (0, 5)),
+    "Knob": ((0, 0), (18, 0), (18, 10), (12, 16), (12, 22), (0, 22)),
+    "Washer": ((6, 0), (14, 0), (14, 3), (6, 3)),
+    "Funnel": ((0, 0), (6, 0), (6, 20), (40, 55), (40, 58), (3, 24), (3, 0)),
+}
+
+
+def describe_profile(corners: list[tuple[float, float]]) -> str:
+    """A line about a profile that is going to be spun, not extruded."""
+    if len(corners) < MIN_OUTLINE_POINTS:
+        return (
+            f"{len(corners)} of at least {MIN_OUTLINE_POINTS} corners - this encloses nothing yet."
+        )
+    if enclosed_area(corners) < MIN_AREA_MM2:
+        return f"{len(corners)} corners, but they enclose no area - are they all in a line?"
+    widest = max(radius for radius, _ in corners)
+    heights = [height for _, height in corners]
+    tall = max(heights) - min(heights)
+    return f"{len(corners)} corners, {widest * 2:g} mm across and {tall:g} mm tall when spun."
 
 
 def parse_outline(text: str) -> list[tuple[float, float]]:
@@ -136,10 +173,20 @@ class OutlinePreview(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(180)
         self._corners: list[tuple[float, float]] = []
+        self._axis = False
 
     def show_outline(self, corners: list[tuple[float, float]]) -> None:
         """Display a new set of corners."""
         self._corners = corners
+        self.update()
+
+    def show_axis(self, showing: bool) -> None:
+        """Draw the axis a profile will spin about, or stop drawing it.
+
+        Worth the few lines: a profile drawn without knowing where the axis is
+        produces a shape with a hole through the middle nobody asked for.
+        """
+        self._axis = showing
         self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
@@ -154,6 +201,11 @@ class OutlinePreview(QWidget):
             return
 
         points = self._fitted()
+        if self._axis:
+            painter.setPen(QPen(QColor(_CORNER_COLOUR), 1, Qt.PenStyle.DashLine))
+            left = min(point.x() for point in points)
+            painter.drawLine(QPointF(left, 0.0), QPointF(left, float(self.height())))
+
         painter.setPen(QPen(QColor(_OUTLINE_COLOUR), 2))
         painter.setBrush(QBrush(_FILL_COLOUR))
         painter.drawPolygon(QPolygonF(points))
@@ -188,20 +240,29 @@ class OutlinePreview(QWidget):
 
 
 class OutlineDialog(QDialog):
-    """Ask for an outline and a thickness."""
+    """Ask for a profile, and what to do with it.
+
+    One dialog for both operations because they take the same thing. An
+    extrusion and a revolution are both a closed outline and a decision;
+    splitting them would duplicate the corner box, the preview and every rule
+    about what counts as a shape.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the dialog."""
         super().__init__(parent)
-        self.setWindowTitle("Extrude an outline")
+        self.setWindowTitle("Draw a profile")
         self.setMinimumWidth(460)
 
-        form = QFormLayout(self)
+        self._form = form = QFormLayout(self)
+
+        self._operation = QComboBox()
+        for member in Operation:
+            self._operation.addItem(member.value.capitalize())
+        self._operation.currentIndexChanged.connect(self._switch_operation)
+        form.addRow("Then", self._operation)
 
         self._preset = QComboBox()
-        self._preset.addItem("Start from...")
-        for name in PRESETS:
-            self._preset.addItem(name)
         self._preset.currentIndexChanged.connect(self._use_preset)
         form.addRow("Shape", self._preset)
 
@@ -231,17 +292,20 @@ class OutlineDialog(QDialog):
             self._plane.addItem(label)
         form.addRow("Facing", self._plane)
 
+        self._degrees = QDoubleSpinBox()
+        self._degrees.setRange(1.0, 360.0)
+        self._degrees.setValue(360.0)
+        self._degrees.setSingleStep(15.0)
+        self._degrees.setSuffix(" degrees")
+        form.addRow("Round by", self._degrees)
+
         self._cut = QCheckBox("Cut this shape out of the model instead of adding it")
         form.addRow(self._cut)
 
-        hint = QLabel(
-            "One corner per line, in millimetres. The outline closes itself, so "
-            "there is no need to repeat the first corner, and the finished shape "
-            "is centred on the part wherever you drew it."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet(_HINT_STYLE)
-        form.addRow(hint)
+        self._hint = QLabel()
+        self._hint.setWordWrap(True)
+        self._hint.setStyleSheet(_HINT_STYLE)
+        form.addRow(self._hint)
 
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -250,7 +314,7 @@ class OutlineDialog(QDialog):
         self._buttons.rejected.connect(self.reject)
         form.addRow(self._buttons)
 
-        self._refresh()
+        self._switch_operation()
 
     # -------------------------------------------------------------- answering
 
@@ -272,8 +336,18 @@ class OutlineDialog(QDialog):
 
     @property
     def plane(self) -> Plane:
-        """Which way the profile faces."""
+        """Which way an extruded profile faces."""
         return _PLANE_CHOICES[self._plane.currentIndex()][1]
+
+    @property
+    def operation(self) -> Operation:
+        """Whether to give the profile thickness or spin it."""
+        return list(Operation)[self._operation.currentIndex()]
+
+    @property
+    def degrees(self) -> float:
+        """How far round to spin it."""
+        return float(self._degrees.value())
 
     @property
     def cut(self) -> bool:
@@ -289,12 +363,52 @@ class OutlineDialog(QDialog):
 
     def _use_preset(self, index: int) -> None:
         if index > 0:
-            self.set_outline(PRESETS[self._preset.itemText(index)])
+            self.set_outline(self._presets()[self._preset.itemText(index)])
+
+    def _presets(self) -> dict[str, tuple[tuple[float, float], ...]]:
+        """The starting shapes that make sense for the chosen operation."""
+        return PRESETS if self.operation is Operation.EXTRUDE else SPIN_PRESETS
+
+    def _switch_operation(self) -> None:
+        """Show the settings the chosen operation needs, and hide the rest."""
+        spinning = self.operation is Operation.REVOLVE
+
+        self._preset.blockSignals(True)
+        self._preset.clear()
+        self._preset.addItem("Start from...")
+        for name in self._presets():
+            self._preset.addItem(name)
+        self._preset.blockSignals(False)
+
+        self._form.setRowVisible(self._height, not spinning)
+        self._form.setRowVisible(self._plane, not spinning)
+        self._form.setRowVisible(self._degrees, spinning)
+        self._preview.show_axis(spinning)
+
+        self._cut.setText(
+            "Cut the spun shape out of the model instead of adding it"
+            if spinning
+            else "Cut this shape out of the model instead of adding it"
+        )
+        self._hint.setText(
+            "One corner per line: how far from the axis, then how high. The axis "
+            "is the dashed line on the left. The profile closes itself, and the "
+            "finished shape stands upright - rotate it afterwards to lay it down."
+            if spinning
+            else "One corner per line, in millimetres. The outline closes itself, "
+            "so there is no need to repeat the first corner, and the finished "
+            "shape is centred on the part wherever you drew it."
+        )
+        self._refresh()
 
     def _refresh(self) -> None:
         corners = list(self.points)
         self._preview.show_outline(corners)
-        self._summary.setText(describe_outline(corners))
+        self._summary.setText(
+            describe_profile(corners)
+            if self.operation is Operation.REVOLVE
+            else describe_outline(corners)
+        )
         ok = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
         if ok is not None:
             ok.setEnabled(enclosed_area(corners) >= MIN_AREA_MM2)
