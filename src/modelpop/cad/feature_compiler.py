@@ -22,7 +22,7 @@ per rebuild, and nobody has reached it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from modelpop.domain.cad_commands import (
     Chamfer,
@@ -169,11 +169,13 @@ def _fragment_for(command: Command, *, first: bool) -> str | None:
     """
     match command:
         case CreateBox():
-            return _assign(f"Box({command.width}, {command.depth}, {command.height})", first=first)
+            return _shape(
+                command, f"Box({command.width}, {command.depth}, {command.height})", first=first
+            )
         case CreateCylinder():
-            return _assign(f"Cylinder({command.radius}, {command.height})", first=first)
+            return _shape(command, f"Cylinder({command.radius}, {command.height})", first=first)
         case CreateSphere():
-            return _assign(f"Sphere({command.radius})", first=first)
+            return _shape(command, f"Sphere({command.radius})", first=first)
         case _ if first:
             return None  # nothing to operate on yet
 
@@ -200,13 +202,21 @@ def _fragment_for(command: Command, *, first: bool) -> str | None:
             return None
 
 
-def _assign(expression: str, *, first: bool) -> str:
-    """Create a solid, or fuse a new one onto what is there.
+def _shape(command: Any, expression: str, *, first: bool) -> str | None:
+    """Create a solid, fuse one onto it, or cut one out of it.
 
     A second primitive is a union rather than a replacement, because the user
-    who adds a cylinder to a box means "and also", not "instead".
+    who adds a cylinder to a box means "and also", not "instead". A cut has
+    nothing to cut from when it is first, which is refused rather than built as
+    an empty model.
     """
-    return f"result = {expression}" if first else f"result = result + {expression}"
+    placed = expression
+    if command.x or command.y or command.z:
+        placed = f"Pos({command.x}, {command.y}, {command.z}) * {expression}"
+
+    if first:
+        return None if command.cut else f"result = {placed}"
+    return f"result = result {'-' if command.cut else '+'} {placed}"
 
 
 def _rotation(command: Rotate) -> str:

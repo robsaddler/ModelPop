@@ -68,6 +68,33 @@ def _clamp(value: float, low: float = MIN_MM, high: float = MAX_MM) -> float:
     return max(low, min(high, float(value)))
 
 
+def _clamp_position(command: Any) -> None:
+    """Keep a shape's placement inside anything a printer could hold.
+
+    A translation may be negative, so this is a symmetric clamp rather than the
+    positive one dimensions get.
+    """
+    for axis in ("x", "y", "z"):
+        object.__setattr__(command, axis, _clamp(getattr(command, axis), -MAX_MM, MAX_MM))
+
+
+def _position_of(command: Any) -> dict[str, Any]:
+    """The placement fields, for the recorded feature."""
+    return {"x": command.x, "y": command.y, "z": command.z, "cut": command.cut}
+
+
+def _verb(command: Any) -> str:
+    """Whether this shape is added or cut, as a word for the feature tree."""
+    return "Cut" if command.cut else "Add"
+
+
+def _where(command: Any) -> str:
+    """A phrase naming where a shape sits, or nothing when it is centred."""
+    if command.x == 0 and command.y == 0 and command.z == 0:
+        return ""
+    return f" at ({command.x:g}, {command.y:g}, {command.z:g})"
+
+
 class EdgeSelector(Enum):
     """Which edges an operation applies to.
 
@@ -107,17 +134,23 @@ class Face(Enum):
 
 @dataclass(frozen=True, slots=True)
 class CreateBox(Command):
-    """A rectangular block."""
+    """A rectangular block, added to the part or cut out of it."""
 
     width: float
     depth: float
     height: float
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    cut: bool = False
+    """Subtract this shape instead of adding it. A pocket, a slot, a notch."""
 
     def __post_init__(self) -> None:
         """Clamp every dimension into something a kernel can build."""
         object.__setattr__(self, "width", _clamp(self.width))
         object.__setattr__(self, "depth", _clamp(self.depth))
         object.__setattr__(self, "height", _clamp(self.height))
+        _clamp_position(self)
 
     @property
     def name(self) -> str:
@@ -127,24 +160,39 @@ class CreateBox(Command):
     @property
     def parameters(self) -> dict[str, Any]:
         """Everything needed to rebuild this feature."""
-        return {"width": self.width, "depth": self.depth, "height": self.height}
+        return {
+            "width": self.width,
+            "depth": self.depth,
+            "height": self.height,
+            **_position_of(self),
+        }
 
     def describe(self) -> str:
         """A line for the feature tree."""
-        return f"Box {self.width:g} x {self.depth:g} x {self.height:g} mm"
+        shape = f"{self.width:g} x {self.depth:g} x {self.height:g} mm box"
+        return f"{_verb(self)} a {shape}{_where(self)}"
 
 
 @dataclass(frozen=True, slots=True)
 class CreateCylinder(Command):
-    """A cylinder standing on the plate."""
+    """A cylinder, added to the part or cut out of it.
+
+    Cutting one is how a hole is made, which is the operation printed parts need
+    more than any other.
+    """
 
     radius: float
     height: float
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    cut: bool = False
 
     def __post_init__(self) -> None:
         """Clamp the dimensions."""
         object.__setattr__(self, "radius", _clamp(self.radius))
         object.__setattr__(self, "height", _clamp(self.height))
+        _clamp_position(self)
 
     @property
     def name(self) -> str:
@@ -154,22 +202,30 @@ class CreateCylinder(Command):
     @property
     def parameters(self) -> dict[str, Any]:
         """Everything needed to rebuild this feature."""
-        return {"radius": self.radius, "height": self.height}
+        return {"radius": self.radius, "height": self.height, **_position_of(self)}
 
     def describe(self) -> str:
         """A line for the feature tree."""
-        return f"Cylinder radius {self.radius:g} mm, {self.height:g} mm tall"
+        if self.cut:
+            return f"Drill a {self.radius * 2:g} mm hole{_where(self)}"
+        shape = f"{self.radius:g} mm radius cylinder, {self.height:g} mm tall"
+        return f"Add a {shape}{_where(self)}"
 
 
 @dataclass(frozen=True, slots=True)
 class CreateSphere(Command):
-    """A sphere."""
+    """A sphere, added to the part or cut out of it."""
 
     radius: float
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    cut: bool = False
 
     def __post_init__(self) -> None:
         """Clamp the radius."""
         object.__setattr__(self, "radius", _clamp(self.radius))
+        _clamp_position(self)
 
     @property
     def name(self) -> str:
@@ -179,11 +235,11 @@ class CreateSphere(Command):
     @property
     def parameters(self) -> dict[str, Any]:
         """Everything needed to rebuild this feature."""
-        return {"radius": self.radius}
+        return {"radius": self.radius, **_position_of(self)}
 
     def describe(self) -> str:
         """A line for the feature tree."""
-        return f"Sphere radius {self.radius:g} mm"
+        return f"{_verb(self)} a {self.radius:g} mm radius sphere{_where(self)}"
 
 
 @dataclass(frozen=True, slots=True)

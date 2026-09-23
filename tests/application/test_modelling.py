@@ -127,7 +127,7 @@ class TestBuildingUpAModel:
 
         labels = [line.label for line in model.state.features]
         assert len(labels) == 3
-        assert labels[0].startswith("Box")
+        assert "box" in labels[0]
         assert "Round" in labels[1]
         assert "Chamfer" in labels[2]
 

@@ -164,17 +164,47 @@ class ModellingViewModel:
 
     # ----------------------------------------------------------- the toolbar
 
-    def add_box(self, width: float, depth: float, height: float) -> None:
-        """Start, or add to, the model with a rectangular block."""
-        self._apply(CreateBox(width, depth, height))
+    def add_box(
+        self,
+        width: float,
+        depth: float,
+        height: float,
+        at: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        *,
+        cut: bool = False,
+    ) -> None:
+        """Add a rectangular block, or cut a pocket with one."""
+        self._apply(CreateBox(width, depth, height, *at, cut=cut))
 
-    def add_cylinder(self, radius: float, height: float) -> None:
-        """Start, or add to, the model with a cylinder."""
-        self._apply(CreateCylinder(radius, height))
+    def add_cylinder(
+        self,
+        radius: float,
+        height: float,
+        at: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        *,
+        cut: bool = False,
+    ) -> None:
+        """Add a cylinder, or drill a hole with one."""
+        self._apply(CreateCylinder(radius, height, *at, cut=cut))
 
-    def add_sphere(self, radius: float) -> None:
-        """Start, or add to, the model with a sphere."""
-        self._apply(CreateSphere(radius))
+    def add_sphere(
+        self,
+        radius: float,
+        at: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        *,
+        cut: bool = False,
+    ) -> None:
+        """Add a sphere, or scoop one out."""
+        self._apply(CreateSphere(radius, *at, cut=cut))
+
+    def drill(self, diameter: float, depth: float, at: tuple[float, float] = (0.0, 0.0)) -> None:
+        """Drill a hole straight through.
+
+        Named for what it is rather than what it does internally. The cylinder
+        is made longer than the stated depth so it passes right through instead
+        of leaving a skin the user then has to notice.
+        """
+        self._apply(CreateCylinder(diameter / 2, depth * 2, at[0], at[1], 0.0, cut=True))
 
     def fillet(self, radius: float, edges: EdgeSelector = EdgeSelector.ALL) -> None:
         """Round edges."""

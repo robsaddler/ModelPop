@@ -44,10 +44,11 @@ def _vocabulary() -> str:
     Built from the code so it cannot drift. Each line is a name and the
     parameters it takes, which is all a model needs to emit valid JSON.
     """
+    placed = "x, y, z (mm from the centre, optional), cut (true to remove it)"
     shapes = {
-        "create-box": "width, depth, height (mm)",
-        "create-cylinder": "radius, height (mm)",
-        "create-sphere": "radius (mm)",
+        "create-box": f"width, depth, height (mm), {placed}",
+        "create-cylinder": f"radius, height (mm), {placed}",
+        "create-sphere": f"radius (mm), {placed}",
         "fillet": f"radius (mm), edges ({_choices(EdgeSelector)})",
         "chamfer": f"distance (mm), edges ({_choices(EdgeSelector)})",
         "hollow": f"wall_thickness (mm), opening ({_choices(Face)} or null)",
@@ -93,6 +94,10 @@ Rules:
 - "hollow" needs a wall thickness of at least 0.4 mm, and an opening so the
   inside can drain. A wall exactly equal to an existing fillet radius fails, so
   offset it slightly.
+- A hole is a cylinder with "cut": true. Make it longer than the part it passes
+  through, so it goes all the way. Position it with x, y and z, which are
+  measured from the centre of the part.
+- The first operation must add a shape. There is nothing to cut from yet.
 - Ask for the fewest operations that do what was requested. At most \
 {MAX_COMMANDS}.
 - If the request cannot be done with these operations, reply with an empty

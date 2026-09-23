@@ -322,7 +322,7 @@ class TestWhenItCannotRun:
         edit_by_description(started(), "round it", model)
 
         sent = model.seen[0].messages[0].text
-        assert "Box 40 x 40 x 60 mm" in sent
+        assert "40 x 40 x 60 mm box" in sent
 
     def test_the_size_is_sent_so_relative_requests_make_sense(self):
         model = ScriptedModel([commands({"name": "fillet", "parameters": {"radius": 1}})])

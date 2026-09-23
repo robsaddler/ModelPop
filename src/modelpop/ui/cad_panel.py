@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -212,6 +213,15 @@ class CadPanel(QWidget):
         group = QGroupBox("Start a shape")
         rows = QVBoxLayout(group)
 
+        # Built before the buttons that read them, because each button captures
+        # them in a lambda. Added to the layout further down, where they belong
+        # on screen.
+        self._at_x = _number(0.0, -500.0, 500.0)
+        self._at_y = _number(0.0, -500.0, 500.0)
+        self._at_z = _number(0.0, -500.0, 500.0)
+        self._cut = QCheckBox("cut it out")
+        self._cut.setToolTip("Remove this shape from the part instead of adding it")
+
         box_row = QHBoxLayout()
         self._box_w = _number(40.0)
         self._box_d = _number(40.0)
@@ -221,7 +231,11 @@ class CadPanel(QWidget):
         add_box = QPushButton("Box")
         add_box.clicked.connect(
             lambda: self._view.add_box(
-                self._box_w.value(), self._box_d.value(), self._box_h.value()
+                self._box_w.value(),
+                self._box_d.value(),
+                self._box_h.value(),
+                self._placement(),
+                cut=self._cut.isChecked(),
             )
         )
         box_row.addWidget(add_box)
@@ -234,18 +248,38 @@ class CadPanel(QWidget):
         round_row.addWidget(self._cyl_h)
         add_cyl = QPushButton("Cylinder")
         add_cyl.clicked.connect(
-            lambda: self._view.add_cylinder(self._cyl_r.value(), self._cyl_h.value())
+            lambda: self._view.add_cylinder(
+                self._cyl_r.value(),
+                self._cyl_h.value(),
+                self._placement(),
+                cut=self._cut.isChecked(),
+            )
         )
         round_row.addWidget(add_cyl)
 
         self._sphere_r = _number(20.0)
         round_row.addWidget(self._sphere_r)
         add_sphere = QPushButton("Sphere")
-        add_sphere.clicked.connect(lambda: self._view.add_sphere(self._sphere_r.value()))
+        add_sphere.clicked.connect(
+            lambda: self._view.add_sphere(
+                self._sphere_r.value(), self._placement(), cut=self._cut.isChecked()
+            )
+        )
         round_row.addWidget(add_sphere)
         rows.addLayout(round_row)
 
-        note = QLabel("A second shape is added to the first, not put in its place.")
+        place_row = QHBoxLayout()
+        place_row.addWidget(QLabel("at"))
+        for field in (self._at_x, self._at_y, self._at_z):
+            place_row.addWidget(field)
+        place_row.addWidget(self._cut)
+        rows.addLayout(place_row)
+
+        note = QLabel(
+            "A second shape is added to the first, not put in its place. Tick "
+            "“cut it out” to make a hole or a pocket instead."
+        )
+        note.setWordWrap(True)
         note.setStyleSheet(_HINT_STYLE)
         rows.addWidget(note)
         return group
@@ -367,6 +401,10 @@ class CadPanel(QWidget):
         return group
 
     # --------------------------------------------------------------- commands
+
+    def _placement(self) -> tuple[float, float, float]:
+        """Where the next shape goes, measured from the centre of the part."""
+        return (self._at_x.value(), self._at_y.value(), self._at_z.value())
 
     def _chosen_edges(self) -> EdgeSelector:
         return _EDGE_CHOICES[self._blend_edges.currentIndex()][1]

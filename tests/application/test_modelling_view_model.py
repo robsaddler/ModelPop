@@ -102,7 +102,7 @@ class TestReportingBack:
         model.on_outcome(seen.append)
         model.add_box(10, 10, 10)
 
-        assert seen[-1].message == "Box 10 x 10 x 10 mm"
+        assert seen[-1].message == "Add a 10 x 10 x 10 mm box"
         assert not seen[-1].went_wrong
 
     def test_a_refusal_is_marked_as_a_refusal_rather_than_a_failure(self):

@@ -191,7 +191,7 @@ class TestCompilingToAScript:
     def test_the_script_names_each_feature_in_a_comment(self):
         """So "show me what this model actually is" reads as prose."""
         source = script_for(CreateBox(10, 10, 10), Fillet(2))
-        assert "# 1. Box 10 x 10 x 10 mm" in source
+        assert "# 1. Add a 10 x 10 x 10 mm box" in source
         assert "# 2. Round all edges by 2 mm" in source
 
     def test_features_are_applied_in_order(self):
@@ -304,3 +304,65 @@ class TestWhatTheCompilerRefuses:
             features=(document.features[0], Feature("fillet", {"radius": 99}, suppressed=True))
         )
         assert "fillet(" not in compile_document(suppressed).unwrap()
+
+
+class TestCuttingAndPlacing:
+    """Holes, pockets and off-centre parts.
+
+    Cutting a cylinder is how a hole is made, which printed parts need more
+    than any other operation.
+    """
+
+    def test_a_cut_cylinder_is_described_as_a_hole(self):
+        """Because that is what the user calls it."""
+        assert "8 mm hole" in CreateCylinder(4, 20, cut=True).describe()
+
+    def test_an_added_cylinder_is_still_described_as_a_cylinder(self):
+        assert "cylinder" in CreateCylinder(4, 20).describe()
+
+    def test_a_placed_shape_says_where_it_is(self):
+        assert "(10, 0, 5)" in CreateBox(5, 5, 5, x=10, z=5).describe()
+
+    def test_a_centred_shape_does_not_claim_a_position(self):
+        assert "at (" not in CreateBox(5, 5, 5).describe()
+
+    def test_a_cut_compiles_to_a_subtraction(self):
+        source = script_for(CreateBox(40, 40, 20), CreateCylinder(4, 30, cut=True))
+        assert "result = result - Cylinder" in source
+
+    def test_an_addition_compiles_to_a_union(self):
+        source = script_for(CreateBox(40, 40, 20), CreateCylinder(4, 30))
+        assert "result = result + Cylinder" in source
+
+    def test_a_placement_compiles_to_a_translation(self):
+        source = script_for(CreateBox(40, 40, 20), CreateCylinder(4, 30, x=10, y=5, cut=True))
+        assert "Pos(10.0, 5.0, 0.0) * Cylinder" in source
+
+    def test_a_centred_shape_is_not_wrapped_in_a_translation(self):
+        """Noise in the script the user reads, for no effect."""
+        assert "Pos(" not in script_for(CreateBox(10, 10, 10))
+
+    def test_cutting_with_nothing_to_cut_from_is_refused(self):
+        """An empty model is not a model, and a cut from nothing is empty."""
+        result = compile_document(tree(CreateCylinder(4, 30, cut=True)))
+        assert not result.ok
+
+    def test_a_placement_is_clamped_but_may_be_negative(self):
+        assert CreateBox(5, 5, 5, x=-30).x == pytest.approx(-30.0)
+        assert abs(CreateBox(5, 5, 5, x=1e9).x) <= 1000
+
+    def test_placement_and_cutting_survive_a_round_trip(self):
+        original = CreateCylinder(4, 30, x=10, y=-5, z=2, cut=True)
+        restored = command_from(original.to_feature())
+
+        assert restored is not None
+        assert restored.parameters == original.parameters
+
+    def test_a_file_written_before_placement_existed_still_opens(self):
+        """Old projects have no x, y, z or cut. They must default, not fail."""
+        old = Feature("create-box", {"width": 10.0, "depth": 10.0, "height": 10.0})
+        restored = command_from(old)
+
+        assert restored is not None
+        assert restored.parameters["x"] == 0.0
+        assert restored.parameters["cut"] is False

@@ -277,3 +277,69 @@ def test_the_users_own_example_builds_end_to_end(model):
     assert size.height.millimetres == pytest.approx(152.4, abs=0.5)
     assert size.solid_count == 1
     assert size.volume_mm3 < 50 * 40 * 150, "it should be hollow"
+
+
+@kernel_required
+def test_a_hole_actually_goes_through(model):
+    """Cutting a cylinder is how a hole is made, and the most-wanted operation
+    for a printed part. A hole that stops short leaves a skin the user only
+    finds after printing."""
+    assert model.apply(CreateBox(60, 40, 20)).ok
+    solid = model.state.measurements.volume_mm3
+
+    assert model.apply(CreateCylinder(4, 60, cut=True)).ok
+    drilled = model.state.measurements.volume_mm3
+
+    # a 8 mm hole through 20 mm of material is about 1005 mm3
+    assert solid - drilled == pytest.approx(1005, rel=0.05)
+    assert model.state.measurements.height.millimetres == pytest.approx(20, abs=0.01)
+
+
+@kernel_required
+def test_several_holes_can_be_placed_separately(model):
+    assert model.apply(CreateBox(60, 40, 20)).ok
+    for offset in (-20, 0, 20):
+        assert model.apply(CreateCylinder(3, 60, x=offset, cut=True)).ok, offset
+
+    solid = 60 * 40 * 20
+    assert model.state.measurements.volume_mm3 < solid - 3 * 500
+
+
+@kernel_required
+def test_a_pocket_does_not_go_through(model):
+    """A box cut from above should leave a floor if it does not reach the bottom."""
+    assert model.apply(CreateBox(60, 40, 20)).ok
+    assert model.apply(CreateBox(20, 20, 10, z=8, cut=True)).ok
+
+    assert model.state.measurements.height.millimetres == pytest.approx(20, abs=0.01)
+    assert model.state.measurements.solid_count == 1
+
+
+@kernel_required
+def test_an_added_shape_can_be_placed_off_centre(model):
+    assert model.apply(CreateBox(40, 40, 10)).ok
+    assert model.apply(CreateCylinder(5, 30, x=15)).ok
+
+    size = model.state.measurements
+    assert size.width.millimetres == pytest.approx(40, abs=0.5), "the cylinder should be inside"
+    assert size.height.millimetres == pytest.approx(30, abs=0.5), "and taller than the plate"
+
+
+@kernel_required
+def test_a_drilled_bracket_builds_and_saves(model, tmp_path):
+    """A plate with mounting holes, which is the commonest printed part there is."""
+    from modelpop.projects import JsonProjectStore
+
+    for command in (
+        CreateBox(80, 40, 6),
+        CreateCylinder(2.5, 20, x=-30, cut=True),
+        CreateCylinder(2.5, 20, x=30, cut=True),
+        Fillet(4, EdgeSelector.VERTICAL),
+    ):
+        assert model.apply(command).ok, command.describe()
+
+    assert model.state.measurements.solid_count == 1
+
+    store = JsonProjectStore()
+    saved = store.save(model.state.document, tmp_path / "bracket").unwrap()
+    assert store.load(saved).unwrap().is_complete
