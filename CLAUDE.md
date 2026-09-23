@@ -23,8 +23,10 @@ Read `docs/00-plan.md` first. Architecture: `docs/01-architecture.md`. Standards
 - **Viewport: PyVista / VTK**, shell in **PySide6**.
 - **Mesh: trimesh, manifold3d, pymeshfix (AGPL), PyMeshLab (GPL), Open3D, bpy (GPL)**.
 - **Slicing: Bambu Studio CLI** via `subprocess`, out of process.
-- **Generation: TRELLIS.2 / TripoSG** (both MIT). **Hunyuan3D stays excluded** — its licence bars the
-  UK territorially, which the open-source relaxation does not change (ADR-0004).
+- **Generation: `trellis.cpp`** (MIT), a native binary driven as a subprocess, running TRELLIS.2-4B
+  weights. **Not** the Python TRELLIS.2 — it needs 24 GB against this card's 16 and does not build
+  on Windows (ADR-0010). **Hunyuan3D stays excluded** — its licence bars the UK territorially, which
+  the open-source relaxation does not change (ADR-0004).
 
 This project was originally C#/.NET. ADR-0007 supersedes ADR-0002 and ADR-0003 with measured evidence.
 Do not reintroduce C# without reading ADR-0007 and spikes S1, S3 and S7.
@@ -76,6 +78,18 @@ Tests that would fail without the change; `ruff` and `mypy --strict` clean; `imp
    (it reported 166,021 FPS). Measure in a real window with `update()`.
 4. Python 3.14 is on this machine but **not on PATH**; use the `py` launcher. It works for the CAD
    stack (cp314 wheels exist) but **not** for PyTorch.
+5. **`os.kill(pid, 0)` KILLS the process on Windows.** The portable POSIX "does this exist" idiom
+   maps onto `TerminateProcess` for any signal but the two console events. Measured: a sleeping
+   child went from running to exit code 3221225794 on being probed. Use `OpenProcess` +
+   `WaitForSingleObject(handle, 0)` instead — see `modelpop.generation.gpu_lease`.
+6. **A `QThread` worker with no Python reference is garbage collected**, the queued `started`
+   connection dies with it, and the thread runs an empty event loop forever. No exception, no
+   output, no log line — the button simply does nothing. Keep the worker alive, not just the thread.
+7. **View-models announce from whichever thread did the work.** Touching a widget from a worker
+   thread is undefined; in practice the interface silently stops updating. Marshal back with a
+   signal.
+8. **VTK does not fail on a GPU-less runner, it takes the process down** with an access violation.
+   Hence the `renders` marker, deselected in CI.
 
 ## Style
 
