@@ -50,9 +50,10 @@ Phase 2.5 Find something   ── DONE  repository search, ranked gallery, licen
 Phase 3  Generate a mesh   ── DONE  a picture into a mesh on the local GPU (ADR-0010)
 Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-plate
 
-Phase 5  Edit it properly   ─ feature tree, profiles, patterns and projects DONE; gizmos to come
+Phase 5  Edit it properly   ─ feature tree, profiles, patterns, sweep, loft, section view DONE;
+                             gizmos to come
 Phase 7  Photos → replica   ─ scale from a reference in shot DONE; multi-photo reconstruction to come
-Phase 8  Make it delightful ─ detail rescue, printer comms (multi-colour splitting DONE)
+Phase 8  Make it delightful ─ detail rescue to come (multi-colour splitting, printer comms DONE)
 ```
 
 **Phases 4 and 6 arrived early, out of order.** Once the CAD kernel was in place, generating a
@@ -83,7 +84,10 @@ fails the build.
 STL (binary + ASCII), OBJ and 3MF import. The PySide6 shell and the PyVista/VTK viewport: orbit, pan,
 zoom, shaded and wireframe, build-plate and 256 mm print-volume overlay. `MeshOps` with
 watertight/manifold checks, repair, decimation, booleans. The hypothesis geometry suite.
-**Also here: get VTK onto the RTX 4090 and re-measure** (spike S7 ran on the integrated GPU).
+**The discrete-GPU question is closed** (`research/spike-viewport-gpu.md`): OpenGL cannot be moved
+off the integrated chip from inside the application, and does not need to be - the iGPU sustains
+70-96 FPS at 393k triangles and 50 FPS at 1.57M, well past the display budget. The app now reports
+which card is drawing, so nobody has to guess.
 **Done when:** you can open any MakerWorld STL, orbit it, and get an honest verdict on whether it is
 manifold.
 
@@ -95,7 +99,10 @@ comparison. Printer gateway over LAN mode, dry-run by default.
 **Done when:** a model goes from drag-and-drop to a physical print without leaving ModelPop.
 **Result:** reached. Supports are chosen by measuring overhangs rather than always-on, after
 discovering that enabling them enlarges the footprint enough to make a 152 mm cube stop fitting.
-G-code verification moved to Phase 2b, which has now shipped too.
+G-code verification moved to Phase 2b, which has now shipped too. **The printer gateway has now
+shipped as well** (ADR-0011): FTPS upload over LAN with no new dependency, MQTT start and status
+behind an optional extra, and two separate off-by-default switches, because a print is the only
+thing in this application that cannot be undone from inside it.
 
 ### Phase 2.5 — Find something *(the cheapest useful app there is)*
 Repository search across Thingiverse, Printables, Thangs and MyMiniFactory behind the `ModelRepository` port,
@@ -133,9 +140,12 @@ STEP and STL export; projects that save and reopen the tree.
 still parametric, and changing the plate moves the holes. Every operation builds through real OCCT
 in an integration test that checks the volume rather than the script.
 
-**Still to come:** gizmos (drag handles in the viewport), sweep and loft, a sketcher with constraints,
-section views, and measurement in the viewport. The profile dialog is the useful nine tenths of a
-sketcher and is honest about being it.
+**Since:** **sweep** (an outline pushed along a path) and **loft** (a blend between outlines at
+different heights) complete the profile vocabulary; **measurement** between two picked points; and a
+**section view** that cuts the viewport open, which is the only way to check a hollow by looking.
+
+**Still to come:** gizmos (drag handles in the viewport) and a sketcher with constraints. The profile
+dialog is the useful nine tenths of a sketcher and is honest about being it.
 
 ### Phase 6 — Edit by prompt *(done for generated parts)*
 Command schema exposed to the LLM as tools. Validation, clamping and rejection. Preview-then-apply.
@@ -182,7 +192,7 @@ domain skills as you go so the knowledge compounds instead of evaporating betwee
 | ~~The CAD kernel cannot fillet~~ | **Resolved by ADR-0007.** OCCT fillets all 12 edges of a cube in 7 ms (spike S7). |
 | 16 GB VRAM constrains generation quality | Real, but adequate — the shape stage of every candidate model fits | One GPU lease; separate processes; hosted fallback behind the same port |
 | Licence traps | The obvious best generator excludes UK users; several mesh libraries are GPL/AGPL or non-commercial | ADR-0004 tracks licences explicitly; every dependency is checked before adoption |
-| VTK rendered on the integrated GPU | Spike S7 measured 28–36 FPS at 983k triangles on the Intel iGPU, not the 4090 | Force the discrete GPU in Phase 1 and re-measure. We decimate to ~300k for display anyway. |
+| ~~VTK rendered on the integrated GPU~~ | **Closed, and it is not a risk.** Re-measured in a real window: 70–96 FPS at 393k triangles, 50 FPS at 1.57M, still on the iGPU. It cannot be forced off it from inside the app, and there is nothing to gain. `research/spike-viewport-gpu.md`. |
 | Detail rescue (texture→displacement) may not work well | Nobody has solved it; it is genuinely research | Spike it in isolation in Phase 8; the product is valuable without it |
 | The generation environment is large | Multi-GB PyTorch/CUDA install | It is a separate, optional venv; the app is fully useful without it (Phases 2 and 2.5) |
 | Scope | This is a big build | The phase order guarantees something useful and printable from Phase 2 onward |
@@ -201,6 +211,8 @@ domain skills as you go so the knowledge compounds instead of evaporating betwee
 | `04-engineering-standards.md` | Definition of done, test strategy, tooling, CI |
 | `05-skills-plan.md` | Which Claude skills to install, and which to write |
 | `research/spike-bambu-cli.md` | Verified slicer facts, measured on this machine |
+| `research/spike-viewport-gpu.md` | Which GPU the viewport gets, and why it does not matter |
+| `11-using-the-app.md` | How to use it, task by task |
 | `research/spike-s7-python-stack.md` | **Why the stack is Python** — measured, not argued |
 | `research/findings.md` | The 2026 landscape digest with citations |
 | `research/spike-s7-python-stack.md` | **Why the stack is Python** - measured, not argued |

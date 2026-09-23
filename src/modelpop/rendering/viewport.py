@@ -30,9 +30,11 @@ __all__ = [
     "INTERIOR_COLOUR",
     "MEASURE_COLOUR",
     "MODEL_COLOUR",
+    "NO_RENDERER",
     "PROBLEM_COLOUR",
     "PickResult",
     "ViewportScene",
+    "renderer_in",
     "to_polydata",
 ]
 
@@ -63,6 +65,32 @@ def _as_fraction(colour: str) -> tuple[float, float, float]:
     """A hex colour as the three fractions VTK wants."""
     value = colour.lstrip("#")
     return tuple(int(value[i : i + 2], 16) / 255 for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+# What to say when the driver will not answer - which includes every off-screen
+# window, because one has no device context at all.
+NO_RENDERER = "The graphics driver did not say what is drawing."
+
+
+def renderer_in(report: str) -> str:
+    """The graphics card named in an OpenGL capability report.
+
+    A pure function over the driver's own text, so every shape of report -
+    including the empty one an off-screen window gives - is testable without a
+    graphics context.
+    """
+    found: dict[str, str] = {}
+    for line in report.splitlines():
+        name, _, value = line.partition(":")
+        key = name.strip().lower()
+        if key in {"opengl vendor string", "opengl renderer string"}:
+            found[key] = value.strip()
+
+    renderer = found.get("opengl renderer string")
+    if not renderer:
+        return NO_RENDERER
+    vendor = found.get("opengl vendor string", "")
+    return f"Drawing on {renderer}" + (f" ({vendor})" if vendor else "")
 
 
 def to_polydata(mesh: Mesh) -> pv.PolyData:
@@ -183,6 +211,25 @@ class ViewportScene:
         action = views.get(name.lower())
         if action is not None:
             action()
+
+    def describe_renderer(self) -> str:
+        """Which graphics hardware is drawing, in one line.
+
+        Worth offering because the answer here is surprising and invisible. On
+        this machine OpenGL lands on the *integrated* graphics even though a
+        discrete card is present, and that cannot be changed from inside the
+        application - only in the graphics driver's own control panel. A user
+        looking at a slow viewport should be able to read what is drawing it
+        rather than guess. See ``docs/research/spike-viewport-gpu.md``.
+        """
+        window = getattr(self._plotter, "ren_win", None)
+        if window is None:
+            return NO_RENDERER
+
+        try:
+            return renderer_in(str(window.ReportCapabilities()))
+        except (AttributeError, RuntimeError, TypeError):
+            return NO_RENDERER
 
     # ---------------------------------------------------------- section view
 

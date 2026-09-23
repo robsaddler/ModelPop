@@ -631,6 +631,7 @@ class MainWindow(QMainWindow):
             self._ai_settings,
             self,
             self._view_model.describe_mesh_generation(),
+            self._scene.describe_renderer(),
         )
         if dialog.exec():
             self._ai_settings = dialog.settings()

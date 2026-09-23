@@ -18,7 +18,7 @@ import pyvista as pv
 from modelpop.domain import Length, Mesh, Unit
 from modelpop.domain.printer import PrinterProfile
 from modelpop.presentation.sectioning import Axis, SectionPlane
-from modelpop.rendering import ViewportScene, to_polydata
+from modelpop.rendering import NO_RENDERER, ViewportScene, renderer_in, to_polydata
 
 from .strategies import unit_cube
 
@@ -375,3 +375,50 @@ class TestSectioning:
         scene.show_mesh(unit_cube(40))
 
         assert self.clipping_on(plotter) == 0
+
+
+class TestSayingWhatIsDrawing:
+    """Which card the viewport got, reported rather than guessed at.
+
+    On a laptop with switchable graphics OpenGL lands on the integrated chip
+    even with a discrete card present, and nothing the application can do
+    changes it - see docs/research/spike-viewport-gpu.md. So it says so.
+
+    The reading is a pure function over the driver's own text, which is what
+    makes every shape of it - including the empty one an off-screen window
+    gives - testable without a graphics context.
+    """
+
+    NVIDIA = "\n".join(
+        [
+            "client glx vendor string:  Mesa",
+            "OpenGL vendor string:  NVIDIA Corporation",
+            "OpenGL renderer string:  NVIDIA GeForce RTX 4090 Laptop GPU/PCIe",
+            "OpenGL version string:  4.6.0",
+        ]
+    )
+
+    def test_it_reads_the_card_and_who_made_it(self):
+        told = renderer_in(self.NVIDIA)
+        assert "RTX 4090" in told
+        assert "NVIDIA Corporation" in told
+
+    def test_it_is_not_fooled_by_a_similarly_named_line(self):
+        """ "client glx vendor string" is not the vendor, and says Mesa here."""
+        assert "Mesa" not in renderer_in(self.NVIDIA)
+
+    def test_a_report_with_no_renderer_in_it_says_so(self):
+        assert renderer_in("OpenGL version string:  4.6.0") == NO_RENDERER
+
+    def test_an_empty_report_says_so(self):
+        """What an off-screen window gives: no device context at all."""
+        assert renderer_in("") == NO_RENDERER
+
+    def test_a_renderer_with_no_vendor_beside_it_is_still_reported(self):
+        told = renderer_in("OpenGL renderer string:  llvmpipe")
+        assert "llvmpipe" in told
+
+    def test_an_off_screen_scene_answers_without_raising(self, plotter):
+        """The settings panel shows this, and must open either way."""
+        told = ViewportScene(plotter).describe_renderer()
+        assert told == NO_RENDERER or told.startswith("Drawing on")
