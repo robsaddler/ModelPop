@@ -18,7 +18,7 @@ from modelpop.application.modelling import ModellingSession
 from modelpop.application.workspace import Workspace
 from modelpop.cad import Build123dCompiler, Build123dKernel
 from modelpop.domain.printer import PrinterProfile
-from modelpop.generation import CadLoopGenerator, ExternalMeshGenerator
+from modelpop.generation import CadLoopGenerator, TrellisCliGenerator
 from modelpop.mesh import TrimeshIO, TrimeshOps
 from modelpop.printing import BambuSlicer, ToolpathVerifier
 from modelpop.projects import JsonProjectStore
@@ -51,7 +51,7 @@ def build_workspace() -> Workspace:
         printer=PrinterProfile.p2s(),
         generator=CadLoopGenerator(AnthropicProvider(), Build123dKernel(), ops),
         gcode_verifier=ToolpathVerifier(),
-        mesh_generator=ExternalMeshGenerator(mesh_io),
+        mesh_generator=TrellisCliGenerator(mesh_io),
     )
 
 

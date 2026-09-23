@@ -13,25 +13,26 @@ from modelpop.generation.cad_prompt import SYSTEM_PROMPT, build_edit, build_requ
 from modelpop.generation.command_loop import CommandEditRun, edit_by_description
 from modelpop.generation.command_prompt import build_edit_request, read_commands
 from modelpop.generation.gpu_lease import GpuBusyError, GpuLease
-from modelpop.generation.mesh_generator import (
-    ExternalMeshGenerator,
-    GenerationEnvironment,
-    find_generation_python,
+from modelpop.generation.trellis_cli import (
+    MODEL_NAME,
+    TrellisCliGenerator,
+    find_trellis_cli,
+    find_weights,
 )
 
 __all__ = [
+    "MODEL_NAME",
     "SYSTEM_PROMPT",
     "Attempt",
     "CadGenerationRun",
     "CadLoopGenerator",
     "CommandEditRun",
-    "ExternalMeshGenerator",
     "Gate",
     "GateReport",
     "GateResult",
-    "GenerationEnvironment",
     "GpuBusyError",
     "GpuLease",
+    "TrellisCliGenerator",
     "build_edit",
     "build_edit_request",
     "build_request",
@@ -39,7 +40,8 @@ __all__ = [
     "edit_part",
     "evaluate",
     "extract_script",
-    "find_generation_python",
+    "find_trellis_cli",
+    "find_weights",
     "generate_part",
     "read_commands",
 ]

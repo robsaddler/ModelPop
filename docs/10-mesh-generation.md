@@ -6,74 +6,96 @@ not a part, and no vocabulary of boxes and fillets will ever describe one.
 
 This is the path for those: hand it a photo or a drawing, get a mesh.
 
-## Why it lives in its own Python
+## Why it is a separate binary
 
-The models that do this want PyTorch, CUDA, several gigabytes of weights, and
-often a Python version ModelPop itself does not run on. Making any of that a
-dependency of the application would mean:
+**This was planned as a Python environment with PyTorch, and the spike overturned
+it.** The measurement is in `docs/research/spike-image-to-3d.md`; the short
+version is that **no Python image-to-3D model in this class installs on Windows
+without compiling CUDA extensions**, and the Python TRELLIS.2 needs 24 GB of
+video memory against this machine's 16.
 
-- a multi-gigabyte install for everyone, including people who only want to slice
-  an STL they downloaded;
-- ModelPop pinned to whatever Python the machine-learning stack supports this
-  month, which today is **not 3.14**;
-- a broken CUDA install taking the whole app down rather than one feature.
+So it runs as a **native binary driven by a subprocess** - structurally the same
+adapter as the Bambu Studio slicer (ADR-0006), and for the same reasons: the
+capability lives outside the process, so a crash, a hang or a missing install is
+a message rather than a dead application.
 
-So it is a **separate environment**, reached by a subprocess, exactly as the CAD
-kernel is and for the same reasons. ModelPop talks to it over JSON lines on
-stdout and never imports a thing from it. `src/modelpop/generation/mesh_worker.py`
-runs *there*, not here, and a test asserts it imports nothing from `modelpop` -
-because such an import would crash on the user's machine and nowhere else.
+That is a better fit than the Python route ever was. Nothing about ModelPop's own
+environment changes, there is nothing to pin, and a broken graphics driver takes
+out one feature rather than the app.
 
 If it is not installed, the feature is **unavailable, not broken**: the button is
-disabled and Settings says which piece is missing. "Not installed", "no CUDA"
-and "no generator" each get their own sentence, because each needs a different
-thing from you.
+disabled and Settings says which piece is missing. "No binary", "no weights",
+"half the weights" and "the card is busy" each get their own sentence, because
+each needs a different thing from you.
 
 ## Setting it up
 
-One command, from the project root:
+`trellis.cpp` - MIT, prebuilt Windows CUDA binaries, quantised weights,
+explicitly engineered to fit a 16 GB card.
 
-```powershell
-uv run python scripts/setup_generation.py
+**1. The binary.** Download `trellis-cuda-windows-x64.zip` from
+<https://github.com/pwilkin/trellis.cpp/releases/latest> and unzip it to:
+
+```
+%LOCALAPPDATA%\ModelPop\trellis\runtime\
 ```
 
-It creates a Python 3.12 environment under your application data directory,
-installs PyTorch built for CUDA 12.8, and then tells you what to do next. It
-does **not** download model weights - those come on first use, from the backend's
-own cache, and they are several gigabytes.
+Take the **standard `cuda`** package, not `cuda12`. The standard one is the CUDA
+13.1 build for Turing and newer; `cuda12` is for Pascal and Volta. An RTX 4090
+is Ada, so it wants the standard one. **Use v0.6.0 or later** - anything at or
+below 0.5.4 has a bug that produces holes and corrupted geometry.
 
-To put it somewhere else, or to point at an environment you already have:
+No compiler, no CUDA toolkit, no Python. The bundle ships the CUDA runtime and
+the only requirement is the NVIDIA driver.
 
-```powershell
-$env:MODELPOP_GENERATION_PYTHON = "D:\envs\trellis\Scripts\python.exe"
+**2. The weights.** Ten GGUF files, about 10 GB, from the **q8** directory of
+<https://huggingface.co/ilintar/trellis2-gguf>, into:
+
+```
+%LOCALAPPDATA%\ModelPop\trellis\models\
 ```
 
-Check it worked in **File > Settings**, which shows exactly what the environment
-contains.
+q8 is "near-lossless"; q4 is 6.6 GB with slight quality loss; the f16 default is
+16.5 GB and there is no reason to prefer it here.
 
-## Choosing a backend
+**3. Or point at an install you already have:**
 
-Verified in `docs/research/findings.md`. Two are supported, and the choice is
-mostly settled by licence:
+```powershell
+$env:MODELPOP_TRELLIS_CLI    = "D:\tools\trellis\trellis-cli.exe"
+$env:MODELPOP_TRELLIS_MODELS = "D:\tools\trellis\models"
+```
 
-| Backend | Licence | Notes |
-|---|---|---|
-| **TRELLIS** | MIT | The default. Structured latents, good at hard surfaces as well as organic shapes. |
-| **TripoSG** | MIT | Fallback. Lighter, faster, less detail. |
-| ~~Hunyuan3D~~ | **Excluded** | Its licence **bars the United Kingdom territorially**. The open-source relaxation does not change that. See ADR-0004. |
+Check it in **File > Settings**, which names exactly what is missing.
 
-The worker picks whichever is importable, TRELLIS first. Adding a third is a
-function in `mesh_worker.py` and a name in the probe - nothing else knows.
+## Which model, and the licence
+
+| | |
+|---|---|
+| **Model** | `microsoft/TRELLIS.2-4B` - **MIT**, ungated, no territorial clause |
+| **Runner** | `pwilkin/trellis.cpp` - **MIT** |
+| **Weights** | `ilintar/trellis2-gguf`, a format conversion of the above |
+| ~~Hunyuan3D~~ | **Excluded**: its licence bars the United Kingdom territorially (ADR-0004) |
+| ~~Stable Fast 3D~~ | **Excluded**: gated, revenue-capped community licence |
+
+**One caveat worth recording.** The GGUF repository is tagged `license: other`
+with a card that says "see the source model". The weights are a conversion of
+MIT-licensed TRELLIS.2 weights, so MIT flows through - but the tag does not
+evidence that on its own. Converting the GGUFs from `microsoft/TRELLIS.2-4B`
+yourself would give a chain that speaks for itself.
+
+**Pixal3D** (TencentARC, MIT and ungated - *not* the Hunyuan3D licence) is
+supported by the same binary via `--model pixal3d`. A future option at no
+architectural cost.
 
 ## What the app does with the result
 
-- **Caps the triangles.** These models happily produce millions and a printer
-  cannot use them; the slicer only takes longer throwing the detail away. The
-  ceiling is 200,000 by default and the run says when it simplified.
-- **Removes the background** of a photo before generating, if `rembg` is
-  installed. A photo's background otherwise becomes part of the model, which is
-  the commonest way an image-to-3D result comes out wrong. Without it the run
-  still happens and says it did not.
+- **Asks for 1024, not 1536.** The project only claims the 1024 cascade fits a
+  16 GB card. Asking for the highest detail setting gets 1024 and a note saying
+  so, rather than an out-of-memory error four minutes in.
+- **Removes the background** before generating. A photo's background otherwise
+  becomes part of the model, which is the commonest way an image-to-3D result
+  comes out wrong. An already-matted image keeps its alpha and skips the
+  remover, which is also the way round an open bug in it.
 - **Records provenance.** Which model, which seed, which image. Six months later
   "did I make this or did a model?" has no other answer.
 - **Holds a lease on the card.** One large model at a time. Two does not fail

@@ -1,19 +1,13 @@
-"""The generation environment, the lease on the card, and the worker protocol.
+"""The lease on the graphics card, and the picture-to-mesh adapter.
 
-The heavy part - PyTorch, CUDA, several gigabytes of weights - is deliberately
+The heavy part - a native binary and ten gigabytes of weights - is deliberately
 absent here, and that is the point: the interesting cases are all about what
-happens when it is *not* installed, which is the state of every fresh machine.
-
-The worker protocol is exercised for real by pointing the adapter at this
-project's own interpreter. It has no PyTorch, so the probe comes back saying so
-- which proves the subprocess, the JSON lines and the reporting all work,
-without downloading anything.
+happens when it is *not* installed, which is the state of every fresh machine,
+and about how specifically the app says which piece is missing.
 """
 
 import json
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -27,14 +21,15 @@ from modelpop.application.mesh_generation_ports import (
 )
 from modelpop.domain.mesh import Mesh
 from modelpop.generation.gpu_lease import STALE_AFTER_SECONDS, GpuBusyError, GpuLease
-from modelpop.generation.mesh_generator import (
-    ExternalMeshGenerator,
-    GenerationEnvironment,
-    find_generation_python,
+from modelpop.generation.trellis_cli import (
+    _WEIGHT_FILES,
+    MODEL_NAME,
+    TrellisCliGenerator,
+    _report,
+    find_trellis_cli,
+    find_weights,
 )
 from modelpop.mesh import TrimeshIO
-
-WORKER = Path("src/modelpop/generation/mesh_worker.py").resolve()
 
 
 class TestTheLease:
@@ -112,172 +107,6 @@ class TestTheLease:
         with lease.held():
             assert "already running" in lease.describe()
         assert "free" in lease.describe()
-
-
-class TestWhatTheEnvironmentSays:
-    """Each state needs a different answer from the user, so each gets its own
-    sentence rather than one "unavailable"."""
-
-    def test_nothing_installed_points_at_the_setup_notes(self):
-        assert "not set up" in GenerationEnvironment().describe()
-
-    def test_no_pytorch_says_so(self, tmp_path):
-        state = GenerationEnvironment(python=tmp_path / "python.exe")
-        assert "no PyTorch" in state.describe()
-
-    def test_pytorch_without_a_card_explains_why_that_matters(self, tmp_path):
-        state = GenerationEnvironment(python=tmp_path / "python.exe", torch_version="2.9")
-        assert "cannot see the graphics" in state.describe()
-        assert "hours" in state.describe()
-
-    def test_a_card_but_no_generator_says_which_half_is_missing(self, tmp_path):
-        state = GenerationEnvironment(
-            python=tmp_path / "python.exe", torch_version="2.9", cuda=True, device="RTX 4090"
-        )
-        assert "no generator is installed" in state.describe()
-
-    def test_a_ready_environment_names_what_it_has(self, tmp_path):
-        state = GenerationEnvironment(
-            python=tmp_path / "python.exe",
-            torch_version="2.9",
-            cuda=True,
-            device="RTX 4090",
-            vram_gb=16.0,
-            backends=("trellis",),
-        )
-        assert state.is_ready
-        assert "trellis" in state.describe()
-        assert "RTX 4090" in state.describe()
-
-    def test_only_a_complete_environment_is_ready(self, tmp_path):
-        half = GenerationEnvironment(python=tmp_path / "p", torch_version="2.9", cuda=True)
-        assert not half.is_ready
-
-
-class TestTheWorkerProtocol:
-    """Run against this project's own interpreter, which has no PyTorch.
-
-    That is exactly what makes it a good test: it proves the subprocess, the
-    JSON lines and the failure reporting all work without downloading a model.
-    """
-
-    def run_worker(self, *arguments: str) -> list[dict]:
-        completed = subprocess.run(
-            [sys.executable, str(WORKER), *arguments],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        lines = []
-        for line in completed.stdout.splitlines():
-            if line.strip().startswith("{"):
-                lines.append(json.loads(line))
-        return lines
-
-    def test_probing_reports_what_is_installed(self):
-        messages = self.run_worker("--probe", "--request", "{}")
-        probe = next(m for m in messages if m["phase"] == "probe")
-
-        assert "python" in probe
-        assert "backends" in probe
-
-    def test_probing_an_environment_with_no_pytorch_says_so_rather_than_crashing(self):
-        messages = self.run_worker("--probe", "--request", "{}")
-        probe = next(m for m in messages if m["phase"] == "probe")
-
-        assert "torch" not in probe or not probe.get("cuda")
-        assert probe["backends"] == []
-
-    def test_an_unreadable_request_is_reported_as_a_failure(self):
-        messages = self.run_worker("--request", "not json at all")
-        assert messages[-1]["phase"] == "failed"
-        assert "could not be read" in messages[-1]["error"]
-
-    def test_with_no_backend_installed_it_says_what_to_read(self):
-        request = json.dumps({"output": "out.glb", "image": "x.png"})
-        messages = self.run_worker("--request", request)
-
-        assert messages[-1]["phase"] == "failed"
-        assert "No generator is installed" in messages[-1]["detail"]
-
-    def test_the_worker_imports_nothing_from_modelpop(self):
-        """It runs in an interpreter where modelpop is not installed, so any
-        import of it would be a crash on the user's machine and nowhere else."""
-        source = WORKER.read_text(encoding="utf-8")
-        assert "import modelpop" not in source
-        assert "from modelpop" not in source
-
-
-class TestTheAdapter:
-    def generator(self, **kwargs) -> ExternalMeshGenerator:
-        return ExternalMeshGenerator(TrimeshIO(), **kwargs)
-
-    def test_it_satisfies_the_port(self):
-        assert isinstance(self.generator(python=None), MeshGenerator)
-
-    def test_with_nothing_installed_it_is_unavailable_rather_than_broken(self):
-        generator = self.generator(python=None)
-        assert not generator.is_available()
-        assert "not set up" in generator.describe()
-
-    def test_pointed_at_an_interpreter_with_no_pytorch_it_says_that(self, tmp_path):
-        """A real probe of a real interpreter, which is what makes this useful."""
-        generator = self.generator(python=Path(sys.executable), lease=GpuLease.beside(tmp_path))
-        assert not generator.is_available()
-        assert "PyTorch" in generator.describe()
-
-    def test_a_missing_image_is_reported_before_anything_starts(self, tmp_path):
-        generator = self.generator(python=None)
-        result = generator.from_image(tmp_path / "absent.png")
-
-        assert not result.ok
-        assert "does not exist" in result.error
-
-    def test_generating_without_an_environment_explains_itself(self, tmp_path):
-        image = tmp_path / "photo.png"
-        image.write_bytes(b"not really a png")
-
-        result = self.generator(python=None).from_image(image)
-        assert not result.ok
-        assert "not available" in result.error
-
-    def test_words_alone_are_refused_honestly_rather_than_approximated(self):
-        """The installed backends are image-to-3D. Producing something
-        unrelated would be worse than saying so."""
-        result = self.generator(python=None).from_text("an MSI dragon")
-
-        assert not result.ok
-        assert "not wired up" in result.error
-        assert "picture" in result.detail
-
-    def test_an_empty_description_is_refused(self):
-        assert not self.generator(python=None).from_text("   ").ok
-
-    def test_the_probe_is_only_run_once(self, tmp_path):
-        """It starts an interpreter and imports PyTorch. Doing that on every
-        button repaint would make the window crawl."""
-        generator = self.generator(python=Path(sys.executable), lease=GpuLease.beside(tmp_path))
-        first = generator.environment()
-        assert generator.environment() is first
-
-    def test_it_can_be_probed_again_after_the_user_installs_something(self, tmp_path):
-        generator = self.generator(python=Path(sys.executable), lease=GpuLease.beside(tmp_path))
-        first = generator.environment()
-        assert generator.environment(refresh=True) is not first
-
-
-class TestWhereTheEnvironmentLives:
-    def test_an_explicit_setting_wins(self, monkeypatch, tmp_path):
-        stated = tmp_path / "python.exe"
-        stated.write_text("", encoding="utf-8")
-        monkeypatch.setenv("MODELPOP_GENERATION_PYTHON", str(stated))
-
-        assert find_generation_python() == stated
-
-    def test_a_setting_pointing_at_nothing_is_ignored(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("MODELPOP_GENERATION_PYTHON", str(tmp_path / "gone.exe"))
-        assert find_generation_python() is None
 
 
 class TestWhatAGeneratedMeshRecords:
@@ -392,3 +221,193 @@ class TestThroughTheWorkspace:
         result = workspace.generate_from_image(image)
         assert not result.ok
         assert "caught fire" in result.error
+
+
+class TestTheGeneratorAdapter:
+    """Driving trellis.cpp. The binary is absent here, which is the case that
+    matters: every message has to name which piece is missing."""
+
+    def generator(self, **kwargs) -> TrellisCliGenerator:
+        kwargs.setdefault("binary", None)
+        kwargs.setdefault("weights", None)
+        return TrellisCliGenerator(TrimeshIO(), **kwargs)
+
+    def installed(self, tmp_path, *, weights: bool = True) -> TrellisCliGenerator:
+        """A generator that looks installed, without anything real behind it."""
+        binary = tmp_path / "trellis-cli.exe"
+        binary.write_text("", encoding="utf-8")
+
+        models = tmp_path / "models"
+        models.mkdir(exist_ok=True)
+        if weights:
+            for name in _WEIGHT_FILES:
+                (models / name).write_bytes(b"x")
+
+        return TrellisCliGenerator(
+            TrimeshIO(), binary=binary, weights=models, lease=GpuLease.beside(tmp_path)
+        )
+
+    def test_it_satisfies_the_port(self):
+        assert isinstance(self.generator(), MeshGenerator)
+
+    def test_with_nothing_installed_it_points_at_the_notes(self):
+        generator = self.generator()
+        assert not generator.is_available()
+        assert "not set up" in generator.describe()
+        assert "10-mesh-generation" in generator.describe()
+
+    def test_a_binary_with_no_weights_says_which_half_is_missing(self, tmp_path):
+        generator = self.installed(tmp_path, weights=False)
+        assert not generator.is_available()
+        assert "no weights yet" in generator.describe()
+        assert "10 GB" in generator.describe()
+
+    def test_a_partial_download_names_the_files_that_are_missing(self, tmp_path):
+        """Half a download is a real thing that happens over ten gigabytes."""
+        generator = self.installed(tmp_path)
+        assert generator.weights is not None
+        (generator.weights / "tex_dec.gguf").unlink()
+
+        assert not generator.is_available()
+        assert "tex_dec.gguf" in generator.describe()
+
+    def test_a_complete_install_reports_itself_ready(self, tmp_path):
+        generator = self.installed(tmp_path)
+        assert generator.is_available()
+        assert "ready" in generator.describe()
+        assert MODEL_NAME in generator.describe()
+
+    def test_a_busy_card_is_reported_as_busy_not_as_missing(self, tmp_path):
+        generator = self.installed(tmp_path)
+        assert generator.lease is not None
+
+        with generator.lease.held():
+            assert not generator.is_available()
+            assert "already running" in generator.describe()
+
+    def test_a_missing_image_is_caught_before_anything_starts(self, tmp_path):
+        result = self.installed(tmp_path).from_image(tmp_path / "absent.png")
+        assert not result.ok
+        assert "does not exist" in result.error
+
+    def test_words_alone_are_refused_honestly(self, tmp_path):
+        """A dragon that is not the dragon you asked for is worse than a message."""
+        result = self.installed(tmp_path).from_text("an MSI dragon")
+        assert not result.ok
+        assert "picture" in result.detail
+
+    def test_an_empty_description_is_refused(self):
+        assert not self.generator().from_text("   ").ok
+
+
+class TestTheCommandItBuilds:
+    """Getting this wrong produces a shape, just not the right one - so it is
+    asserted on directly rather than inferred from a result."""
+
+    def generator(self, tmp_path) -> TrellisCliGenerator:
+        models = tmp_path / "models"
+        models.mkdir(exist_ok=True)
+        return TrellisCliGenerator(TrimeshIO(), binary=tmp_path / "trellis-cli.exe", weights=models)
+
+    def command(self, tmp_path, options: GenerationOptions) -> list[str]:
+        return self.generator(tmp_path)._command(tmp_path / "in.png", tmp_path / "out.glb", options)
+
+    def test_arguments_are_a_list_not_a_joined_string(self, tmp_path):
+        """The rule the slicer adapter learned the hard way: a space in a path
+        becomes two arguments otherwise."""
+        command = self.command(tmp_path, GenerationOptions())
+        assert isinstance(command, list)
+        assert all(isinstance(part, str) for part in command)
+
+    def test_the_detail_setting_chooses_a_resolution(self, tmp_path):
+        draft = self.command(tmp_path, GenerationOptions(detail=Detail.DRAFT))
+        standard = self.command(tmp_path, GenerationOptions(detail=Detail.STANDARD))
+
+        assert "512" in draft
+        assert "1024" in standard
+
+    def test_the_highest_setting_does_not_ask_for_an_unproven_resolution(self, tmp_path):
+        """The project only claims 1024 fits a 16 GB card."""
+        fine = self.command(tmp_path, GenerationOptions(detail=Detail.FINE))
+        assert "1536" not in fine
+
+    def test_a_stated_seed_is_passed_so_a_run_can_be_repeated(self, tmp_path):
+        command = self.command(tmp_path, GenerationOptions(seed=1234))
+        assert "--seed" in command
+        assert "1234" in command
+
+    def test_no_seed_means_no_seed_argument(self, tmp_path):
+        assert "--seed" not in self.command(tmp_path, GenerationOptions(seed=0))
+
+    def test_keeping_the_background_uses_the_simple_keyer(self, tmp_path):
+        """Also the way round the open bug in the smart one."""
+        command = self.command(tmp_path, GenerationOptions(remove_background=False))
+        assert "--bg-removal" in command
+        assert "threshold" in command
+
+    def test_the_weights_directory_is_named(self, tmp_path):
+        assert "--models" in self.command(tmp_path, GenerationOptions())
+
+    def test_asking_for_fine_detail_says_it_was_capped(self, tmp_path):
+        """Quietly giving less than was asked for is worse than saying so."""
+        notes = self.generator(tmp_path)._notes(GenerationOptions(detail=Detail.FINE))
+        assert notes
+        assert "1024" in notes[0]
+
+    def test_an_ordinary_run_has_nothing_to_report(self, tmp_path):
+        assert self.generator(tmp_path)._notes(GenerationOptions()) == ()
+
+
+class TestReadingItsProgress:
+    """It writes its stage as it goes, which the Bambu CLI does not."""
+
+    def report(self, line: str) -> list[tuple[float, str]]:
+        seen: list[tuple[float, str]] = []
+        _report(line, lambda fraction, message: seen.append((fraction, message)))
+        return seen
+
+    def test_a_stage_line_becomes_a_fraction_and_a_phrase(self):
+        seen = self.report("[3/7] shape flow 1024")
+        assert len(seen) == 1
+        fraction, message = seen[0]
+        assert fraction == pytest.approx(3 / 7)
+        assert message == "shape flow 1024"
+
+    def test_the_last_stage_is_complete_rather_than_over_one(self):
+        assert self.report("[7/7] write")[0][0] == pytest.approx(1.0)
+
+    def test_an_ordinary_line_reports_nothing(self):
+        assert self.report("loading weights from models/ss_flow.gguf") == []
+
+    def test_a_malformed_stage_line_is_ignored_rather_than_fatal(self):
+        assert self.report("[x/y] something") == []
+
+    def test_a_zero_total_does_not_divide_by_zero(self):
+        assert self.report("[0/0] nothing") == []
+
+
+class TestWhereThingsAre:
+    def test_an_explicit_binary_setting_wins(self, monkeypatch, tmp_path):
+        stated = tmp_path / "trellis-cli.exe"
+        stated.write_text("", encoding="utf-8")
+        monkeypatch.setenv("MODELPOP_TRELLIS_CLI", str(stated))
+
+        assert find_trellis_cli() == stated
+
+    def test_a_setting_pointing_at_nothing_is_ignored(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("MODELPOP_TRELLIS_CLI", str(tmp_path / "gone.exe"))
+        assert find_trellis_cli() is None
+
+    def test_an_explicit_weights_setting_wins(self, monkeypatch, tmp_path):
+        models = tmp_path / "models"
+        models.mkdir(exist_ok=True)
+        monkeypatch.setenv("MODELPOP_TRELLIS_MODELS", str(models))
+
+        assert find_weights() == models
+
+    def test_a_weights_setting_pointing_at_a_file_is_ignored(self, monkeypatch, tmp_path):
+        stray = tmp_path / "not-a-directory"
+        stray.write_text("", encoding="utf-8")
+        monkeypatch.setenv("MODELPOP_TRELLIS_MODELS", str(stray))
+
+        assert find_weights() is None
