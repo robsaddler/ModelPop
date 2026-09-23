@@ -96,6 +96,11 @@ architectural cost.
   becomes part of the model, which is the commonest way an image-to-3D result
   comes out wrong. An already-matted image keeps its alpha and skips the
   remover, which is also the way round an open bug in it.
+- **Gives it a size.** A picture has no scale. The generator works in a
+  normalised box and returns a model **one unit across** - read as millimetres,
+  a grain of sand. So the result is scaled to 100 mm by default and the user is
+  told the size was *chosen, not measured*, with a pointer at Resize. That is
+  exactly what a ruler in the shot is reaching for.
 - **Records provenance.** Which model, which seed, which image. Six months later
   "did I make this or did a model?" has no other answer.
 - **Honours a seed, but not bit-for-bit.** The same seed gives the same shape.

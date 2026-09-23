@@ -38,7 +38,9 @@ from modelpop.application.mesh_generation_ports import (
     GeneratedMesh,
     GenerationOptions,
 )
+from modelpop.domain.mesh import Mesh
 from modelpop.domain.result import Result, failure, success
+from modelpop.domain.units import Length
 from modelpop.generation.gpu_lease import GpuBusyError, GpuLease
 from modelpop.paths import app_data_dir
 
@@ -241,14 +243,15 @@ class TrellisCliGenerator:
                     "It wrote a file ModelPop could not open.",
                 )
 
+            mesh, scale_note = _given_a_scale(loaded.unwrap(), settings.size)
             return success(
                 GeneratedMesh(
-                    mesh=loaded.unwrap(),
+                    mesh=mesh,
                     model=MODEL_NAME,
                     seed=settings.seed,
                     source_image=image,
                     seconds=ran.unwrap(),
-                    notes=self._notes(settings),
+                    notes=(*self._notes(settings), *scale_note),
                 )
             )
 
@@ -347,6 +350,38 @@ class TrellisCliGenerator:
         # default, which is already a sane print budget. Passing our own would
         # be a second opinion with no better information behind it.
         return tuple(notes)
+
+
+# Below this the model came out of the generator's normalised box rather than
+# from anything measured, so its size means nothing and is replaced.
+_UNSCALED_MM = 10.0
+
+
+def _given_a_scale(mesh: Mesh, size: Length) -> tuple[Mesh, tuple[str, ...]]:
+    """Resize a generated model to something printable, and say that we did.
+
+    The generator works in a normalised box and returns a model one unit
+    across. Read as millimetres that is a grain of sand. There is no way to
+    recover the real size from a picture, so one is chosen and the user is told
+    it was chosen - which is what they are reaching for when they put a ruler
+    in the shot.
+
+    A model that already has a plausible size is left alone, so a backend that
+    one day returns real units is not scaled twice.
+    """
+    largest = mesh.bounds.largest_dimension.millimetres
+    if largest <= 0:
+        return mesh, ("The generator produced a model with no size at all.",)
+    if largest > _UNSCALED_MM:
+        return mesh, ()
+
+    return (
+        mesh.scaled_to_fit(size),
+        (
+            f"A picture has no scale, so this was made {size.format()} at its "
+            "largest. Use Resize to set the real size.",
+        ),
+    )
 
 
 def _report(line: str, on_progress: Progress) -> None:

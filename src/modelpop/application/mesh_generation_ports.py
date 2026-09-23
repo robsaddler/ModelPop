@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.result import Result
+from modelpop.domain.units import Length
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -113,6 +114,16 @@ class GenerationOptions:
     require_gpu: bool = True
     """Refuse to fall back to the processor. A generation that quietly drops to
     the CPU does not fail - it takes hours, which is worse."""
+
+    size: Length = field(default_factory=lambda: Length.mm(100))
+    """How big to make it.
+
+    A picture has no scale: the generator works in a normalised box and hands
+    back a model one unit across. Read as millimetres that is a grain of sand,
+    which is not a useful default for anything. So the result is scaled to a
+    stated size and the user is told the size was chosen, not measured - which
+    is exactly what a ruler in the photo is for.
+    """
 
     timeout_seconds: float = 600.0
 

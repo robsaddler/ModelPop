@@ -13,6 +13,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from modelpop.application.mesh_generation_ports import (
@@ -23,6 +24,7 @@ from modelpop.application.mesh_generation_ports import (
     MeshGenerator,
 )
 from modelpop.domain.mesh import Mesh
+from modelpop.domain.units import Length
 from modelpop.generation.gpu_lease import (
     STALE_AFTER_SECONDS,
     GpuBusyError,
@@ -33,6 +35,7 @@ from modelpop.generation.trellis_cli import (
     _WEIGHT_FILES,
     MODEL_NAME,
     TrellisCliGenerator,
+    _given_a_scale,
     _report,
     find_trellis_cli,
     find_weights,
@@ -503,3 +506,82 @@ class TestAskingWhetherAProcessIsAlive:
         finally:
             child.kill()
             child.wait(timeout=10)
+
+
+class TestGivingTheResultAScale:
+    """A picture has no scale. The generator works in a normalised box and
+    hands back a model one unit across; read as millimetres that is a grain of
+    sand, which is nobody's idea of a useful default."""
+
+    def unit_cube(self, size_mm: float):
+        """A cube of a stated size, standing in for what a generator returns."""
+        half = size_mm / 2
+        vertices = np.array(
+            [
+                [-half, -half, -half],
+                [half, -half, -half],
+                [half, half, -half],
+                [-half, half, -half],
+                [-half, -half, half],
+                [half, -half, half],
+                [half, half, half],
+                [-half, half, half],
+            ],
+            dtype=np.float64,
+        )
+        faces = np.array(
+            [
+                [0, 3, 2],
+                [0, 2, 1],
+                [4, 5, 6],
+                [4, 6, 7],
+                [0, 1, 5],
+                [0, 5, 4],
+                [1, 2, 6],
+                [1, 6, 5],
+                [2, 3, 7],
+                [2, 7, 6],
+                [3, 0, 4],
+                [3, 4, 7],
+            ],
+            dtype=np.int32,
+        )
+        return Mesh(vertices, faces)
+
+    def test_a_normalised_model_is_made_printable(self):
+        scaled, notes = _given_a_scale(self.unit_cube(1.0), Length.mm(100))
+
+        assert scaled.bounds.largest_dimension.millimetres == pytest.approx(100, rel=0.01)
+        assert notes, "the user has to be told the size was chosen, not measured"
+
+    def test_the_note_says_the_scale_was_chosen(self):
+        """Silently inventing a size and not saying so would be worse than
+        leaving it at a millimetre."""
+        _, notes = _given_a_scale(self.unit_cube(1.0), Length.mm(100))
+        assert "no scale" in notes[0]
+        assert "Resize" in notes[0]
+
+    def test_a_stated_size_is_honoured(self):
+        scaled, _ = _given_a_scale(self.unit_cube(1.0), Length.inches(6))
+        assert scaled.bounds.largest_dimension.millimetres == pytest.approx(152.4, rel=0.01)
+
+    def test_a_model_that_already_has_a_plausible_size_is_left_alone(self):
+        """So a backend that one day returns real units is not scaled twice."""
+        original = self.unit_cube(80.0)
+        scaled, notes = _given_a_scale(original, Length.mm(100))
+
+        assert scaled.bounds.largest_dimension.millimetres == pytest.approx(80, rel=0.01)
+        assert notes == ()
+
+    def test_a_model_with_no_size_at_all_is_reported_rather_than_divided_by(self):
+        flat = Mesh(
+            np.zeros((3, 3), dtype=np.float64),
+            np.array([[0, 1, 2]], dtype=np.int32),
+        )
+        scaled, notes = _given_a_scale(flat, Length.mm(100))
+
+        assert scaled is flat
+        assert "no size at all" in notes[0]
+
+    def test_the_default_size_is_something_a_printer_could_make(self):
+        assert 10 <= GenerationOptions().size.millimetres <= 256
