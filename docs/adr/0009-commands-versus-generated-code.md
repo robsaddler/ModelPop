@@ -95,6 +95,14 @@ rewriting for a part that came out of Pipeline A. They will need to converge, an
 direction is for Pipeline A's output to be *imported* as a feature tree rather than kept as a
 script. That is not built and is not free.
 
+Every rebuild costs a subprocess, roughly a second or two on a tree of a handful of features. That
+is acceptable for a click and would not be for a drag; a gizmo will need a preview path that does
+not round-trip through the kernel.
+
+**Watch.** The vocabulary is small. It covers what Rob asked for by name - "a hollow core", "MSI in
+grey across his front" - and it does not yet cover sketches, revolves, patterns or holes. Each
+addition is a command, a compiler fragment, and a test, which is the right shape for growth.
+
 ### Update, same day: the model now asks for commands
 
 `modelpop.generation.command_prompt` and `command_loop` implement decision 1's editing half. A
@@ -112,14 +120,6 @@ Three behaviours worth recording:
   back on its own, and the run reports which stuck.
 - **An empty array is an answer, not a failure.** The prompt tells the model to return nothing
   rather than approximate with an operation the user did not ask for.
-
-Every rebuild costs a subprocess, roughly a second or two on a tree of a handful of features. That
-is acceptable for a click and would not be for a drag; a gizmo will need a preview path that does
-not round-trip through the kernel.
-
-**Watch.** The vocabulary is small. It covers what Rob asked for by name - "a hollow core", "MSI in
-grey across his front" - and it does not yet cover sketches, revolves, patterns or holes. Each
-addition is a command, a compiler fragment, and a test, which is the right shape for growth.
 
 ## Alternatives considered
 
