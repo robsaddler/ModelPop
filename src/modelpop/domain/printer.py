@@ -11,7 +11,15 @@ from enum import Enum
 
 from modelpop.domain.units import Length
 
-__all__ = ["AmsUnit", "Filament", "Nozzle", "PrinterProfile", "SupportStyle", "SupportType"]
+__all__ = [
+    "AmsUnit",
+    "Filament",
+    "Nozzle",
+    "PrinterConnection",
+    "PrinterProfile",
+    "SupportStyle",
+    "SupportType",
+]
 
 
 class Nozzle(Enum):
@@ -62,6 +70,73 @@ class SupportStyle(Enum):
     GRID = "grid"
     SNUG = "snug"
     ORGANIC = "organic"
+
+
+# Bambu prints an eight-character code on the printer's own screen. Anything
+# else is a typo or a password from somewhere entirely different.
+ACCESS_CODE_LENGTH = 8
+
+
+@dataclass(frozen=True, slots=True)
+class PrinterConnection:
+    """How to reach a printer on the local network.
+
+    The access code is a **secret**, and the whole reason this is a type rather
+    than three loose strings. Holding it in a dataclass with a default repr
+    would put it in every traceback, every log line that formats a job, and
+    every crash report - and it is the credential that lets anyone on the
+    network drive the printer. So ``__repr__`` and ``describe`` both hide it,
+    and it is fetched from the credential store rather than stored in a
+    project file.
+
+    LAN mode only. The cloud route needs a Bambu account, a token refresh
+    cycle and a server in the middle, all of which is the opposite of what
+    this application is for.
+    """
+
+    host: str = ""
+    serial: str = ""
+    access_code: str = ""
+
+    def __post_init__(self) -> None:
+        """Trim whatever was typed. Spaces come with every copy and paste."""
+        for name in ("host", "serial", "access_code"):
+            object.__setattr__(self, name, str(getattr(self, name)).strip())
+
+    def __repr__(self) -> str:
+        """Everything but the secret.
+
+        Deliberately not the generated repr. This object ends up inside jobs,
+        results and exception messages, and any of those may be logged.
+        """
+        return f"PrinterConnection(host={self.host!r}, serial={self.serial!r}, access_code=...)"
+
+    @property
+    def is_complete(self) -> bool:
+        """Whether there is enough here to try a connection."""
+        return bool(self.host) and bool(self.serial) and bool(self.access_code)
+
+    @property
+    def problem(self) -> str | None:
+        """What is missing or wrong, in words the user can act on."""
+        if not self.host:
+            return "The printer needs an address - its IP, from its network screen."
+        if not self.serial:
+            return "The printer needs its serial number, from the same screen."
+        if not self.access_code:
+            return "The printer needs its access code, shown on its network screen."
+        if len(self.access_code) != ACCESS_CODE_LENGTH:
+            return (
+                f"An access code is {ACCESS_CODE_LENGTH} characters. "
+                f"That one is {len(self.access_code)}."
+            )
+        return None
+
+    def describe(self) -> str:
+        """A line for the interface, with no secret in it."""
+        if not self.host:
+            return "No printer set up."
+        return f"{self.serial or 'a printer'} at {self.host}"
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -34,7 +35,9 @@ from modelpop.application.mesh_generation_ports import (
     GenerationOptions,
 )
 from modelpop.domain.photo_scale import PhotoScale
+from modelpop.domain.printer import PrinterConnection
 from modelpop.domain.units import Length
+from modelpop.printing import ACCESS_CODE_NAME, HOST_NAME, SERIAL_NAME
 from modelpop.repositories import (
     ACCESS_WARNING,
     MYMINIFACTORY_KEY_NAME,
@@ -107,6 +110,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._build_model_group())
         layout.addWidget(self._build_limits_group())
         layout.addWidget(self._build_generation_group())
+        layout.addWidget(self._build_printer_group())
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -144,6 +148,79 @@ class SettingsDialog(QDialog):
         note.setStyleSheet(_HINT_STYLE)
         form.addRow(note)
         return group
+
+    def _build_printer_group(self) -> QGroupBox:
+        """Where the printer is, and whether jobs really go to it.
+
+        The send switch defaults to **off**, and that is the point of it. A
+        print is the only thing this application does that cannot be undone
+        from inside it: it starts a machine in another room on a spool of
+        filament. Everything up to that is a file on disk.
+
+        All three values come from the credential store. Only the access code
+        is a secret, but splitting an address from the code that opens it
+        across two mechanisms helps nobody, and it is the one place this
+        application persists anything at all.
+        """
+        group = QGroupBox("The printer")
+        form = QFormLayout(group)
+
+        self._printer_fields: dict[str, QLineEdit] = {}
+        for name, label, secret in (
+            (HOST_NAME, "Address", False),
+            (SERIAL_NAME, "Serial", False),
+            (ACCESS_CODE_NAME, "Access code", True),
+        ):
+            field = QLineEdit()
+            if secret:
+                field.setEchoMode(QLineEdit.EchoMode.Password)
+            stored = self._secrets.get(name)
+            if secret:
+                source = self._secrets.source_of(name)
+                field.setPlaceholderText(
+                    f"already set ({source})" if source != "not set" else "not set"
+                )
+            elif stored:
+                field.setText(stored)
+
+            row = QHBoxLayout()
+            row.addWidget(field)
+            forget = QPushButton("Forget")
+            forget.clicked.connect(lambda _=False, n=name, f=field: self._forget(n, f))
+            row.addWidget(forget)
+            form.addRow(label, row)
+            self._printer_fields[name] = field
+
+        self._send_for_real = QCheckBox("Really send jobs to this printer")
+        form.addRow(self._send_for_real)
+
+        note = QLabel(
+            "All three are on the printer's own network screen. Leave the box "
+            "unticked and ModelPop describes what it would send without sending "
+            "it, which is how it behaves until you say otherwise. LAN mode only: "
+            "nothing goes through a Bambu account or a server on the internet."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(_HINT_STYLE)
+        form.addRow(note)
+        return group
+
+    @property
+    def printer_connection(self) -> PrinterConnection:
+        """The printer as edited, taking what is stored for anything left blank."""
+        return PrinterConnection(
+            host=self._printer_fields[HOST_NAME].text().strip()
+            or (self._secrets.get(HOST_NAME) or ""),
+            serial=self._printer_fields[SERIAL_NAME].text().strip()
+            or (self._secrets.get(SERIAL_NAME) or ""),
+            access_code=self._printer_fields[ACCESS_CODE_NAME].text().strip()
+            or (self._secrets.get(ACCESS_CODE_NAME) or ""),
+        )
+
+    @property
+    def send_for_real(self) -> bool:
+        """Whether jobs should actually reach the printer."""
+        return self._send_for_real.isChecked()
 
     def _build_sources_group(self) -> QGroupBox:
         """Credentials for the model repositories.
@@ -300,7 +377,7 @@ class SettingsDialog(QDialog):
                 self._key_field.setPlaceholderText("could not save the key")
                 return
 
-        for name, field in self._source_fields.items():
+        for name, field in (self._source_fields | self._printer_fields).items():
             value = field.text().strip()
             if not value:
                 continue

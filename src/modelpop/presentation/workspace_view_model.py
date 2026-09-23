@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from modelpop.application.ai_ports import AiSettings
 from modelpop.application.workspace import Workspace, WorkspaceState
-from modelpop.domain.printer import PrinterProfile, SupportType
+from modelpop.domain.printer import PrinterConnection, PrinterProfile, SupportType
 from modelpop.domain.readiness import Severity
 from modelpop.domain.result import Result
 from modelpop.domain.units import Length
@@ -76,6 +76,7 @@ class WorkspaceViewModel:
         self._workspace = workspace
         self._runner = runner
         self._ai_settings = AiSettings()
+        self._connection = PrinterConnection()
         self._state = WorkspaceState()
         self._busy = False
         self._state_listeners: list[Callable[[WorkspaceState], None]] = []
@@ -306,6 +307,103 @@ class WorkspaceViewModel:
             failed="Slicing failed",
             describe_success=self._describe_slice,
         )
+
+    # ---------------------------------------------------------------- sending
+
+    @property
+    def printer_connection(self) -> PrinterConnection:
+        """How to reach the printer. Empty until the user sets it up."""
+        return self._connection
+
+    @printer_connection.setter
+    def printer_connection(self, connection: PrinterConnection) -> None:
+        """Adopt an address the user typed in Settings."""
+        self._connection = connection
+
+    @property
+    def can_send_to_printer(self) -> bool:
+        """Whether there is a sliced job and somewhere to send it."""
+        return (
+            self._workspace.can_send_to_printer
+            and self._state.last_slice is not None
+            and not self._busy
+        )
+
+    def describe_printer_route(self) -> str:
+        """How a job would reach the printer."""
+        return self._workspace.describe_printer_route()
+
+    def send_to_printer(self, *, start_now: bool = False, for_real: bool = False) -> None:
+        """Send the last sliced job, and say exactly how far it got.
+
+        Off the interface thread, because an unreachable printer costs the
+        whole connection timeout and a frozen window during it is how a user
+        concludes the application has crashed.
+
+        The outcome is reported from the submission rather than from whether
+        the call failed: a file can land on the printer and the print still
+        not begin, and "sent" would be the wrong word for that.
+        """
+        if self._busy:
+            self._notify(Notification("Already working on something", Severity.WARNING))
+            return
+
+        connection = self._connection
+        self._set_busy(True)
+
+        def work() -> None:
+            try:
+                outcome = self._workspace.send_to_printer(
+                    self._state, connection, start_now=start_now, for_real=for_real
+                )
+            finally:
+                self._set_busy(False)
+
+            if not outcome.ok:
+                self._notify(
+                    Notification(
+                        "The job was not sent", Severity.BLOCKER, outcome.error, failed=True
+                    )
+                )
+                return
+
+            # A job that uploaded but did not start is not a failure - the
+            # model is on the printer - so it is reported as news rather than
+            # as an error, with the detail saying what is left to do.
+            submission = outcome.unwrap()
+            arrived = submission.uploaded or submission.was_dry_run
+            self._notify(
+                Notification(
+                    submission.describe(),
+                    Severity.INFO if arrived else Severity.WARNING,
+                    submission.detail,
+                )
+            )
+
+        self._runner(work)
+
+    def read_printer_status(self) -> None:
+        """Ask the printer what it is doing, and say so."""
+        if self._busy:
+            return
+
+        connection = self._connection
+        self._set_busy(True)
+
+        def work() -> None:
+            try:
+                outcome = self._workspace.printer_status(connection)
+            finally:
+                self._set_busy(False)
+
+            if not outcome.ok:
+                self._notify(
+                    Notification("The printer did not answer", Severity.WARNING, outcome.error)
+                )
+                return
+            self._notify(Notification(outcome.unwrap().describe(), Severity.INFO))
+
+        self._runner(work)
 
     # --------------------------------------------------------------- internal
 

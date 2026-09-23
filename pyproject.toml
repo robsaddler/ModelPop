@@ -39,6 +39,12 @@ repair = [
 ai = [
     "anthropic>=0.40",
 ]
+printer = [
+    # EPL-2.0 / EDL-1.0, both permissive - ADR-0011. Only needed to *start* a
+    # print remotely and to read the printer's status; uploading a job needs
+    # nothing beyond the standard library.
+    "paho-mqtt>=2.1",
+]
 
 [project.scripts]
 modelpop = "modelpop.ui.main:main"
@@ -133,11 +139,17 @@ module = [
     "pyvista.*", "pyvistaqt.*", "trimesh.*", "manifold3d.*", "build123d.*", "vtk.*",
     "pymeshfix.*", "pymeshlab.*",
     # optional extras: the app runs without them and says so
-    "anthropic.*", "keyring.*",
+    "anthropic.*", "keyring.*", "paho.*",
     # installed only in the separate generation environment, never here
     "torch.*", "trellis.*", "triposg.*", "rembg.*", "PIL.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# paho ships type information but marks nothing as re-exported, so reaching
+# for a name through `paho.mqtt.client` reads as private under --strict.
+module = ["paho.*"]
+implicit_reexport = true
 
 [[tool.mypy.overrides]]
 # The generation worker runs in a SEPARATE interpreter with PyTorch and a

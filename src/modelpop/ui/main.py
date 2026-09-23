@@ -20,7 +20,7 @@ from modelpop.cad import Build123dCompiler, Build123dKernel
 from modelpop.domain.printer import PrinterProfile
 from modelpop.generation import CadLoopGenerator, TrellisCliGenerator
 from modelpop.mesh import TrimeshIO, TrimeshOps
-from modelpop.printing import BambuSlicer, ToolpathVerifier
+from modelpop.printing import BambuLanGateway, BambuSlicer, ToolpathVerifier
 from modelpop.projects import JsonProjectStore
 from modelpop.repositories import (
     MYMINIFACTORY_KEY_NAME,
@@ -52,6 +52,10 @@ def build_workspace() -> Workspace:
         generator=CadLoopGenerator(AnthropicProvider(), Build123dKernel(), ops),
         gcode_verifier=ToolpathVerifier(),
         mesh_generator=TrellisCliGenerator(mesh_io),
+        # The real gateway is wired in, and sends nothing until the user
+        # ticks the box in Settings. The window holds that switch; see
+        # MainWindow._send_to_printer.
+        printer_gateway=BambuLanGateway(),
     )
 
 

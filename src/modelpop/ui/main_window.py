@@ -31,6 +31,7 @@ from modelpop.ai import AnthropicProvider, default_store
 from modelpop.application.ai_ports import AiSettings
 from modelpop.application.modelling import ModellingSession
 from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, WorkspaceState
+from modelpop.domain.printer import PrinterConnection
 from modelpop.domain.readiness import Severity
 from modelpop.generation import edit_by_description
 from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
@@ -104,6 +105,9 @@ class MainWindow(QMainWindow):
         # would keep the key the user just replaced.
         self._discovery = discovery
         self._ai_settings = AiSettings()
+        # A print is the one irreversible thing here, so it stays off until
+        # the user turns it on in Settings, every time the app starts.
+        self._send_for_real = False
 
         # The two view-models own different things - a mesh and a feature tree -
         # and the tree hands its geometry to the workspace after every rebuild,
@@ -135,6 +139,23 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._build_menu()
         self._connect()
+        self._recall_printer()
+
+    def _recall_printer(self) -> None:
+        """Take the printer's address back out of the credential store.
+
+        Without this the user retypes three fields every launch. The switch
+        that lets jobs actually leave the machine is *not* recalled: it starts
+        off every time, because the cost of forgetting it is a print nobody
+        asked for.
+        """
+        from modelpop.printing import ACCESS_CODE_NAME, HOST_NAME, SERIAL_NAME
+
+        self._view_model.printer_connection = PrinterConnection(
+            host=self._secrets.get(HOST_NAME) or "",
+            serial=self._secrets.get(SERIAL_NAME) or "",
+            access_code=self._secrets.get(ACCESS_CODE_NAME) or "",
+        )
 
     # ------------------------------------------------------------------ build
 
@@ -255,6 +276,16 @@ class MainWindow(QMainWindow):
         self._watch_action.setEnabled(False)
         self._watch_action.triggered.connect(self._watch_print)
         print_menu.addAction(self._watch_action)
+
+        print_menu.addSeparator()
+        self._send_action = QAction("Se&nd it to the printer...", self)
+        self._send_action.setEnabled(False)
+        self._send_action.triggered.connect(self._send_to_printer)
+        print_menu.addAction(self._send_action)
+
+        self._printer_status_action = QAction("What is the printer &doing?", self)
+        self._printer_status_action.triggered.connect(self._view_model.read_printer_status)
+        print_menu.addAction(self._printer_status_action)
 
         view_menu = self.menuBar().addMenu("&View")
         for label, name, shortcut in (
@@ -555,6 +586,45 @@ class MainWindow(QMainWindow):
 
         PrintWindow(report.gcode_path, self._view_model.printer, self).exec()
 
+    def _send_to_printer(self) -> None:
+        """Send the last sliced job, after asking once whether to start it.
+
+        The confirmation is not ceremony. Everything else in this application
+        writes a file; this starts a machine in another room, on filament that
+        costs money, and nothing in here can stop it afterwards. So the
+        question is asked plainly, it names the printer, and the safe answer -
+        put the file there and start it yourself - is the default button.
+        """
+        connection = self._view_model.printer_connection
+        problem = connection.problem
+        if problem is not None:
+            QMessageBox.information(self, "ModelPop", f"{problem}\n\nAdd it in File > Settings.")
+            return
+
+        if not self._send_for_real:
+            # Dry run: described, not sent. No dialog, because nothing is
+            # about to happen that would need confirming.
+            self._view_model.send_to_printer()
+            return
+
+        ask = QMessageBox(self)
+        ask.setWindowTitle("Send it to the printer")
+        ask.setText(f"Send this job to {connection.describe()}?")
+        ask.setInformativeText(
+            "Starting it now begins a print you cannot stop from here - only at the printer itself."
+        )
+        upload = ask.addButton("Send the file only", QMessageBox.ButtonRole.AcceptRole)
+        start = ask.addButton("Send it and start printing", QMessageBox.ButtonRole.DestructiveRole)
+        ask.addButton(QMessageBox.StandardButton.Cancel)
+        ask.setDefaultButton(upload)
+        ask.exec()
+
+        chosen = ask.clickedButton()
+        if chosen is upload:
+            self._view_model.send_to_printer(for_real=True)
+        elif chosen is start:
+            self._view_model.send_to_printer(start_now=True, for_real=True)
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(
             self._secrets,
@@ -565,6 +635,8 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self._ai_settings = dialog.settings()
             self._view_model.ai_settings = self._ai_settings
+            self._view_model.printer_connection = dialog.printer_connection
+            self._send_for_real = dialog.send_for_real
             self.statusBar().showMessage("Settings saved.", 5000)
             self._refresh_buttons()
 
@@ -645,6 +717,7 @@ class MainWindow(QMainWindow):
         self._save_project_action.setEnabled(self._modelling.can_save)
         sliced = state.last_slice
         self._watch_action.setEnabled(sliced is not None and sliced.gcode_path is not None)
+        self._send_action.setEnabled(self._view_model.can_send_to_printer)
 
     def _on_cad_outcome(self, outcome: Outcome) -> None:
         """Report what a CAD command did.

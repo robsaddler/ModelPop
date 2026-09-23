@@ -15,14 +15,28 @@ from modelpop.printing.gcode import (
     verify_gcode,
     verify_toolpath,
 )
+from modelpop.printing.lan_gateway import (
+    ACCESS_CODE_NAME,
+    HOST_NAME,
+    SERIAL_NAME,
+    BambuLanGateway,
+    DryRunGateway,
+    mqtt_is_available,
+    read_status,
+)
 from modelpop.printing.simulate import Clock, Frame, VirtualPrint, check_sequential_clearance
 from modelpop.printing.toolpath import FlushMatrix, Layer, MachineLimits, Segment, Toolpath
 
 __all__ = [
+    "ACCESS_CODE_NAME",
+    "HOST_NAME",
     "PLATE_CHANGE_SECONDS",
+    "SERIAL_NAME",
+    "BambuLanGateway",
     "BambuPaths",
     "BambuSlicer",
     "Clock",
+    "DryRunGateway",
     "FlushMatrix",
     "Frame",
     "GcodeVerification",
@@ -38,7 +52,9 @@ __all__ = [
     "check_sequential_clearance",
     "compare_strategies",
     "find_bambu_studio",
+    "mqtt_is_available",
     "parse_layers",
+    "read_status",
     "verify_gcode",
     "verify_toolpath",
 ]

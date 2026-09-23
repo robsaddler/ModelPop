@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from modelpop.application.generation_ports import CadGenerationRun
 from modelpop.domain.mesh import Mesh
-from modelpop.domain.printer import PrinterProfile, SupportType
+from modelpop.domain.printer import PrinterConnection, PrinterProfile, SupportType
 from modelpop.domain.readiness import ReadinessReport, assess
 from modelpop.domain.result import Result, failure, success
 from modelpop.domain.units import Length
@@ -37,6 +37,11 @@ if TYPE_CHECKING:
         MeshOps,
         Slicer,
         SliceReport,
+    )
+    from modelpop.application.printer_ports import (
+        PrinterGateway,
+        PrinterStatus,
+        Submission,
     )
 
 __all__ = ["Workspace", "WorkspaceState"]
@@ -113,6 +118,7 @@ class Workspace:
         ai_settings: AiSettings | None = None,
         gcode_verifier: GcodeVerifier | None = None,
         mesh_generator: MeshGenerator | None = None,
+        printer_gateway: PrinterGateway | None = None,
     ) -> None:
         """Wire the workspace to its ports.
 
@@ -129,6 +135,9 @@ class Workspace:
             ai_settings: default attempt and spend limits.
             gcode_verifier: reads the toolpath back after slicing.
             mesh_generator: turns a picture into a mesh.
+            printer_gateway: sends a finished job to the printer. Defaults
+                to one that describes the job and sends nothing, because a
+                print is the only irreversible thing this application does.
         """
         self._io = mesh_io
         self._ops = mesh_ops
@@ -138,6 +147,7 @@ class Workspace:
         self._ai_settings = ai_settings
         self._verifier = gcode_verifier
         self._mesh_generator = mesh_generator
+        self._gateway = printer_gateway
 
     @property
     def can_generate(self) -> bool:
@@ -441,6 +451,89 @@ class Workspace:
         if not sliced.ok:
             return sliced  # type: ignore[return-value]
         return success(self._with_slice(state, sliced.unwrap()))
+
+    # ---------------------------------------------------------------- sending
+
+    @property
+    def can_send_to_printer(self) -> bool:
+        """Whether a finished job could be sent anywhere."""
+        return self._gateway is not None and self._gateway.is_available()
+
+    def describe_printer_route(self) -> str:
+        """How a job would reach the printer, for the settings panel."""
+        if self._gateway is None:
+            return "No printer is set up."
+        return self._gateway.describe()
+
+    def send_to_printer(
+        self,
+        state: WorkspaceState,
+        connection: PrinterConnection,
+        *,
+        start_now: bool = False,
+        for_real: bool = False,
+        name: str = "",
+    ) -> Result[Submission]:
+        """Send the last sliced job to the printer.
+
+        The **sliced** job, not the model: what the printer needs is the file
+        the slicer produced, and re-slicing here would silently send something
+        other than the thing the user just looked at and approved. If there is
+        no slice, that is what is said, rather than quietly making one.
+
+        Two switches, both off by default, and both here rather than in the
+        gateway. ``for_real`` decides whether anything leaves this machine at
+        all; ``start_now`` decides whether the printer begins. Putting the
+        first one in the *adapter* was the first attempt and it was wrong: the
+        window's dry-run tick then only governed which dialog appeared, and an
+        untouched setting still uploaded. Refusing here means there is no
+        arrangement of gateways in which an unasked-for job reaches a printer.
+        """
+        if self._gateway is None:
+            return failure(
+                "No printer is set up",
+                "Add the printer's address and access code in Settings.",
+            )
+
+        report = state.last_slice
+        if report is None:
+            return failure("Nothing has been sliced yet", "Slice the model first.")
+
+        # A project file if there is one, because that is what carries the
+        # plate, the filament choice and the printer profile. G-code alone
+        # prints, but arrives on the printer with none of that attached.
+        payload = report.project_path or report.gcode_path
+        if payload is None:
+            return failure(
+                "The last slice produced no file to send",
+                "Slice it again and check the slicer's report.",
+            )
+
+        from modelpop.application.printer_ports import PrintJob, Submission
+
+        job = PrintJob(
+            file_path=payload,
+            connection=connection,
+            name=name or (state.source_path.stem if state.source_path else ""),
+            start_now=start_now,
+        )
+
+        problem = job.problem
+        if problem is not None:
+            return failure("That job cannot be sent", problem)
+
+        if not for_real:
+            return success(Submission(filename=job.filename, was_dry_run=True))
+        return self._gateway.send(job)
+
+    def printer_status(self, connection: PrinterConnection) -> Result[PrinterStatus]:
+        """Ask the printer what it is doing."""
+        if self._gateway is None:
+            return failure(
+                "No printer is set up",
+                "Add the printer's address and access code in Settings.",
+            )
+        return self._gateway.status(connection)
 
     def _with_slice(self, state: WorkspaceState, report: SliceReport) -> WorkspaceState:
         """Record a slice, and read its toolpath back.
