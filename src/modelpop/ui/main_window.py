@@ -25,10 +25,13 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
+from modelpop.ai import default_store
+from modelpop.application.ai_ports import AiSettings
 from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, WorkspaceState
 from modelpop.domain.readiness import Severity
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
 from modelpop.rendering.viewport import ViewportScene
+from modelpop.ui.dialogs import GenerateDialog, RunLogDialog, SettingsDialog
 
 __all__ = ["MainWindow"]
 
@@ -53,6 +56,8 @@ class MainWindow(QMainWindow):
         # The seam exists, so swapping in the threaded runner is a one-line change.
         self._view_model = WorkspaceViewModel(workspace)
         self._printer = workspace.printer
+        self._secrets = default_store()
+        self._ai_settings = AiSettings()
 
         self.setWindowTitle("ModelPop")
         self.resize(1400, 900)
@@ -84,6 +89,14 @@ class MainWindow(QMainWindow):
             "QListWidget { border: none; } QListWidget::item { padding: 6px 4px; }"
         )
         side.addWidget(self._findings, stretch=1)
+
+        self._generate_button = QPushButton("Generate a part...")
+        self._generate_button.setStyleSheet("font-weight: 600; padding: 8px;")
+        side.addWidget(self._generate_button)
+
+        self._how_button = QPushButton("How this part was made")
+        self._how_button.setVisible(False)
+        side.addWidget(self._how_button)
 
         self._repair_button = QPushButton("Repair")
         self._prepare_button = QPushButton("Place on bed")
@@ -125,6 +138,11 @@ class MainWindow(QMainWindow):
         file_menu.addAction(save_action)
         file_menu.addSeparator()
 
+        settings_action = QAction("Se&ttings...", self)
+        settings_action.triggered.connect(self._open_settings)
+        file_menu.addAction(settings_action)
+        file_menu.addSeparator()
+
         quit_action = QAction("&Quit", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
@@ -152,6 +170,8 @@ class MainWindow(QMainWindow):
         self._view_model.on_notification(self._on_notification)
         self._view_model.on_busy_changed(self._on_busy_changed)
 
+        self._generate_button.clicked.connect(self._generate)
+        self._how_button.clicked.connect(self._show_run_log)
         self._repair_button.clicked.connect(self._view_model.repair)
         self._prepare_button.clicked.connect(self._view_model.prepare_for_bed)
         self._simplify_button.clicked.connect(
@@ -176,6 +196,31 @@ class MainWindow(QMainWindow):
         )
         if path:
             self._view_model.save_as(Path(path))
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self._secrets, self._ai_settings, self)
+        if dialog.exec():
+            self._ai_settings = dialog.settings()
+            self.statusBar().showMessage("Settings saved.", 5000)
+            self._refresh_buttons()
+
+    def _generate(self) -> None:
+        if not self._view_model.can_generate:
+            QMessageBox.information(
+                self,
+                "ModelPop",
+                "Generating a part needs an Anthropic API key.\n\nAdd one in File > Settings.",
+            )
+            return
+        dialog = GenerateDialog(self)
+        if dialog.exec():
+            self._view_model.generate_part(dialog.request())
+
+    def _show_run_log(self) -> None:
+        run = self._view_model.state.last_generation
+        if run is None or run.best is None:
+            return
+        RunLogDialog(run.log(), run.best.script, self).show()
 
     def _slice(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Where should the G-code go?")
@@ -207,10 +252,17 @@ class MainWindow(QMainWindow):
                 item.setToolTip(f"{finding.rule}: {finding.message}")
                 self._findings.addItem(item)
 
+        self._how_button.setVisible(state.last_generation is not None)
+        self._refresh_buttons()
+
+    def _refresh_buttons(self) -> None:
+        """Enable only what the current state actually allows."""
+        state = self._view_model.state
         self._repair_button.setEnabled(self._view_model.can_repair)
         self._prepare_button.setEnabled(state.has_model)
         self._simplify_button.setEnabled(state.has_model)
         self._slice_button.setEnabled(self._view_model.can_slice)
+        self._generate_button.setEnabled(not self._view_model.is_busy)
 
     def _on_notification(self, notification: Notification) -> None:
         self.statusBar().showMessage(notification.message, 8000)

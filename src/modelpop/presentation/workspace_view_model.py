@@ -24,6 +24,7 @@ from modelpop.domain.result import Result
 from modelpop.domain.units import Length
 
 if TYPE_CHECKING:
+    from modelpop.application.cad_ports import DimensionTable
     from modelpop.domain.mesh import Mesh
 
 __all__ = ["Notification", "WorkspaceViewModel"]
@@ -118,6 +119,31 @@ class WorkspaceViewModel:
             and report is not None
             and any(f.fix_stage == "repair" for f in report.findings)
         )
+
+    @property
+    def can_generate(self) -> bool:
+        """Whether a part can be generated right now."""
+        return self._workspace.can_generate
+
+    def generate_part(self, request: str, table: DimensionTable | None = None) -> None:
+        """Write a parametric part from a description."""
+        self._run(
+            lambda: self._workspace.generate_part(request, table),
+            done="Generated",
+            failed="Could not generate the part",
+            describe_success=self._describe_generation,
+        )
+
+    @staticmethod
+    def _describe_generation(state: WorkspaceState) -> str:
+        """Report a generation run in the user's terms."""
+        run = state.last_generation
+        if run is None:
+            return "Generated"
+        attempts = len(run.attempts)
+        tries = "first try" if attempts == 1 else f"{attempts} attempts"
+        verdict = "as specified" if run.succeeded else "close, but not exact"
+        return f"Generated {verdict} in {tries}, about ${run.total_cost_usd:.2f}"
 
     @property
     def can_slice(self) -> bool:

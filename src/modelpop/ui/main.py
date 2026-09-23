@@ -11,7 +11,9 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from modelpop.ai import AnthropicProvider
 from modelpop.application.workspace import Workspace
+from modelpop.cad import Build123dKernel
 from modelpop.domain.printer import PrinterProfile
 from modelpop.mesh import TrimeshIO, TrimeshOps
 from modelpop.printing import BambuSlicer
@@ -23,15 +25,18 @@ __all__ = ["main"]
 def build_workspace() -> Workspace:
     """Wire the application together.
 
-    The slicer is optional: ModelPop is still useful for inspecting and
-    repairing models on a machine with no slicer installed, so a missing one
-    disables slicing rather than preventing start-up.
+    Every external dependency is optional at start-up. A missing slicer
+    disables slicing, a missing API key disables generation, and everything
+    else still works. Refusing to start because one thing is absent would be
+    a poor trade.
     """
     return Workspace(
         mesh_io=TrimeshIO(),
         mesh_ops=TrimeshOps(),
         slicer=BambuSlicer(),
         printer=PrinterProfile.p2s(),
+        cad_kernel=Build123dKernel(),
+        ai=AnthropicProvider(),
     )
 
 

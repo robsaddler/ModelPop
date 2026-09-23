@@ -22,7 +22,10 @@ from modelpop.domain.result import Result, failure, success
 from modelpop.domain.units import Length
 
 if TYPE_CHECKING:
+    from modelpop.application.ai_ports import AiSettings, ChatProvider
+    from modelpop.application.cad_ports import CadKernel, DimensionTable
     from modelpop.application.ports import MeshIO, MeshOps, Slicer, SliceReport
+    from modelpop.generation.cad_loop import CadGenerationRun
 
 __all__ = ["Workspace", "WorkspaceState"]
 
@@ -44,6 +47,9 @@ class WorkspaceState:
     source_path: Path | None = None
     readiness: ReadinessReport | None = None
     last_slice: SliceReport | None = None
+    last_generation: CadGenerationRun | None = None
+    """How the part was generated, when it was. Kept so the user can read the
+    script, see what was corrected, and know what the run cost."""
 
     @property
     def has_model(self) -> bool:
@@ -76,26 +82,48 @@ class Workspace:
     and reports expected failures as a ``Failure`` rather than raising.
     """
 
-    def __init__(
+    def __init__(  # one argument per port, which is the point
         self,
         mesh_io: MeshIO,
         mesh_ops: MeshOps,
         slicer: Slicer | None = None,
         printer: PrinterProfile | None = None,
+        cad_kernel: CadKernel | None = None,
+        ai: ChatProvider | None = None,
+        ai_settings: AiSettings | None = None,
     ) -> None:
         """Wire the workspace to its ports.
+
+        Every optional port degrades to a clear message rather than a crash:
+        without a slicer you can still inspect and repair, and without an AI
+        provider you can still do everything but generate.
 
         Args:
             mesh_io: reading and writing mesh files.
             mesh_ops: geometry operations.
-            slicer: optional; without one, slicing reports that it is unavailable
-                rather than failing at import time.
+            slicer: turns a model into G-code.
             printer: the target printer; a P2S by default.
+            cad_kernel: runs generated CAD scripts.
+            ai: the model that writes those scripts.
+            ai_settings: attempt and spend limits.
         """
         self._io = mesh_io
         self._ops = mesh_ops
         self._slicer = slicer
         self._printer = printer or PrinterProfile.p2s()
+        self._cad = cad_kernel
+        self._ai = ai
+        self._ai_settings = ai_settings
+
+    @property
+    def can_generate(self) -> bool:
+        """Whether both halves of the generation path are present."""
+        return (
+            self._cad is not None
+            and self._ai is not None
+            and self._ai.is_configured()
+            and self._cad.is_available()
+        )
 
     @property
     def printer(self) -> PrinterProfile:
@@ -181,6 +209,59 @@ class Workspace:
             return failure("Nothing to prepare", "no model is open")
         prepared = self._ops.normalise(state.mesh).dropped_to_bed()
         return success(self._with_mesh(state, prepared))
+
+    # --------------------------------------------------------------- generate
+
+    def generate_part(
+        self, request: str, table: DimensionTable | None = None
+    ) -> Result[WorkspaceState]:
+        """Write a parametric part from a description, and check it measures up.
+
+        Returns the best attempt even when none fully passed: a part that is
+        nearly right is something the user can edit, and nothing is not.
+        """
+        if self._cad is None:
+            return failure(
+                "The CAD kernel is unavailable",
+                "build123d could not be loaded. Reinstall the application's dependencies.",
+            )
+        if self._ai is None:
+            return failure(
+                "No AI provider configured",
+                "Add an API key in Settings before generating a part.",
+            )
+
+        # imported here rather than at module scope to avoid an import cycle
+        from modelpop.generation.cad_loop import generate_part as run_loop
+
+        outcome = run_loop(
+            request=request,
+            provider=self._ai,
+            kernel=self._cad,
+            mesh_ops=self._ops,
+            table=table,
+            printer=self._printer,
+            settings=self._ai_settings,
+        )
+        if not outcome.ok:
+            return outcome  # type: ignore[return-value]
+
+        run = outcome.unwrap()
+        if run.best is None or run.best.result is None:
+            return failure(
+                "Nothing usable was produced",
+                run.attempts[-1].error if run.attempts else "no attempt ran",
+            )
+
+        mesh = run.best.result.mesh
+        return success(
+            WorkspaceState(
+                mesh=mesh,
+                source_path=None,
+                readiness=self._assess(mesh),
+                last_generation=run,
+            )
+        )
 
     # ------------------------------------------------------------------ slice
 
