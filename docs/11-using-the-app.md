@@ -145,6 +145,21 @@ all useful rather than one where every position is a hair's breadth from the mid
 
 ---
 
+## Getting the view back
+
+**View → Look into the printer** (Home) puts the camera square on to the machine with the
+whole build volume in frame, as if standing in front of it looking in. It is the one to reach for
+after panning and zooming somewhere unhelpful.
+
+The other views → Isometric, Top, Front, Right (Ctrl+1 to Ctrl+4) → only *turn* the
+camera and leave it where it was, which is what you want when you are lining a part up and not what
+you want when you are lost.
+
+It frames the *printer*, not what is in it, so a part parked outside the build volume cannot drag
+the view out with it.
+
+---
+
 ## Moving it
 
 Two ways, and the buttons are the one to reach for first.

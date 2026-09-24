@@ -61,6 +61,10 @@ MEASURE_POINT_MM = 0.8
 # gold interior through itself and reads as a different material rather than
 # as "not the one you picked".
 UNSELECTED_COLOUR = "#55677A"
+
+# A little air around the build volume when the view is reset, so its edges are
+# not flush against the window.
+VIEW_MARGIN = 1.06
 # The colour of a cut surface. Warm against the model's blue, so the inside
 # of a sectioned part is unmistakably the inside.
 INTERIOR_COLOUR = "#C9A227"
@@ -373,6 +377,62 @@ class ViewportScene:
         action = views.get(name.lower())
         if action is not None:
             action()
+
+    def look_into_the_printer(self, name: str = "front") -> None:
+        """Point the camera at the whole build volume and frame it.
+
+        The named views only turn the camera; they leave it wherever panning
+        and zooming had put it, so "front" on a scene that has been dragged
+        off to one side is still off to one side. This is the one that puts
+        everything back: square on to the printer, the whole envelope in
+        frame, as if standing in front of the machine looking in.
+
+        Framed on the *printer* rather than on what is in it. A part parked
+        outside the build volume would otherwise drag the view out with it,
+        and where the build volume is is exactly what this is for.
+        """
+        self.set_view(name)
+        width = self._printer.build_width.millimetres
+        depth = self._printer.build_depth.millimetres
+        height = self._printer.build_height.millimetres
+        corners = np.array(
+            [
+                [x, y, z]
+                for x in (-width / 2, width / 2)
+                for y in (-depth / 2, depth / 2)
+                for z in (0.0, height)
+            ]
+        )
+        self._plotter.reset_camera(
+            bounds=(-width / 2, width / 2, -depth / 2, depth / 2, 0.0, height)
+        )
+        self._fill_the_view_with(corners)
+
+    def _fill_the_view_with(self, corners: NDArray[np.float64]) -> None:
+        """Zoom so the given box fills the window, seen from where we are.
+
+        ``reset_camera`` fits the bounding *sphere*, so a 256 mm cube seen
+        square on fills barely half the frame - its diagonal is 443 mm and that
+        is what gets fitted. Measuring the corners against the camera's own axes
+        fits what is actually visible instead.
+        """
+        camera = self._plotter.camera
+        forward = np.array(camera.focal_point) - np.array(camera.position)
+        forward = forward / np.linalg.norm(forward)
+        up = np.array(camera.up, dtype=np.float64)
+        up = up - np.dot(up, forward) * forward
+        up = up / np.linalg.norm(up)
+        right = np.cross(forward, up)
+
+        middle = corners.mean(axis=0)
+        relative = corners - middle
+        half_up = float(np.max(np.abs(relative @ up)))
+        half_across = float(np.max(np.abs(relative @ right)))
+
+        size = self._plotter.window_size
+        aspect = (size[0] / size[1]) if size and size[1] else 1.0
+        needed = max(half_up, half_across / aspect if aspect else half_across)
+        camera.parallel_scale = needed * VIEW_MARGIN
 
     def describe_renderer(self) -> str:
         """Which graphics hardware is drawing, in one line.

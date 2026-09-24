@@ -367,6 +367,16 @@ class MainWindow(QMainWindow):
         print_menu.addAction(self._printer_status_action)
 
         view_menu = self.menuBar().addMenu("&View")
+
+        # First, because it is the one people reach for when they have got
+        # lost: square on to the printer with the whole build volume in frame.
+        home_action = QAction("Look into the &printer", self)
+        home_action.setShortcut(QKeySequence("Home"))
+        home_action.setToolTip("Square on to the printer, whole build volume in frame")
+        home_action.triggered.connect(self._look_into_the_printer)
+        view_menu.addAction(home_action)
+        view_menu.addSeparator()
+
         for label, name, shortcut in (
             ("&Isometric", "iso", "Ctrl+1"),
             ("&Top", "top", "Ctrl+2"),
@@ -1123,6 +1133,12 @@ class MainWindow(QMainWindow):
         self._send_action.setEnabled(self._view_model.can_send_to_printer)
         self._detail_button.setVisible(self._view_model.can_rescue_detail)
         self._variants.show_history(self._view_model.history)
+
+    def _look_into_the_printer(self) -> None:
+        """Put the view back to square on to the machine, and redraw."""
+        self._scene.look_into_the_printer()
+        self._viewport.render()
+        self.statusBar().showMessage("Looking into the printer.", 4000)
 
     def _draw_scene(self, *, has_problems: bool = False, fallback: object = None) -> None:
         """Put the scene on screen, one actor per object.

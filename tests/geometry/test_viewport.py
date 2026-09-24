@@ -731,3 +731,94 @@ class TestTheProjection:
         near_the_front = span((0.0, -100.0, 10.0))
         near_the_back = span((0.0, 100.0, 10.0))
         assert near_the_back == pytest.approx(near_the_front, rel=1e-3)
+
+
+class TestLookingIntoThePrinter:
+    """One command that puts the view back where somebody can work.
+
+    The named views only turn the camera. After panning and zooming about,
+    "front" still leaves the scene off to one side at whatever magnification it
+    had - which is no use as a way of getting un-lost, and getting un-lost is
+    what it is wanted for.
+    """
+
+    def lost(self, plotter) -> ViewportScene:
+        """A scene whose camera has been thoroughly misplaced."""
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_mesh(unit_cube(40).dropped_to_bed())
+        plotter.camera.position = (900.0, -1200.0, 700.0)
+        plotter.camera.focal_point = (400.0, 400.0, -200.0)
+        plotter.camera.zoom(6.0)
+        return scene
+
+    def test_it_ends_up_square_on_to_the_machine(self, plotter):
+        scene = self.lost(plotter)
+        scene.look_into_the_printer()
+
+        position = np.array(plotter.camera.position)
+        focal = np.array(plotter.camera.focal_point)
+        looking = position - focal
+        # Straight down the Y axis, with Z up: standing in front, looking in.
+        assert looking[0] == pytest.approx(0.0, abs=1e-6)
+        assert looking[2] == pytest.approx(0.0, abs=1e-6)
+        assert looking[1] < 0
+        assert np.asarray(plotter.camera.up) == pytest.approx([0.0, 0.0, 1.0], abs=1e-6)
+
+    def test_it_centres_on_the_build_volume(self, plotter):
+        scene = self.lost(plotter)
+        scene.look_into_the_printer()
+
+        height = scene._printer.build_height.millimetres
+        assert np.asarray(plotter.camera.focal_point) == pytest.approx(
+            [0.0, 0.0, height / 2], abs=0.5
+        )
+
+    def test_the_whole_build_volume_is_in_frame(self, plotter):
+        """And with a little air, not flush against the window edge."""
+        scene = self.lost(plotter)
+        scene.look_into_the_printer()
+
+        half_height = scene._printer.build_height.millimetres / 2
+        scale = plotter.camera.parallel_scale
+        assert scale >= half_height, f"the volume is taller than the view ({scale:.0f})"
+        assert scale < half_height * 1.35, f"it is framed far looser than asked ({scale:.0f})"
+
+    def test_it_fills_the_frame_rather_than_fitting_a_sphere(self, plotter):
+        """VTK's own reset fits the bounding sphere, which is far too loose.
+
+        A 256 mm cube seen square on has a 443 mm diagonal, so fitting the
+        sphere leaves it filling barely half the window.
+        """
+        scene = self.lost(plotter)
+        scene.look_into_the_printer()
+        fitted = plotter.camera.parallel_scale
+
+        plotter.reset_camera(
+            bounds=(-128.0, 128.0, -128.0, 128.0, 0.0, 256.0),
+        )
+        sphere = plotter.camera.parallel_scale
+
+        assert fitted < sphere * 0.8, (
+            f"framed at {fitted:.0f}, barely tighter than the sphere fit {sphere:.0f}"
+        )
+
+    def test_a_part_parked_outside_the_volume_does_not_drag_the_view_out(self, plotter):
+        """Where the build volume is is exactly what this is for."""
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_mesh(unit_cube(20).dropped_to_bed())
+        scene.look_into_the_printer()
+        framed = plotter.camera.parallel_scale
+
+        far_away = unit_cube(20)
+        scene.show_mesh(Mesh(far_away.vertices + np.array([2000.0, 0.0, 0.0]), far_away.faces))
+        scene.look_into_the_printer()
+
+        assert plotter.camera.parallel_scale == pytest.approx(framed)
+
+    def test_it_can_be_asked_for_another_angle(self, plotter):
+        scene = self.lost(plotter)
+        scene.look_into_the_printer("top")
+
+        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
+        assert looking[2] > 0
+        assert looking[0] == pytest.approx(0.0, abs=1e-6)
