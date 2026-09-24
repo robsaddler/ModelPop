@@ -53,6 +53,8 @@ _SUPPRESSED_COLOUR = "#6B7280"
 # Undone steps are dimmer still: they are not part of the model at all, they
 # are only waiting to be put back.
 _UNDONE_COLOUR = "#4B5563"
+# The object the toolbar is pointed at, in the tree's headings.
+_SELECTED_COLOUR = "#6FA8DC"
 
 # Which way a row of copies runs. Tuples so the spacing multiplies straight
 # into an offset without a branch per direction.
@@ -572,14 +574,32 @@ class CadPanel(QWidget):
 
     def _show(self, state: ModelState) -> None:
         self._tree.clear()
-        for line in state.features:
-            item = QListWidgetItem(f"{line.index + 1}. {line.label}")
-            if line.by_the_assistant:
-                item.setToolTip("Asked for by the assistant")
-                item.setForeground(QColor(_ASSISTANT_COLOUR))
-            if line.suppressed or not line.understood:
-                item.setForeground(QColor(_SUPPRESSED_COLOUR))
-            self._tree.addItem(item)
+        grouped = state.features_by_object
+        # A heading per object once there is more than one. A flat list of every
+        # step in the scene is unreadable the moment there are two: "round the
+        # edges by 2 mm" means nothing when you cannot see which thing it
+        # rounded.
+        show_headings = len(grouped) > 1
+        selected = state.selected
+
+        for label, lines in grouped:
+            if show_headings:
+                heading = QListWidgetItem(label.upper())
+                heading.setFlags(Qt.ItemFlag.NoItemFlags)
+                heading.setForeground(
+                    QColor(_SELECTED_COLOUR if lines[0].body == selected else _SUPPRESSED_COLOUR)
+                )
+                self._tree.addItem(heading)
+
+            for position, line in enumerate(lines, start=1):
+                item = QListWidgetItem(f"  {position}. {line.label}")
+                item.setData(Qt.ItemDataRole.UserRole, line.body)
+                if line.by_the_assistant:
+                    item.setToolTip("Asked for by the assistant")
+                    item.setForeground(QColor(_ASSISTANT_COLOUR))
+                if line.suppressed or not line.understood:
+                    item.setForeground(QColor(_SUPPRESSED_COLOUR))
+                self._tree.addItem(item)
 
         self._show_what_was_undone(state)
 

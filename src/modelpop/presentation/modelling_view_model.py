@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from modelpop.application.modelling import ModellingSession, ModelState
+from modelpop.application.modelling import ModellingSession, ModelState, SceneBody
 from modelpop.domain.cad_commands import (
     Chamfer,
     CreateBox,
@@ -199,6 +199,71 @@ class ModellingViewModel:
         """Be told when a rebuild starts and stops."""
         self._busy_listeners.append(listener)
 
+    # ------------------------------------------------------------- the scene
+
+    @property
+    def bodies(self) -> tuple[SceneBody, ...]:
+        """Every object on the plate."""
+        return self.state.bodies
+
+    @property
+    def selected(self) -> str:
+        """Which object the toolbar and the handles act on."""
+        return self._session.selected
+
+    @property
+    def selected_body(self) -> SceneBody | None:
+        """The object being worked on, if there is one."""
+        return self.state.body(self.selected)
+
+    def select(self, body: str) -> None:
+        """Work on a different object.
+
+        Not a rebuild and not undoable: choosing what to look at is not a
+        change to the model. It announces, because the whole interface follows
+        the selection.
+        """
+        if body == self.selected:
+            return
+        result = self._session.select(body)
+        if result.ok:
+            self._announce_state()
+
+    def delete_selected(self) -> None:
+        """Remove the selected object and everything that shaped it."""
+        body = self.selected
+        if not body:
+            self._announce(Outcome("Nothing is selected.", refused=True))
+            return
+        label = self.state.document.label_for(body)
+        self._run(f"Delete {label}", lambda: self._session.delete(body))
+
+    def rename_selected(self, label: str) -> None:
+        """Call the selected object something else."""
+        body = self.selected
+        if not body:
+            self._announce(Outcome("Nothing is selected.", refused=True))
+            return
+        self._run(f"Rename to {label}", lambda: self._session.rename(body, label))
+
+    def duplicate_selected(self) -> None:
+        """Copy the selected object, offset so the copy is visible.
+
+        The copy is a new object built from the same features, which is what
+        makes it independent of the original rather than a second reference to
+        it.
+        """
+        body = self.selected
+        if not body:
+            self._announce(Outcome("Nothing is selected.", refused=True))
+            return
+        document = self.state.document
+        label = document.label_for(body)
+        self._run(
+            f"Copy {label}",
+            lambda: self._session.duplicate(body, self._session.start_a_new_body()),
+        )
+
     # ----------------------------------------------------------- the toolbar
 
     def add_box(
@@ -210,8 +275,8 @@ class ModellingViewModel:
         *,
         cut: bool = False,
     ) -> None:
-        """Add a rectangular block, or cut a pocket with one."""
-        self._apply(CreateBox(width, depth, height, *at, cut=cut))
+        """Add a rectangular block, or cut a pocket into the selected object."""
+        self._apply(CreateBox(width, depth, height, *at, cut=cut), body=self._for_a_shape(cut))
 
     def add_cylinder(
         self,
@@ -221,8 +286,8 @@ class ModellingViewModel:
         *,
         cut: bool = False,
     ) -> None:
-        """Add a cylinder, or drill a hole with one."""
-        self._apply(CreateCylinder(radius, height, *at, cut=cut))
+        """Add a cylinder, or drill a hole through the selected object."""
+        self._apply(CreateCylinder(radius, height, *at, cut=cut), body=self._for_a_shape(cut))
 
     def add_sphere(
         self,
@@ -231,8 +296,8 @@ class ModellingViewModel:
         *,
         cut: bool = False,
     ) -> None:
-        """Add a sphere, or scoop one out."""
-        self._apply(CreateSphere(radius, *at, cut=cut))
+        """Add a sphere, or scoop one out of the selected object."""
+        self._apply(CreateSphere(radius, *at, cut=cut), body=self._for_a_shape(cut))
 
     def drill(self, diameter: float, depth: float, at: tuple[float, float] = (0.0, 0.0)) -> None:
         """Drill a hole straight through.
@@ -566,8 +631,22 @@ class ModellingViewModel:
 
     # ------------------------------------------------------------- internal
 
-    def _apply(self, command: Command, origin: Origin = Origin.USER) -> None:
-        self._run(command.describe(), lambda: self._session.apply(command, origin))
+    def _for_a_shape(self, cut: bool) -> str | None:
+        """Which object a new shape belongs to.
+
+        A cut takes material out of the thing you have selected, so it joins
+        that object. A shape that adds material is a *new* object - that is
+        what a maker means by adding a cube to the scene, and unioning it into
+        whatever happened to be selected is what made two shapes inseparable.
+        """
+        if cut:
+            return None  # the selected object
+        return self._session.start_a_new_body()
+
+    def _apply(
+        self, command: Command, origin: Origin = Origin.USER, body: str | None = None
+    ) -> None:
+        self._run(command.describe(), lambda: self._session.apply(command, origin, body))
 
     def _run(self, label: str, work: Callable[[], Result[ModelState]]) -> None:
         """Run a rebuild off the interface thread and report what happened."""

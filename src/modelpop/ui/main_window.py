@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QStatusBar,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from modelpop.application.discovery_service import Discovery
     from modelpop.application.repository_ports import Download
 
+from modelpop.domain.placement import settle_onto_bed
 from modelpop.presentation.dragging import movement_in
 from modelpop.presentation.measuring import MeasuringTool
 from modelpop.presentation.sectioning import SectionTool
@@ -108,6 +110,7 @@ class _WindowSignals(QObject):
     state_changed = Signal(object)
     notified = Signal(object)
     cad_outcome = Signal(object)
+    model_changed = Signal(object)
     busy_changed = Signal(bool)
 
 
@@ -186,7 +189,11 @@ class MainWindow(QMainWindow):
 
         self._build_layout()
         self._build_menu()
+        self._build_scene_menu()
         self._connect()
+        # Clicks in the viewport select objects, so this is on from the start
+        # rather than only while the measuring tool is.
+        self._viewport.interactor.installEventFilter(self)
         self._recall_printer()
 
     def _recall_printer(self) -> None:
@@ -410,12 +417,13 @@ class MainWindow(QMainWindow):
         Stealing the drag as well would make the part unrotatable, which is the
         one thing somebody measuring it most needs to do.
         """
+        # The filter stays installed either way: clicks in the viewport also
+        # pick objects up, which has to work whether or not anything is being
+        # measured.
         if on:
             self._measuring.turn_on()
-            self._viewport.interactor.installEventFilter(self)
         else:
             self._measuring.turn_off()
-            self._viewport.interactor.removeEventFilter(self)
             self._scene.clear_measurement()
             self._viewport.render()
         self.statusBar().showMessage(self._measuring.describe())
@@ -561,25 +569,144 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self._section.describe())
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
-        """Take clicks in the viewport as measurement points.
+        """Turn clicks in the viewport into selections, or measurement points.
 
         A *click*, not a drag: the mouse has to come back up within a few
-        pixels of where it went down, or the user was orbiting the model and
-        meant nothing by it. Never consumes the event, so VTK still gets it.
+        pixels of where it went down, or the user was orbiting the scene and
+        meant nothing by it. Never consumes the event, so VTK still gets it and
+        orbiting keeps working.
+
+        Left picks up an object. Right picks it up and asks what to do with it,
+        which is how anybody who has used a 3D tool expects to work - reaching
+        for a menu item to switch on a gizmo is not.
         """
-        if not self._measuring.is_on or watched is not self._viewport.interactor:
+        if watched is not self._viewport.interactor or not isinstance(event, QMouseEvent):
             return super().eventFilter(watched, event)
 
-        if isinstance(event, QMouseEvent):
-            if event.type() == QEvent.Type.MouseButtonPress:
-                self._pressed_at = event.position().toPoint()
-            elif event.type() == QEvent.Type.MouseButtonRelease and self._pressed_at is not None:
-                moved = (event.position().toPoint() - self._pressed_at).manhattanLength()
-                self._pressed_at = None
-                if moved <= CLICK_SLOP_PIXELS:
-                    self._measure_at(event.position().x(), event.position().y())
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self._pressed_at = event.position().toPoint()
+            return super().eventFilter(watched, event)
+
+        if event.type() == QEvent.Type.MouseButtonRelease and self._pressed_at is not None:
+            moved = (event.position().toPoint() - self._pressed_at).manhattanLength()
+            self._pressed_at = None
+            if moved > CLICK_SLOP_PIXELS:
+                return super().eventFilter(watched, event)
+
+            x, y = event.position().x(), event.position().y()
+            if self._measuring.is_on:
+                self._measure_at(x, y)
+            elif event.button() == Qt.MouseButton.RightButton:
+                self._offer_the_scene_menu(x, y, event.globalPosition().toPoint())
+            elif event.button() == Qt.MouseButton.LeftButton:
+                self._select_at(x, y)
 
         return super().eventFilter(watched, event)
+
+    def _build_scene_menu(self) -> None:
+        """The menu a right-click in the viewport opens.
+
+        Everything here acts on the object that was clicked. Reaching for a
+        menu bar to switch on a gizmo is not how anybody works in a 3D tool -
+        you point at the thing and say what you want.
+        """
+        self._scene_menu = QMenu(self)
+
+        self._move_here_action = self._scene_menu.addAction("&Move and turn it...")
+        self._move_here_action.triggered.connect(self._open_place_panel)
+
+        self._handles_action = self._scene_menu.addAction("Put &handles on it")
+        self._handles_action.triggered.connect(lambda: self._drag_action.setChecked(True))
+
+        self._drop_action = self._scene_menu.addAction("&Drop it on the bed")
+        self._drop_action.triggered.connect(self._drop_selected)
+
+        self._scene_menu.addSeparator()
+
+        self._duplicate_action = self._scene_menu.addAction("Du&plicate it")
+        self._duplicate_action.triggered.connect(self._modelling.duplicate_selected)
+
+        self._rename_action = self._scene_menu.addAction("Re&name it...")
+        self._rename_action.triggered.connect(self._rename_selected)
+
+        self._delete_action = self._scene_menu.addAction("De&lete it")
+        self._delete_action.setShortcut(QKeySequence.StandardKey.Delete)
+        self._delete_action.triggered.connect(self._delete_selected)
+        self.addAction(self._delete_action)
+
+    def _refresh_scene_menu(self) -> None:
+        """Offer only what there is something to do it to."""
+        if not hasattr(self, "_scene_menu"):
+            return
+        something = bool(self._modelling.selected_body)
+        for action in (
+            self._move_here_action,
+            self._handles_action,
+            self._drop_action,
+            self._duplicate_action,
+            self._rename_action,
+            self._delete_action,
+        ):
+            action.setEnabled(something)
+
+    def _drop_selected(self) -> None:
+        """Settle the selected object onto the plate."""
+        body = self._modelling.selected_body
+        if body is None:
+            return
+        move = settle_onto_bed(body.bounds)
+        if not move.dz:
+            self.statusBar().showMessage("It is already on the bed.", 5000)
+            return
+        self._modelling.move(move.dx, move.dy, move.dz)
+
+    def _rename_selected(self) -> None:
+        body = self._modelling.selected_body
+        if body is None:
+            return
+        name, said_yes = QInputDialog.getText(self, "ModelPop", "Call it:", text=body.label)
+        if said_yes and name.strip():
+            self._modelling.rename_selected(name)
+
+    def _delete_selected(self) -> None:
+        body = self._modelling.selected_body
+        if body is None:
+            return
+        self._modelling.delete_selected()
+
+    # ----------------------------------------------------------- the objects
+
+    def _body_at(self, x: float, y: float) -> str | None:
+        """Which object is under a point in the viewport."""
+        # Qt counts rows from the top of the widget, VTK from the bottom.
+        height = self._viewport.interactor.height()
+        ratio = self._device_ratio()
+        return self._scene.body_at(x * ratio, (height - y) * ratio)
+
+    def _device_ratio(self) -> float:
+        """How many device pixels the render window puts in one Qt pixel.
+
+        This display scales at 150%, and VTK speaks device pixels while Qt
+        mouse events are logical ones. Getting it wrong puts every click
+        hundreds of pixels from where it was aimed.
+        """
+        window = self._viewport.render_window
+        logical = self._viewport.interactor.width()
+        if window is None or not logical:
+            return 1.0
+        wide = window.GetSize()[0]
+        return wide / logical if wide else 1.0
+
+    def _select_at(self, x: float, y: float) -> None:
+        """Pick up whatever was clicked, or put everything down."""
+        self._modelling.select(self._body_at(x, y) or "")
+
+    def _offer_the_scene_menu(self, x: float, y: float, at: QPoint) -> None:
+        """Select what was right-clicked and ask what to do with it."""
+        body = self._body_at(x, y)
+        if body:
+            self._modelling.select(body)
+        self._scene_menu.exec(at)
 
     def _measure_at(self, x: float, y: float) -> None:
         """Turn one click into a measurement point, if it hit the model."""
@@ -604,11 +731,13 @@ class MainWindow(QMainWindow):
         # _WindowSignals. Qt queues these onto the interface thread because
         # that is where this object lives.
         self._signals.cad_outcome.connect(self._on_cad_outcome)
+        self._signals.model_changed.connect(self._on_model_changed)
         self._signals.state_changed.connect(self._on_state_changed)
         self._signals.notified.connect(self._on_notification)
         self._signals.busy_changed.connect(self._on_busy_changed)
 
         self._modelling.on_outcome(self._signals.cad_outcome.emit)
+        self._modelling.on_state(self._signals.model_changed.emit)
         self._view_model.on_state_changed(self._signals.state_changed.emit)
         self._view_model.on_notification(self._signals.notified.emit)
         self._view_model.on_busy_changed(self._signals.busy_changed.emit)
@@ -939,7 +1068,7 @@ class MainWindow(QMainWindow):
     def _on_state_changed(self, state: WorkspaceState) -> None:
         report = state.readiness
         has_problems = report is not None and not report.is_printable
-        self._scene.show_mesh(state.mesh, has_problems=has_problems)
+        self._draw_scene(has_problems=has_problems, fallback=state.mesh)
         self._scene.frame_model()
 
         # A new model is a new range for the cut, and a new actor with no
@@ -994,6 +1123,40 @@ class MainWindow(QMainWindow):
         self._send_action.setEnabled(self._view_model.can_send_to_printer)
         self._detail_button.setVisible(self._view_model.can_rescue_detail)
         self._variants.show_history(self._view_model.history)
+
+    def _draw_scene(self, *, has_problems: bool = False, fallback: object = None) -> None:
+        """Put the scene on screen, one actor per object.
+
+        A model that came from the CAD tools is a scene of separate objects and
+        is drawn as one; a mesh that was opened or generated is a single thing
+        with no feature tree behind it, and is drawn as one actor as before.
+        """
+        bodies = self._modelling.bodies
+        if bodies:
+            self._scene.show_bodies(
+                [(body.id, body.mesh) for body in bodies],
+                self._modelling.selected,
+                has_problems=has_problems,
+            )
+            return
+        self._scene.show_mesh(fallback, has_problems=has_problems)  # type: ignore[arg-type]
+
+    def _on_model_changed(self, _state: object) -> None:
+        """Redraw when the scene, or which object is selected, changes.
+
+        Selection changes nothing about the geometry, so the workspace never
+        hears about it - but the viewport has to, or the thing the toolbar is
+        pointed at is invisible.
+        """
+        report = self._view_model.state.readiness
+        self._draw_scene(
+            has_problems=report is not None and not report.is_printable,
+            fallback=self._view_model.state.mesh,
+        )
+        if self._drag_action.isChecked():
+            self._scene.start_dragging(self._dragged, self._dragging)
+        self._viewport.render()
+        self._refresh_scene_menu()
 
     def _on_cad_outcome(self, outcome: Outcome) -> None:
         """Report what a CAD command did.

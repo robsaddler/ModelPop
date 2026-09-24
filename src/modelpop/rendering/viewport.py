@@ -55,6 +55,12 @@ MEASURE_COLOUR = "#F2C14E"
 # Big enough to see against a model, small enough not to hide the feature
 # being measured. In millimetres, because everything here is.
 MEASURE_POINT_MM = 0.8
+
+# What an object that is not selected is drawn in: the same hue, drained.
+# Colour rather than transparency, because a translucent part shows its own
+# gold interior through itself and reads as a different material rather than
+# as "not the one you picked".
+UNSELECTED_COLOUR = "#55677A"
 # The colour of a cut surface. Warm against the model's blue, so the inside
 # of a sectioned part is unmistakably the inside.
 INTERIOR_COLOUR = "#C9A227"
@@ -136,6 +142,11 @@ class ViewportScene:
         self._locator: Any = None
         self._measure_actors: list[Any] = []
         self._drag_widget: Any = None
+        # One actor per object in the scene, by body id. A scene drawn as a
+        # single mesh cannot be clicked on: "which of these did I point at"
+        # has no answer.
+        self._body_actors: dict[str, Any] = {}
+        self._selected_body = ""
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._use_parallel_projection()
@@ -246,6 +257,87 @@ class ViewportScene:
             with contextlib.suppress(AttributeError, RuntimeError, ValueError):
                 self._drag_widget.attach(self._model_actor, self._polydata.bounds)
 
+    def show_bodies(
+        self,
+        bodies: Sequence[tuple[str, Mesh]],
+        selected: str = "",
+        *,
+        has_problems: bool = False,
+    ) -> None:
+        """Draw every object in the scene, one actor each.
+
+        One actor per object is what makes a scene clickable. Drawn as a single
+        mesh they are one thing, and "which of these did I just point at" has
+        no answer - which is why two shapes could not be told apart, let alone
+        moved apart.
+
+        The selected object is drawn brighter and the rest are muted, so the
+        thing the toolbar is about to act on is never in doubt.
+        """
+        if not bodies:
+            self.show_mesh(None)
+            return
+
+        self.clear_measurement()
+        self._remove_model()
+        for gone in set(self._body_actors) - {body for body, _ in bodies}:
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                self._plotter.remove_actor(self._body_actors[gone], render=False)
+            del self._body_actors[gone]
+
+        for body, mesh in bodies:
+            in_hand = body == selected or not selected
+            if has_problems:
+                colour = PROBLEM_COLOUR if in_hand else UNSELECTED_COLOUR
+            else:
+                colour = MODEL_COLOUR if in_hand else UNSELECTED_COLOUR
+            actor = self._plotter.add_mesh(
+                to_polydata(mesh),
+                color=colour,
+                smooth_shading=True,
+                name=f"body-{body}",
+                show_edges=False,
+            )
+            self._show_the_inside(actor)
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                actor.user_matrix = np.eye(4)
+            self._body_actors[body] = actor
+
+        # The selected object is what everything else in the viewport works
+        # on: the handles bolt to it, and a section cuts it.
+        self._selected_body = selected
+        self._model_actor = self._body_actors.get(selected) or next(
+            iter(self._body_actors.values())
+        )
+        self._polydata = to_polydata(
+            dict(bodies)[selected] if selected in dict(bodies) else bodies[0][1]
+        )
+        self._locator = None
+
+        if self._drag_widget is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                self._drag_widget.attach(self._model_actor, self._polydata.bounds)
+
+    def body_at(self, x: float, y: float) -> str | None:
+        """Which object is under a point on screen, if any.
+
+        This is what makes clicking to select possible, and it asks VTK's own
+        picker rather than reimplementing the projection - so the answer agrees
+        with what the user can see.
+        """
+        from vtkmodules.vtkRenderingCore import vtkPropPicker
+
+        picker = vtkPropPicker()
+        picker.Pick(float(x), float(y), 0.0, self._plotter.renderer)
+        # No explicit "did it hit anything" check: a miss simply matches none
+        # of the actors below, and VTK's own typing says the getter is never
+        # None even when nothing was picked.
+        picked = picker.GetActor()
+        for body, actor in self._body_actors.items():
+            if actor is picked:
+                return body
+        return None
+
     def clear_model(self) -> None:
         """Remove the model, leaving the build volume in place."""
         self.clear_measurement()
@@ -255,7 +347,11 @@ class ViewportScene:
         self._remove_model()
 
     def _remove_model(self) -> None:
-        """Take the model's actor out, leaving everything else alone."""
+        """Take the model's actors out, leaving everything else alone."""
+        for actor in self._body_actors.values():
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                self._plotter.remove_actor(actor, render=False)
+        self._body_actors.clear()
         if self._model_actor is not None:
             self._plotter.remove_actor(self._model_actor, render=False)
         self._model_actor = None

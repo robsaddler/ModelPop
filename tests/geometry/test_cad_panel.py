@@ -30,7 +30,8 @@ def panel() -> tuple[CadPanel, ModellingViewModel]:
 
 
 def rows(cad: CadPanel) -> list[str]:
-    return [cad._tree.item(index).text() for index in range(cad._tree.count())]
+    """The tree's rows, with the indent that groups them by object stripped."""
+    return [cad._tree.item(index).text().strip() for index in range(cad._tree.count())]
 
 
 class TestTheTree:

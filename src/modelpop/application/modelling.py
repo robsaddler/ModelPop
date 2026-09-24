@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modelpop.application.cad_ports import Part
-from modelpop.domain.cad_commands import command_from
+from modelpop.domain.cad_commands import Move, command_from
 from modelpop.domain.commands import FIRST_BODY, CommandBus, Document, DocumentHistory, Origin
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.result import Result, failure, success
@@ -77,6 +77,9 @@ class FeatureLine:
     index: int
     label: str
     origin: Origin
+    body: str = ""
+    """Which object this step shapes, so the tree can be grouped by object."""
+
     suppressed: bool = False
     understood: bool = True
     """False for a feature saved by a newer build. Shown, greyed, not silently lost."""
@@ -89,6 +92,11 @@ class FeatureLine:
         action would select on.
         """
         return self.origin is Origin.ASSISTANT
+
+
+# How far a copy is offset from the thing it was copied from. Far enough to
+# see it is a second object, close enough that it is obviously the same one.
+DUPLICATE_OFFSET_MM = 15.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +169,22 @@ class ModelState:
         """
         return tuple(_line_for(index, f) for index, f in enumerate(self.document.features))
 
+    @property
+    def features_by_object(self) -> tuple[tuple[str, tuple[FeatureLine, ...]], ...]:
+        """The tree grouped by the object each step shapes.
+
+        A flat list of every step in the scene is unreadable the moment there
+        is more than one object: "round the edges by 2 mm" means nothing when
+        you cannot see which thing it rounded.
+        """
+        lines = self.features
+        grouped: list[tuple[str, tuple[FeatureLine, ...]]] = []
+        for body in self.document.body_ids:
+            belonging = tuple(line for line in lines if line.body == body)
+            if belonging:
+                grouped.append((self.document.label_for(body), belonging))
+        return tuple(grouped)
+
     def describe(self) -> str:
         """A line for the status bar."""
         if self.is_empty:
@@ -183,6 +207,7 @@ def _line_for(index: int, feature: Feature) -> FeatureLine:
         index=index,
         label=command.describe() if command else f"{feature.name} (not supported here)",
         origin=feature.origin,
+        body=feature.body,
         suppressed=feature.suppressed,
         understood=command is not None,
     )
@@ -220,7 +245,8 @@ class ModellingSession:
         # Which object the toolbar acts on. A maker adds a shape and expects
         # the next thing they do to happen to *that* shape.
         self._selected = ""
-        self._next_body = 1
+        # Incremented before use, so the first object is body-1.
+        self._next_body = 0
 
     @property
     def state(self) -> ModelState:
@@ -279,6 +305,25 @@ class ModellingSession:
         self._bus.set_document(self._bus.document.without_body(body), f"Delete {label}")
         if self._selected == body:
             self._selected = ""
+        return self._rebuild()
+
+    def duplicate(self, body: str, into: str) -> Result[ModelState]:
+        """Copy an object, offset a little so the copy can be seen.
+
+        Built from the same features rather than from the same geometry, which
+        is what makes the copy a real object in its own right: it can be
+        edited, undone and moved without touching the original.
+        """
+        document = self._bus.document
+        if body not in document.body_ids:
+            return failure("There is no such object", body)
+
+        label = document.label_for(body)
+        copied = tuple(replace(f, body=into) for f in document.features_for(body))
+        moved = Move(dx=DUPLICATE_OFFSET_MM, dy=DUPLICATE_OFFSET_MM).to_feature(Origin.USER, into)
+        wider = replace(document, features=(*document.features, *copied, moved))
+        self._bus.set_document(wider.named(into, f"{label} copy"), f"Copy {label}")
+        self._selected = into
         return self._rebuild()
 
     def rename(self, body: str, label: str) -> Result[ModelState]:
