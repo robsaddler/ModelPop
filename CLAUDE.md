@@ -162,7 +162,18 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    events must skip unless a real platform is in use: `QT_QPA_PLATFORM=windows pytest -m renders`.
    Driving synthetic input at a real window also prints `Windows fatal exception: code 0x8001010d`
    (`RPC_E_CANTCALLOUT_ININPUTSYNCCALL`) - noise, not a crash.
-15. **`pytest -m renders` exits 127 after every test passes.** VTK teardown takes the process down
+15. **Checking that every import resolves proves nothing about the dependencies.**
+   `trimesh.voxel.marching_cubes` reaches for **scikit-image** at the moment the last-resort
+   repair runs. Nothing in ModelPop imports `skimage`, nothing declared it, every import in the
+   source resolved - and repairing a model failed in front of the user with
+   `No module named 'skimage'`. `tools/check_dependencies.py` and
+   `tests/geometry/test_every_capability.py` *run* each capability instead of importing it.
+16. **Meshes must be welded on load.** STL stores three independent vertices per triangle and
+   shares nothing, so without `merge_vertices()` a sound model reads as rubble: a real 290,000
+   triangle model came back as 290,000 separate pieces with 871,000 holes. Welding is lossless -
+   it joins points already in the same place - and on that model took it from 1,738 pieces to 1.
+   The CAD kernel's STL reader already did this; `TrimeshIO.load` did not.
+17. **`pytest -m renders` exits 127 after every test passes.** VTK teardown takes the process down
    once the run is over. Confirmed pre-existing and independent of any one test file, so judge that
    run by its reported results, not its exit code.
 
