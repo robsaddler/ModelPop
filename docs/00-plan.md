@@ -51,7 +51,7 @@ Phase 3  Generate a mesh   ── DONE  a picture into a mesh on the local GPU (
 Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-plate
 
 Phase 5  Edit it properly   ── DONE  tree, profiles, patterns, sweep, loft, section, drag handles
-Phase 7  Photos → replica   ─ scale from a reference in shot DONE; multi-photo reconstruction to come
+Phase 7  Photos → replica   ── DONE  scale from a reference, and multi-photo reconstruction
 Phase 8  Make it delightful ─ variants to come (detail rescue, colour splitting, printer
                              comms, print monitoring DONE)
 ```
@@ -171,7 +171,15 @@ meets a pair of calipers. Automatic detection can arrive later behind the same `
 The app now distinguishes a **measured** size from a **chosen** one in the note on the model, and
 never lets one read like the other.
 
-**Still to come:** multi-photo reconstruction — the part that needs COLMAP and OpenMVS.
+**And multi-photo reconstruction** (ADR-0012), the part that needed COLMAP and OpenMVS. Seven
+subprocesses across two programs: 24 photographs to a 640,000-triangle surface in about 90 seconds.
+Written against measured behaviour rather than documentation, because the mapper has two failure
+modes and only one of them is loud - photographs that will not connect exit **zero** having written
+nothing at all, so the stage is judged by its output.
+
+The distinction the whole phase turns on is kept in the wording: a single picture is *generated*
+from, several are *measured* from. Separate ports, separate menu entries, separate provenance -
+because six months later, whether a shape was measured or invented is the only question.
 **Done when:** photos of an object against a reference produce a replica that measures correctly
 with calipers.
 
@@ -232,6 +240,8 @@ domain skills as you go so the knowledge compounds instead of evaporating betwee
 | `research/spike-bambu-cli.md` | Verified slicer facts, measured on this machine |
 | `research/spike-viewport-gpu.md` | Which GPU the viewport gets, and why it does not matter |
 | `research/spike-detail-rescue.md` | Texture into geometry: exact, fast, and limited by mesh density |
+| `research/spike-photogrammetry.md` | COLMAP + OpenMVS end to end, and where the time goes |
+| `12-photogrammetry.md` | Taking the photographs, and what comes back |
 | `11-using-the-app.md` | How to use it, task by task |
 | `research/spike-s7-python-stack.md` | **Why the stack is Python** — measured, not argued |
 | `research/findings.md` | The 2026 landscape digest with citations |

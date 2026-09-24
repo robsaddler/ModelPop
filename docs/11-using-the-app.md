@@ -22,18 +22,19 @@ feature tree showing how the part was built, in order.
 
 ---
 
-## Five ways to get a model
+## Six ways to get a model
 
 | Start with | How |
 |---|---|
 | A file you have | **File → Open** — STL, 3MF, OBJ, STEP |
 | Somebody else's design | **File → Find a model to start from** (Ctrl+F) |
 | A photograph or a drawing | **File → Make one from a picture** |
+| Several photographs of a real object | **File → Measure one from several photographs** |
 | A description | Type it in the **CAD tools** tab and press **Make it** |
 | Nothing at all | **Box**, **Cylinder**, **Sphere** or **Profile...** |
 
 The last two give you a **feature tree**: a parametric model where every step is recorded, every
-step undoes, and changing an early step rebuilds everything after it. The first three give you a
+step undoes, and changing an early step rebuilds everything after it. The first four give you a
 **mesh**: printable, repairable, resizable, but not parametric — you cannot go back and change its
 width, because nothing recorded a width.
 
@@ -194,6 +195,40 @@ comes out identical, which reads as the feature being broken.
 
 ---
 
+## Measuring one from several photographs
+
+**File → Measure one from several photographs** is the other photo route, and it is a different
+thing from the one above. That one shows a generative model a picture and it *invents* a plausible
+object, back included. This one works out where the camera was for each photograph and **measures**
+the shape they agree on.
+
+Both give you a mesh. Only one of them is evidence, which is why they are separate menu entries and
+why the note on the finished model says which it was.
+
+It needs COLMAP and OpenMVS installed — see `docs/12-photogrammetry.md`.
+
+The capture is the part that decides whether it works:
+
+- Walk right round the subject, a photograph every 10-15 degrees, each overlapping its neighbours
+  by well over half. Twenty-odd is where it starts being worth the wait.
+- Move yourself, not the subject. A turntable moves the background instead, which is the opposite
+  of what the solver needs.
+- Plain, shiny and transparent things do not reconstruct at all. No texture to match means nothing
+  to match.
+
+Start on **Draft**: it is quick, and it answers the only question that matters on a first run, which
+is whether the photographs were good enough.
+
+What comes back has holes where you did not point the camera — **Repair** closes them — and is
+usually a third of a million triangles, which **Simplify** fixes. Like a generated model, it has no
+scale of its own, so it comes out the size you asked for and says so. Put a ruler in the shot and
+use **Measure it from the photo** if the real size matters.
+
+If it says the photographs could not be pieced together, that is the capture rather than the
+software. More photographs, moving less between each.
+
+---
+
 ## Finding something to start from
 
 **File → Find a model to start from** searches MyMiniFactory and Thingiverse and ranks what comes
@@ -265,8 +300,6 @@ Save the project if you might want to change it. Export the mesh when you are do
 
 - No sketch constraints. The profile dialog is the useful nine tenths of a sketcher and is honest
   about being it.
-- No multi-photo reconstruction — one picture makes one model; photogrammetry from several needs
-  COLMAP and OpenMVS, and is Phase 7's remaining half.
 - Text cannot be turned straight into a mesh. Describe a part instead, or make a picture first.
 - The viewport draws on integrated graphics on a laptop with a discrete card, and nothing in here
   can change that — only your graphics driver's control panel can. It is fast enough that it does

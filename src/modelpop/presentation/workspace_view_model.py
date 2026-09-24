@@ -28,7 +28,14 @@ if TYPE_CHECKING:
     from modelpop.application.cad_ports import DimensionTable
     from modelpop.application.mesh_generation_ports import GenerationOptions, Progress
     from modelpop.application.printer_ports import PrinterStatus
+    from modelpop.application.reconstruction_ports import (
+        Progress as ReconstructionProgress,
+    )
+    from modelpop.application.reconstruction_ports import (
+        ReconstructionOptions,
+    )
     from modelpop.domain.mesh import Mesh
+    from modelpop.domain.photo_set import PhotoSet
 
 __all__ = ["Notification", "WorkspaceViewModel"]
 
@@ -243,6 +250,33 @@ class WorkspaceViewModel:
             lambda: self._workspace.generate_from_image(image, options, on_progress),
             done=f"Made a model from {image.name}",
             failed="Could not make a model from that picture",
+        )
+
+    @property
+    def can_reconstruct(self) -> bool:
+        """Whether several photographs could be turned into a model right now."""
+        return self._workspace.can_reconstruct and not self._busy
+
+    def describe_reconstruction(self) -> str:
+        """The state of the reconstruction tools, for Settings."""
+        return self._workspace.describe_reconstruction()
+
+    def reconstruct_from_photos(
+        self,
+        photos: PhotoSet,
+        options: ReconstructionOptions | None = None,
+        on_progress: ReconstructionProgress | None = None,
+    ) -> None:
+        """Measure a model from several photographs.
+
+        Through the runner like every other long operation, and more so: this
+        one runs for minutes with the card held, so a frozen window would not
+        merely look like a crash, it would look like one for a long time.
+        """
+        self._run(
+            lambda: self._workspace.reconstruct_from_photos(photos, options, on_progress),
+            done=f"Built a model from {len(photos)} photographs",
+            failed="Could not build a model from those photographs",
         )
 
     def open(self, path: Path) -> None:

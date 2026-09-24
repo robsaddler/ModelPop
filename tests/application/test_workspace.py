@@ -540,3 +540,118 @@ class TestRescuingTheDetail:
         opened = self.workspace(self.FakeBake()).open(source)
 
         assert opened.unwrap().textured_path is None
+
+
+class TestMeasuringFromPhotographs:
+    """Reconstruction at the use-case level, with a fake in place of two CLIs.
+
+    The distinction this layer has to keep straight is between *measuring* a
+    shape from several photographs and asking a model to *invent* one from a
+    single picture. They arrive at the same place and mean different things,
+    and the provenance is where that difference survives.
+    """
+
+    class FakeReconstructor:
+        def __init__(self, mesh=None, error=""):
+            self.asked: list[tuple] = []
+            self._mesh = mesh
+            self._error = error
+
+        def is_available(self) -> bool:
+            return True
+
+        def describe(self) -> str:
+            return "a fake reconstructor"
+
+        def reconstruct(self, photos, options=None, on_progress=None):
+            from modelpop.application.reconstruction_ports import Reconstruction
+            from modelpop.domain.result import failure as fail
+            from modelpop.domain.result import success as ok
+
+            self.asked.append((photos, options))
+            if self._error:
+                return fail("no", self._error)
+            if on_progress is not None:
+                on_progress(0.5, "halfway")
+            return ok(
+                Reconstruction(
+                    mesh=self._mesh if self._mesh is not None else box(20),
+                    photos_given=len(photos),
+                    photos_used=len(photos),
+                    seconds=90.0,
+                )
+            )
+
+    def workspace(self, reconstructor=None) -> Workspace:
+        return Workspace(mesh_io=FakeIO(), mesh_ops=FakeOps(), reconstructor=reconstructor)
+
+    def photos(self, tmp_path, count: int = 24):
+        from modelpop.domain.photo_set import PhotoSet
+
+        for index in range(count):
+            (tmp_path / f"p{index:03d}.jpg").write_bytes(b"x")
+        return PhotoSet.of(tmp_path.glob("*.jpg"))
+
+    def test_without_the_tools_it_says_so_rather_than_failing_obscurely(self, tmp_path):
+        outcome = self.workspace().reconstruct_from_photos(self.photos(tmp_path))
+
+        assert not outcome.ok
+        assert "unavailable" in outcome.error
+
+    def test_the_measured_model_lands_in_the_workspace(self, tmp_path):
+        outcome = self.workspace(self.FakeReconstructor()).reconstruct_from_photos(
+            self.photos(tmp_path)
+        )
+
+        assert outcome.ok
+        assert outcome.unwrap().has_model
+
+    def test_it_is_assessed_on_arrival_like_anything_else(self, tmp_path):
+        """Everything downstream works on it without knowing a camera was involved."""
+        after = (
+            self.workspace(self.FakeReconstructor())
+            .reconstruct_from_photos(self.photos(tmp_path))
+            .unwrap()
+        )
+        assert after.readiness is not None
+
+    def test_the_provenance_says_it_was_measured_not_invented(self, tmp_path):
+        """The whole question six months later."""
+        after = (
+            self.workspace(self.FakeReconstructor())
+            .reconstruct_from_photos(self.photos(tmp_path))
+            .unwrap()
+        )
+        assert "Reconstructed from 24 of 24 photographs" in after.generation_note
+
+    def test_a_reconstruction_has_no_texture_to_bake(self, tmp_path):
+        """The mesher writes bare geometry, so detail rescue is not offered."""
+        after = (
+            self.workspace(self.FakeReconstructor())
+            .reconstruct_from_photos(self.photos(tmp_path))
+            .unwrap()
+        )
+        assert after.textured_path is None
+
+    def test_the_options_reach_the_reconstructor_untouched(self, tmp_path):
+        from modelpop.application.reconstruction_ports import Quality, ReconstructionOptions
+
+        fake = self.FakeReconstructor()
+        wanted = ReconstructionOptions(quality=Quality.FINE)
+        self.workspace(fake).reconstruct_from_photos(self.photos(tmp_path), wanted)
+
+        assert fake.asked[0][1] is wanted
+
+    def test_progress_is_passed_through(self, tmp_path):
+        seen: list[tuple] = []
+        self.workspace(self.FakeReconstructor()).reconstruct_from_photos(
+            self.photos(tmp_path), None, lambda f, w: seen.append((f, w))
+        )
+        assert seen == [(0.5, "halfway")]
+
+    def test_a_refusal_reaches_the_user_intact(self, tmp_path):
+        fake = self.FakeReconstructor(error="the photographs did not overlap")
+        outcome = self.workspace(fake).reconstruct_from_photos(self.photos(tmp_path))
+
+        assert not outcome.ok
+        assert "overlap" in outcome.error

@@ -77,8 +77,15 @@ Tests that would fail without the change; `ruff` and `mypy --strict` clean; `imp
 - **COLMAP 4.2 renamed its options.** It is `--FeatureExtraction.use_gpu`, not
   `--SiftExtraction.use_gpu` as every tutorial online still says; the old name is rejected outright.
 - **OpenMVS writes no stdout.** Like the Bambu CLI, it logs to a timestamped `.log` file in the
-  working directory and exits **1** even for `--help`. Read the log, not the pipe, and do not
-  trust the exit code.
+  working directory and exits **1** even for `--help`. Read the log, not the pipe. On real work
+  it does exit 0 on success.
+- **COLMAP's mapper has two failure modes and only one is loud.** Photographs with nothing to
+  match exit non-zero; photographs that match but will not connect into one scene exit **zero**
+  having written no model at all. Judge it by whether `sparse/<n>/` appeared, never by the exit
+  code. It writes to a *numbered* subdirectory and can write several - take the largest.
+- **Photogrammetry timings are lopsided**: densify is two thirds of a run, meshing most of the
+  rest, the five COLMAP stages together under 5%. Weight any progress bar by that, or it sits
+  still for a minute in the middle and people kill a job that is working.
 
 ## Traps already paid for — do not rediscover these
 

@@ -19,7 +19,9 @@ from modelpop.application.workspace import Workspace
 from modelpop.cad import Build123dCompiler, Build123dKernel
 from modelpop.domain.printer import PrinterProfile
 from modelpop.generation import CadLoopGenerator, TrellisCliGenerator
+from modelpop.generation.gpu_lease import GpuLease
 from modelpop.mesh import TrimeshDetailBake, TrimeshIO, TrimeshOps
+from modelpop.paths import app_data_dir
 from modelpop.printing import BambuLanGateway, BambuSlicer, ToolpathVerifier
 from modelpop.projects import JsonProjectStore
 from modelpop.repositories import (
@@ -30,6 +32,7 @@ from modelpop.repositories import (
     ThingiverseRepository,
 )
 from modelpop.ui.main_window import MainWindow
+from modelpop.vision.photogrammetry import ColmapOpenMvsReconstructor
 
 __all__ = ["build_discovery", "build_workspace", "main"]
 
@@ -44,6 +47,9 @@ def build_workspace() -> Workspace:
     """
     ops = TrimeshOps()
     mesh_io = TrimeshIO()
+    # One lease, shared. Densifying a capture and generating from a picture
+    # both want most of a 16 GB card, and two at once does not fail cleanly.
+    card = GpuLease.beside(app_data_dir())
     return Workspace(
         mesh_io=mesh_io,
         mesh_ops=ops,
@@ -51,12 +57,13 @@ def build_workspace() -> Workspace:
         printer=PrinterProfile.p2s(),
         generator=CadLoopGenerator(AnthropicProvider(), Build123dKernel(), ops),
         gcode_verifier=ToolpathVerifier(),
-        mesh_generator=TrellisCliGenerator(mesh_io),
+        mesh_generator=TrellisCliGenerator(mesh_io, lease=card),
         # The real gateway is wired in, and sends nothing until the user
         # ticks the box in Settings. The window holds that switch; see
         # MainWindow._send_to_printer.
         printer_gateway=BambuLanGateway(),
         detail=TrimeshDetailBake(),
+        reconstructor=ColmapOpenMvsReconstructor(mesh_io=mesh_io, lease=card),
     )
 
 

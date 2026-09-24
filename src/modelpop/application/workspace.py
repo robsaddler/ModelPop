@@ -44,6 +44,14 @@ if TYPE_CHECKING:
         PrinterStatus,
         Submission,
     )
+    from modelpop.application.reconstruction_ports import (
+        PhotoReconstructor,
+        ReconstructionOptions,
+    )
+    from modelpop.application.reconstruction_ports import (
+        Progress as ReconstructionProgress,
+    )
+    from modelpop.domain.photo_set import PhotoSet
 
 __all__ = ["Workspace", "WorkspaceState"]
 
@@ -132,6 +140,7 @@ class Workspace:
         mesh_generator: MeshGenerator | None = None,
         printer_gateway: PrinterGateway | None = None,
         detail: DetailRescue | None = None,
+        reconstructor: PhotoReconstructor | None = None,
     ) -> None:
         """Wire the workspace to its ports.
 
@@ -152,6 +161,7 @@ class Workspace:
                 to one that describes the job and sends nothing, because a
                 print is the only irreversible thing this application does.
             detail: bakes a model's colour texture into its surface.
+            reconstructor: measures a shape from several photographs.
         """
         self._io = mesh_io
         self._ops = mesh_ops
@@ -163,6 +173,7 @@ class Workspace:
         self._mesh_generator = mesh_generator
         self._gateway = printer_gateway
         self._detail = detail
+        self._reconstructor = reconstructor
 
     @property
     def can_generate(self) -> bool:
@@ -474,6 +485,54 @@ class Workspace:
         if not sliced.ok:
             return sliced  # type: ignore[return-value]
         return success(self._with_slice(state, sliced.unwrap()))
+
+    # ---------------------------------------------------------- from photos
+
+    @property
+    def can_reconstruct(self) -> bool:
+        """Whether several photographs could be turned into a model right now."""
+        return self._reconstructor is not None and self._reconstructor.is_available()
+
+    def describe_reconstruction(self) -> str:
+        """The state of the reconstruction tools, for Settings."""
+        if self._reconstructor is None:
+            return "Building a model from several photographs is not wired up in this build."
+        return self._reconstructor.describe()
+
+    def reconstruct_from_photos(
+        self,
+        photos: PhotoSet,
+        options: ReconstructionOptions | None = None,
+        on_progress: ReconstructionProgress | None = None,
+    ) -> Result[WorkspaceState]:
+        """Measure a model from several photographs.
+
+        The result joins the workspace like anything else, so repair, scaling,
+        bed placement, readiness and slicing all work on it without knowing a
+        camera was involved.
+
+        Worth being clear about what makes this different from the single-photo
+        path next door: that one asks a model to *invent* a plausible back, and
+        this measures one. The provenance says which, because six months later
+        the difference is the whole question.
+        """
+        if self._reconstructor is None:
+            return failure(
+                "Building a model from photographs is unavailable",
+                "It needs COLMAP and OpenMVS - see docs/12-photogrammetry.md.",
+            )
+
+        built = self._reconstructor.reconstruct(photos, options, on_progress)
+        if not built.ok:
+            return built  # type: ignore[return-value]
+
+        measured = built.unwrap()
+        return success(
+            replace(
+                self.adopt(measured.mesh),
+                generation_note=measured.provenance,
+            )
+        )
 
     # ---------------------------------------------------------- detail rescue
 

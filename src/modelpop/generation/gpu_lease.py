@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modelpop.application.gpu_ports import GpuBusyError as SharedGpuBusyError
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -37,12 +39,13 @@ __all__ = ["GpuBusyError", "GpuLease"]
 STALE_AFTER_SECONDS = 1800.0
 
 
-class GpuBusyError(RuntimeError):
+class GpuBusyError(SharedGpuBusyError):
     """The card is already in use.
 
-    An exception rather than a ``Result`` because it is raised inside a
-    context manager, where there is nothing to return. Callers turn it into a
-    message at the boundary.
+    Kept as its own name because callers here have always caught it by that
+    name, and made a subclass of the port's own error so that an adapter in
+    another package - which may not import this one - can catch it without
+    knowing which lease it was handed.
     """
 
 

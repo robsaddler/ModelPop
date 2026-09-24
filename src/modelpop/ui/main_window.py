@@ -59,6 +59,7 @@ from modelpop.ui.dialogs import (
     SettingsDialog,
 )
 from modelpop.ui.monitor_dialog import MonitorDialog
+from modelpop.ui.reconstruct_dialog import ReconstructDialog
 from modelpop.ui.section_dialog import SectionDialog
 
 __all__ = ["MainWindow"]
@@ -249,6 +250,10 @@ class MainWindow(QMainWindow):
         self._from_image_action = QAction("Make one from a &picture...", self)
         self._from_image_action.triggered.connect(self._from_image)
         file_menu.addAction(self._from_image_action)
+
+        self._from_photos_action = QAction("Measure one from se&veral photographs...", self)
+        self._from_photos_action.triggered.connect(self._from_photos)
+        file_menu.addAction(self._from_photos_action)
 
         find_action = QAction("&Find a model to start from...", self)
         find_action.setShortcut("Ctrl+F")
@@ -593,6 +598,36 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Making a model from that picture...")
         self._view_model.generate_from_image(chosen, dialog.options(), self._on_generation_progress)
+
+    def _from_photos(self) -> None:
+        """Measure a model from several photographs.
+
+        Deliberately worded as *measuring* rather than making, and put beside
+        the single-picture entry rather than inside it. The two look similar
+        and are not: one asks a model to invent a plausible back, and this one
+        works out where the camera was and measures the shape it saw. Which of
+        those produced a model is the whole question six months later, so the
+        application never blurs them.
+        """
+        if not self._view_model.can_reconstruct:
+            QMessageBox.information(
+                self,
+                "ModelPop",
+                "Measuring a model from photographs is not set up.\n\n"
+                + self._view_model.describe_reconstruction(),
+            )
+            return
+
+        dialog = ReconstructDialog(self)
+        if not dialog.exec() or not dialog.photos.is_usable:
+            return
+
+        self.statusBar().showMessage(
+            f"Measuring a model from {len(dialog.photos)} photographs. This takes minutes."
+        )
+        self._view_model.reconstruct_from_photos(
+            dialog.photos, dialog.options, self._on_generation_progress
+        )
 
     def _on_generation_progress(self, fraction: float, message: str) -> None:
         """Show how a generation is getting on.
