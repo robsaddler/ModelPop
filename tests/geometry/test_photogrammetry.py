@@ -262,7 +262,7 @@ class TestWhenMappingGoesWrong:
         from modelpop.domain.result import success as ok
 
         class Fake(ColmapOpenMvsReconstructor):
-            def _step(self, stage, command, scratch, settings, on_progress):
+            def _step(self, stage, command, scratch, settings, on_progress, deadline):
                 if stage is Stage.MAPPING:
                     return outcome
                 return ok(stage.name)
@@ -318,3 +318,48 @@ class TestWhenMappingGoesWrong:
         assert not outcome.ok
         assert "took too long" in outcome.reason
         assert "pieced together" not in outcome.reason, "wrong advice for a timeout"
+
+    def test_the_budget_is_for_the_whole_run_not_for_each_of_seven_stages(self, tmp_path):
+        """Given one each, a job asked to finish within the hour could take seven.
+
+        Nobody reads a "timeout" setting as making that promise, so a stage
+        that starts after the deadline has passed is refused rather than given
+        a fresh hour of its own.
+        """
+        from modelpop.application.reconstruction_ports import ReconstructionOptions
+        from modelpop.domain.result import success as ok
+
+        asked: list[float] = []
+
+        class Watching(ColmapOpenMvsReconstructor):
+            def _step(self, stage, command, scratch, settings, on_progress, deadline):
+                asked.append(deadline)
+                return ok(stage.name)
+
+        colmap = tmp_path / "colmap.exe"
+        colmap.write_bytes(b"x")
+        tools = tmp_path / "mvs"
+        tools.mkdir()
+        for name in ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh"):
+            (tools / f"{name}.exe").write_bytes(b"x")
+
+        class Io:
+            def load(self, path):
+                from modelpop.domain.result import failure as fail
+
+                return fail("not reached")
+
+            def save(self, mesh, path):
+                from modelpop.domain.result import failure as fail
+
+                return fail("not reached")
+
+            def supported_suffixes(self):
+                return frozenset()
+
+        Watching(mesh_io=Io(), colmap=colmap, openmvs=tools, lease=None).reconstruct(
+            self.photos(tmp_path), ReconstructionOptions(timeout_seconds=600.0)
+        )
+
+        assert asked, "no stage ran"
+        assert len(set(asked)) == 1, "each stage was handed a deadline of its own"

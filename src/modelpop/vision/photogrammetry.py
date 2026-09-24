@@ -270,6 +270,7 @@ class ColmapOpenMvsReconstructor:
         on_progress: Progress | None,
     ) -> Result[Reconstruction]:
         """The seven stages, in order, in a scratch directory."""
+        deadline = started + settings.timeout_seconds
         images = scratch / "images"
         images.mkdir(parents=True)
         for photo in photos.photos:
@@ -305,7 +306,7 @@ class ColmapOpenMvsReconstructor:
             ),
         )
         for stage, command in steps:
-            outcome = self._step(stage, command, scratch, settings, on_progress)
+            outcome = self._step(stage, command, scratch, settings, on_progress, deadline)
             if not outcome.ok:
                 return outcome  # type: ignore[return-value]
 
@@ -329,6 +330,7 @@ class ColmapOpenMvsReconstructor:
             scratch,
             settings,
             on_progress,
+            deadline,
         )
 
         model = pick_model_directory(sparse)
@@ -379,7 +381,7 @@ class ColmapOpenMvsReconstructor:
             (Stage.MESHING, self._openmvs_command("ReconstructMesh", "scene_dense.mvs")),
         )
         for stage, command in rest:
-            outcome = self._step(stage, command, scratch, settings, on_progress)
+            outcome = self._step(stage, command, scratch, settings, on_progress, deadline)
             if not outcome.ok:
                 return outcome  # type: ignore[return-value]
 
@@ -415,6 +417,7 @@ class ColmapOpenMvsReconstructor:
         scratch: Path,
         settings: ReconstructionOptions,
         on_progress: Progress | None,
+        deadline: float,
     ) -> Result[str]:
         """Run one stage to completion, or explain why it did not.
 
@@ -425,7 +428,17 @@ class ColmapOpenMvsReconstructor:
         if on_progress is not None:
             on_progress(progress_through(stage), stage.describe)
 
-        remaining = settings.timeout_seconds - 0.0
+        # The budget is for the whole run, not for each of seven stages. Given
+        # one each, a job asked to finish within the hour could take seven -
+        # which is a promise nobody would have read the setting as making.
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            return failure(
+                f"{stage.describe} {_TOO_LONG}",
+                f"The whole run was given {settings.timeout_seconds / 60:.0f} minutes "
+                "and had used them before this stage started.",
+            )
+
         try:
             finished = subprocess.run(
                 command,
@@ -434,14 +447,14 @@ class ColmapOpenMvsReconstructor:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=max(remaining, 60.0),
+                timeout=remaining,
                 check=False,
             )
         except subprocess.TimeoutExpired:
             return failure(
                 f"{stage.describe} {_TOO_LONG}",
-                f"It ran for over {settings.timeout_seconds / 60:.0f} minutes. Fewer "
-                "or smaller photographs, or a lower quality setting, will finish.",
+                f"The whole run was given {settings.timeout_seconds / 60:.0f} minutes. "
+                "Fewer or smaller photographs, or a lower quality setting, will finish.",
             )
         except OSError as error:
             return failure(f"{stage.describe} could not be started", str(error))
