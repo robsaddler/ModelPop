@@ -164,6 +164,21 @@ the view out with it.
 
 ---
 
+## What the tools act on
+
+Everything under **Change it** → round, chamfer, hollow, move, turn, scale, text, mirror, repeat
+→ applies to **the whole of the one object you have selected**, and to nothing else on the plate.
+There is no sub-selection: rounding rounds that object's edges, not a face or an edge you picked.
+
+The panel is titled with whatever is in hand once there is more than one object, so *Change Sphere*
+rather than *Change it*. Click an object in the viewport to pick it up; click empty space to put
+everything down, and the operations grey out because there is nothing for them to act on.
+
+**Start a shape** is the exception: a box, cylinder or sphere makes a *new* object. Ticking **Cut**
+makes it a hole instead, taken out of the object you have selected.
+
+---
+
 ## Moving it
 
 Two ways, and the buttons are the one to reach for first.

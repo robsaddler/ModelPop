@@ -183,11 +183,25 @@ class DisplacedCompiler(FakeCompiler):
         if not built.ok:
             return built
         result = built.unwrap()
-        moved = result.mesh.vertices + np.array([self.across, 0.0, -self.down])
+        offset = np.array([self.across, 0.0, -self.down])
+        # Every body moves, not just the first. Dropping the rest left the
+        # scene with no objects at all, so nothing could be selected and
+        # anything needing a selection quietly did nothing.
+        bodies = tuple(
+            BuiltBody(
+                body=one.body,
+                mesh=Mesh(one.mesh.vertices + offset, one.mesh.faces),
+                measurements=one.measurements,
+            )
+            for one in result.bodies
+        )
         return success(
             ScriptResult(
-                mesh=Mesh(moved, result.mesh.faces),
+                mesh=bodies[0].mesh
+                if bodies
+                else Mesh(result.mesh.vertices + offset, result.mesh.faces),
                 measurements=result.measurements,
+                bodies=bodies,
             )
         )
 

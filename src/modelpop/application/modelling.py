@@ -357,7 +357,18 @@ class ModellingSession:
             body: which object to do it to. ``None`` means the selected one,
                 or the first object in a scene that has only one.
         """
-        target = body or self._selected or FIRST_BODY
+        target = body or self._selected
+        if not target:
+            if self._bus.document.body_ids:
+                # There are objects, and none of them is in hand. Falling back
+                # to the first one would change something the user is not even
+                # looking at - they clicked empty space to put everything down.
+                return failure(
+                    "Nothing is selected",
+                    "Click the object you want to change first.",
+                )
+            # The very first shape in an empty scene has nothing to select.
+            target = FIRST_BODY
         self._bus.execute(command, origin, target)
         self._selected = target
 

@@ -134,3 +134,48 @@ class TestGettingToTheMovePanel:
         cad, view = panel()
         view.add_box(10, 10, 10)
         assert cad._place_button.isEnabled()
+
+
+class TestSayingWhatItWillChange:
+    """ "Change it" does not say what *it* is once there are two objects.
+
+    Asked in exactly those words, which is reason enough: a panel of operations
+    that does not name its target is a panel you have to guess at.
+    """
+
+    def two_objects(self) -> tuple[CadPanel, ModellingViewModel]:
+        cad, view = panel()
+        view.add_box(10, 10, 10)
+        view.add_sphere(5)
+        return cad, view
+
+    def test_with_one_object_it_stays_plain(self, app):
+        cad, view = panel()
+        view.add_box(10, 10, 10)
+        assert cad._change_group.title() == "Change it"
+
+    def test_with_two_it_names_the_one_in_hand(self, app):
+        cad, _view = self.two_objects()
+        assert cad._change_group.title() == "Change Sphere"
+
+    def test_it_follows_the_selection(self, app):
+        cad, view = self.two_objects()
+        view.select("body-1")
+        assert cad._change_group.title() == "Change Box"
+
+    def test_with_nothing_in_hand_it_says_so(self, app):
+        cad, view = self.two_objects()
+        view.select("")
+        assert "nothing selected" in cad._change_group.title().lower()
+
+    def test_the_operations_are_not_offered_with_nothing_in_hand(self, app):
+        """Better than offering them and refusing the click."""
+        cad, view = self.two_objects()
+        view.select("")
+        assert not cad._fillet_button.isEnabled()
+
+    def test_they_come_back_when_something_is_picked_up(self, app):
+        cad, view = self.two_objects()
+        view.select("")
+        view.select("body-1")
+        assert cad._fillet_button.isEnabled()

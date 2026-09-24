@@ -13,7 +13,8 @@ still costs one rebuild however many objects are in it.
 import pytest
 
 from modelpop.application.modelling import ModellingSession
-from modelpop.presentation.modelling_view_model import ModellingViewModel
+from modelpop.domain.units import Length
+from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
 
 from .test_modelling import FakeCompiler
 
@@ -215,3 +216,85 @@ class TestTheTreeReadsAsAScene:
         model.add_sphere(5)
 
         assert {line.body for line in model.state.features} == {"body-1", "body-2"}
+
+
+class TestWhatTheChangeControlsActOn:
+    """Asked directly: "the Change it controls apply to what? Entire object?"
+
+    Every one of them applies to the **selected object**, whole, and to nothing
+    else on the plate. The question was worth asking because the panel used to
+    say "Change it" without ever saying what *it* was.
+    """
+
+    def build_two(self) -> ModellingViewModel:
+        model = scene()
+        model.add_box(20, 20, 20)
+        model.add_sphere(8)
+        model.select("body-1")
+        return model
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            lambda m: m.fillet(1),
+            lambda m: m.chamfer(1),
+            lambda m: m.hollow(1.5),
+            lambda m: m.move(1, 0, 0),
+            lambda m: m.rotate(15),
+            lambda m: m.scale_to(Length.mm(40)),
+            lambda m: m.mirror(),
+            lambda m: m.repeat_around(4),
+        ],
+        ids=[
+            "round",
+            "chamfer",
+            "hollow",
+            "move",
+            "turn",
+            "scale",
+            "mirror",
+            "repeat around",
+        ],
+    )
+    def test_it_lands_on_the_selected_object_and_no_other(self, change):
+        model = self.build_two()
+        before = len(model.state.document.features_for("body-2"))
+
+        change(model)
+
+        assert len(model.state.document.features_for("body-1")) == 2
+        assert len(model.state.document.features_for("body-2")) == before
+
+    def test_it_applies_to_the_whole_object_not_part_of_it(self):
+        """There is no sub-selection: a fillet rounds the object's edges."""
+        model = self.build_two()
+        model.fillet(1)
+
+        step = model.state.document.features_for("body-1")[-1]
+        assert step.name == "fillet"
+        assert step.body == "body-1"
+
+    def test_nothing_selected_refuses_rather_than_changing_the_first_one(self):
+        """Clicking empty space puts everything down; the toolbar must agree.
+
+        It used to fall back to the first object, so a click in empty space
+        followed by Round quietly changed something the user was not even
+        looking at.
+        """
+        model = self.build_two()
+        model.select("")
+        outcomes: list[Outcome] = []
+        model.on_outcome(outcomes.append)
+
+        model.fillet(1)
+
+        assert outcomes and outcomes[-1].refused
+        assert "selected" in outcomes[-1].message.lower()
+        assert len(model.state.document.features_for("body-1")) == 1
+
+    def test_the_very_first_shape_needs_nothing_selected(self):
+        """An empty scene has nothing to select, and must still start."""
+        model = scene()
+        model.add_box(10, 10, 10)
+
+        assert len(model.bodies) == 1

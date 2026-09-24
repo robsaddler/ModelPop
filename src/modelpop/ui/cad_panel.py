@@ -310,7 +310,11 @@ class CadPanel(QWidget):
         return group
 
     def _build_operations(self) -> QGroupBox:
+        # Titled with whatever is in hand, because "Change it" does not say
+        # what *it* is once there is more than one object on the plate - which
+        # was asked, in exactly those words.
         group = QGroupBox("Change it")
+        self._change_group = group
         rows = QVBoxLayout(group)
 
         blend_row = QHBoxLayout()
@@ -604,7 +608,18 @@ class CadPanel(QWidget):
         self._show_what_was_undone(state)
 
         self._status.setText(state.describe())
+        self._name_what_is_in_hand(state)
         self._refresh()
+
+    def _name_what_is_in_hand(self, state: ModelState) -> None:
+        """Say which object the operations below will change."""
+        body = state.body(state.selected)
+        if body is None:
+            self._change_group.setTitle("Change it - nothing selected")
+        elif len(state.bodies) > 1:
+            self._change_group.setTitle(f"Change {body.label}")
+        else:
+            self._change_group.setTitle("Change it")
 
     def _show_what_was_undone(self, state: ModelState) -> None:
         """List the undone steps under the tree, greyed and unselectable.
@@ -626,7 +641,9 @@ class CadPanel(QWidget):
     def _refresh(self) -> None:
         """Enable only what the model's current state actually allows."""
         buildable = self._view.can_build and not self._view.is_busy
-        operable = self._view.can_operate and self._view.can_build
+        operable = (
+            self._view.can_operate and self._view.can_build and self._view.selected_body is not None
+        )
 
         for button in (
             self._fillet_button,
