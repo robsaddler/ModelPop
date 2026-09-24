@@ -512,7 +512,7 @@ class Rotate(Command):
 
 @dataclass(frozen=True, slots=True)
 class ScaleTo(Command):
-    """Resize the part so its tallest dimension is a stated size.
+    """Resize the part uniformly so it stands a stated height.
 
     Scaling *to a size* rather than *by a factor*, because that is how people
     ask: "about six inches tall", not "times 3.7".

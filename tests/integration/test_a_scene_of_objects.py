@@ -119,3 +119,54 @@ def test_deleting_one_rebuilds_the_rest(scene):
     assert len(scene.bodies) == 1
     assert scene.bodies[0].label == "Box"
     assert scene.state.mesh is not None and not scene.state.mesh.is_empty
+
+
+@kernel_required
+def test_resizing_one_object_leaves_the_others_alone(scene):
+    """The same independence as moving, for the operation that changes size."""
+    scene.add_box(40, 40, 40)
+    scene.add_sphere(10)
+    box_before = scene.bodies[0].bounds.height.millimetres
+
+    scene.scale_selected_by(2.0)
+
+    assert scene.bodies[0].bounds.height.millimetres == pytest.approx(box_before, abs=0.1)
+    assert scene.bodies[1].bounds.height.millimetres == pytest.approx(40.0, abs=0.5)
+
+
+@kernel_required
+def test_scaling_by_a_factor_compounds_on_the_real_size(scene):
+    """A proportion is of the size it is *now*, not of the size it started.
+
+    Only geometry can show this: the factor is turned into an absolute size
+    before it reaches the tree, read off the solid the kernel actually built.
+    """
+    scene.add_box(20, 20, 20)
+    scene.scale_selected_by(2.0)
+    once = scene.bodies[0].bounds.height.millimetres
+    scene.scale_selected_by(2.0)
+
+    assert once == pytest.approx(40.0, abs=0.1)
+    assert scene.bodies[0].bounds.height.millimetres == pytest.approx(80.0, abs=0.2)
+
+
+@kernel_required
+def test_it_keeps_its_proportions(scene):
+    """Uniform: a factor applies to all three sides, not just the one measured."""
+    scene.add_box(40, 20, 10)
+    scene.scale_selected_by(0.5)
+    box = scene.bodies[0].bounds
+
+    assert box.width.millimetres == pytest.approx(20.0, abs=0.1)
+    assert box.depth.millimetres == pytest.approx(10.0, abs=0.1)
+    assert box.height.millimetres == pytest.approx(5.0, abs=0.1)
+
+
+@kernel_required
+def test_resizing_to_an_exact_size_gives_that_size(scene):
+    from modelpop.domain.units import Length
+
+    scene.add_box(30, 20, 10)
+    scene.scale_selected_to(Length.inches(2))
+
+    assert scene.bodies[0].bounds.height.millimetres == pytest.approx(50.8, abs=0.1)

@@ -781,9 +781,9 @@ class ResizeDialog(QDialog):
         form.addRow(self._reading)
 
         note = QLabel(
-            "Scales the whole model so its largest dimension is that size. Useful "
-            "for anything that came out of a picture, where the scale is arbitrary "
-            "until you say otherwise."
+            "Scales the whole model so it stands that tall, keeping its "
+            "proportions. Useful for anything that came out of a picture, where "
+            "the scale is arbitrary until you say otherwise."
         )
         note.setWordWrap(True)
         note.setStyleSheet(_HINT_STYLE)

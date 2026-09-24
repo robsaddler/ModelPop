@@ -44,14 +44,19 @@ from modelpop.domain.cad_commands import (
 )
 from modelpop.domain.commands import Origin
 from modelpop.domain.result import Failure, Result
+from modelpop.domain.units import Length
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from modelpop.domain.commands import Command
     from modelpop.domain.mesh import Mesh
-    from modelpop.domain.units import Length
     from modelpop.generation.command_loop import CommandEditRun
+
+LEAST_SCALE = 0.05
+MOST_SCALE = 20.0
+"""How far one resize may go. Wide enough for any real change, narrow enough
+that a slipped decimal point does not put the part outside the solar system."""
 
 __all__ = ["ModellingViewModel", "Outcome"]
 
@@ -245,6 +250,43 @@ class ModellingViewModel:
             self._announce(Outcome("Nothing is selected.", refused=True))
             return
         self._run(f"Rename to {label}", lambda: self._session.rename(body, label))
+
+    def scale_selected_by(self, factor: float) -> None:
+        """Make the selected object a proportion of the size it is now.
+
+        Expressed as a factor because that is how resizing by hand works -
+        "a bit bigger", "half that" - and turned into an absolute size before
+        it reaches the tree, because that is the only form the model can
+        rebuild from. A factor recorded as a factor would compound every time
+        anything earlier in the tree changed.
+        """
+        body = self.selected_body
+        if body is None:
+            self._announce(Outcome("Nothing is selected.", refused=True))
+            return
+        if not LEAST_SCALE <= factor <= MOST_SCALE:
+            self._announce(
+                Outcome(
+                    "That is not a size change this can make",
+                    f"{factor:g} times; the range is {LEAST_SCALE:g} to {MOST_SCALE:g}.",
+                    refused=True,
+                )
+            )
+            return
+
+        # Against its *height*, because that is what ScaleTo scales by - "six
+        # inches tall". Measuring the factor against the longest side instead
+        # would silently multiply it by the part's own proportions: a 30 x 20 x
+        # 10 box asked to double would come out six times as big.
+        now = body.bounds.height
+        self.scale_to(Length.mm(now.millimetres * factor))
+
+    def scale_selected_to(self, size: Length) -> None:
+        """Make the selected object a stated height, keeping its proportions."""
+        if self.selected_body is None:
+            self._announce(Outcome("Nothing is selected.", refused=True))
+            return
+        self.scale_to(size)
 
     def duplicate_selected(self) -> None:
         """Copy the selected object, offset so the copy is visible.

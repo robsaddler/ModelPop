@@ -192,6 +192,17 @@ Worth knowing: the handles start at the *centre* of the part, so the inner half 
 inside the shape itself. Aim at the outer end of an arrow, away from the geometry. That is why fine
 placement is easier with the buttons.
 
+### Resizing it
+
+Right-click an object → **Resize it...**. **Half**, **-10%**, **+10%** and **Double** are
+proportions of the size it is *now*, which is how resizing by hand actually works; press one twice
+and it compounds. There is a box underneath for when the number is the point.
+
+It scales the whole object about its height and keeps its proportions, so a 40 x 20 x 10 block
+halved is 20 x 10 x 5.
+
+---
+
 ### Either way, it is a step in the tree
 
 A drag is not a special case, and neither is a button. Both end as the same **move** and **rotate**

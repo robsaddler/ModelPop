@@ -595,7 +595,7 @@ def _rotation(command: Rotate) -> str:
 
 
 def _scale_fragment(command: ScaleTo) -> str:
-    """Scale so the tallest dimension is a stated size.
+    """Scale uniformly so the part stands a stated height.
 
     Computed at rebuild time from the solid's actual height rather than baked
     in, so scaling to six inches still gives six inches after an earlier

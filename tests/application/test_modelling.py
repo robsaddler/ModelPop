@@ -69,6 +69,23 @@ def cube(size: float = 10.0) -> Mesh:
     return Mesh(vertices, faces)
 
 
+def _sized(mesh: Mesh, features) -> Mesh:
+    """Honour a scale-to, so a resize actually changes the geometry.
+
+    The rest of what a feature does is not modelled here - that is what the
+    OCCT integration tests are for - but size is, because anything expressed
+    as a *proportion* of the current size is meaningless against a shape that
+    never changes.
+    """
+    scales = [f for f in features if f.name == "scale-to"]
+    if not scales:
+        return mesh
+    wanted = float(scales[-1].parameters["height_mm"])
+    # By height, which is what the real compiler scales by.
+    tall = float(mesh.vertices[:, 2].max() - mesh.vertices[:, 2].min())
+    return Mesh(mesh.vertices * (wanted / tall), mesh.faces) if tall else mesh
+
+
 def _shifted(mesh: Mesh, along_x: float) -> Mesh:
     """The same shape, standing somewhere else."""
     if not along_x:
@@ -123,7 +140,11 @@ class FakeCompiler:
         # them from each other. The real compiler builds every object in one
         # subprocess and hands them back the same way.
         bodies = tuple(
-            BuiltBody(body=body, mesh=_shifted(cube(), index * 30.0), measurements=measured)
+            BuiltBody(
+                body=body,
+                mesh=_shifted(_sized(cube(), document.features_for(body)), index * 30.0),
+                measurements=measured,
+            )
             for index, body in enumerate(document.body_ids)
         )
         return success(

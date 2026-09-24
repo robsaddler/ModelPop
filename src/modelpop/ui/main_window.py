@@ -65,6 +65,7 @@ from modelpop.ui.dialogs import (
 from modelpop.ui.monitor_dialog import MonitorDialog
 from modelpop.ui.place_dialog import PlaceDialog
 from modelpop.ui.reconstruct_dialog import ReconstructDialog
+from modelpop.ui.resize_dialog import ResizeObjectDialog
 from modelpop.ui.section_dialog import SectionDialog
 from modelpop.ui.variants_panel import VariantsPanel
 
@@ -180,6 +181,7 @@ class MainWindow(QMainWindow):
         self._section = SectionTool()
         self._section_panel: SectionDialog | None = None
         self._place_panel: PlaceDialog | None = None
+        self._resize_panel: ResizeObjectDialog | None = None
         self._pressed_at: QPoint | None = None
         # True between letting go of a handle and the rebuild landing.
         self._drag_in_flight = False
@@ -628,6 +630,9 @@ class MainWindow(QMainWindow):
         self._handles_action = self._scene_menu.addAction("Put &handles on it")
         self._handles_action.triggered.connect(lambda: self._drag_action.setChecked(True))
 
+        self._resize_here_action = self._scene_menu.addAction("&Resize it...")
+        self._resize_here_action.triggered.connect(self._open_resize_panel)
+
         self._drop_action = self._scene_menu.addAction("&Drop it on the bed")
         self._drop_action.triggered.connect(self._drop_selected)
 
@@ -652,12 +657,28 @@ class MainWindow(QMainWindow):
         for action in (
             self._move_here_action,
             self._handles_action,
+            self._resize_here_action,
             self._drop_action,
             self._duplicate_action,
             self._rename_action,
             self._delete_action,
         ):
             action.setEnabled(something)
+
+    def _open_resize_panel(self) -> None:
+        """Open the panel that scales the selected object.
+
+        Kept once opened, like the move panel: resizing is a few goes at it
+        with a look in between, not one number typed once.
+        """
+        if self._modelling.selected_body is None:
+            self.statusBar().showMessage("Select something to resize first.", 5000)
+            return
+        if self._resize_panel is None:
+            self._resize_panel = ResizeObjectDialog(self._modelling, self)
+        self._resize_panel.show()
+        self._resize_panel.raise_()
+        self._resize_panel.activateWindow()
 
     def _drop_selected(self) -> None:
         """Settle the selected object onto the plate."""
