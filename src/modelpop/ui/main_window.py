@@ -50,6 +50,7 @@ from modelpop.presentation.dragging import movement_in
 from modelpop.presentation.measuring import MeasuringTool
 from modelpop.presentation.sectioning import SectionTool
 from modelpop.ui.background import BackgroundRunner
+from modelpop.ui.branding import icon
 from modelpop.ui.cad_panel import CadPanel
 from modelpop.ui.dialogs import (
     EditDialog,
@@ -159,6 +160,7 @@ class MainWindow(QMainWindow):
         )
 
         self.setWindowTitle("ModelPop")
+        self.setWindowIcon(icon())
         self.resize(1400, 900)
 
         # Built before anything is connected: every announcement from a

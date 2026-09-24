@@ -22,14 +22,13 @@ from modelpop.domain.mesh import Mesh
 from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.units import Unit
 from modelpop.presentation.sectioning import SectionPlane
+from modelpop.rendering.drag_handles import DragHandles
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 __all__ = [
     "BUILD_PLATE_COLOUR",
-    "HANDLE_SCALE",
-    "HANDLE_THICKNESS",
     "INTERIOR_COLOUR",
     "MEASURE_COLOUR",
     "MODEL_COLOUR",
@@ -56,19 +55,6 @@ MEASURE_COLOUR = "#F2C14E"
 # Big enough to see against a model, small enough not to hide the feature
 # being measured. In millimetres, because everything here is.
 MEASURE_POINT_MM = 0.8
-# How far the drag handles reach, as a fraction of the model's diagonal.
-# PyVista's default is 0.15, which on a 40 mm sphere puts every arrow
-# *inside* the model - measured: the +Z arrow centred at z=6 on a shape
-# spanning -20 to +20. They were there and they were unclickable, because
-# a click that looks like it is on an arrow lands on the model in front of
-# it. At 0.5 they reach half as far again as the model, which is clear of
-# anything and still on screen when the camera is framed.
-HANDLE_SCALE = 0.5
-
-# Thicker than the default 0.02 for the same reason: a handle you have to
-# hit precisely is one people conclude is broken.
-HANDLE_THICKNESS = 0.04
-
 # The colour of a cut surface. Warm against the model's blue, so the inside
 # of a sectioned part is unmistakably the inside.
 INTERIOR_COLOUR = "#C9A227"
@@ -289,27 +275,26 @@ class ViewportScene:
         mouse comes up, which is exactly how this felt broken: the arrow lights
         up, the part moves a few pixels, and nothing says what is happening.
 
-        The widget is re-made on every model, because it is attached to an
-        *actor* and every rebuild replaces that actor. Left alone it would go
+        The handles are re-made on every model, because they are attached to an
+        *actor* and every rebuild replaces that actor. Left alone they would go
         on dragging a piece of geometry that is no longer in the scene - handles
         floating over a model they do not move, which looks like the feature is
         broken rather than stale.
         """
         self.stop_dragging()
-        if self._model_actor is None:
+        if self._model_actor is None or self._polydata is None:
             return False
 
         try:
-            self._drag_widget = self._plotter.add_affine_transform_widget(
+            self._drag_widget = DragHandles(
+                self._plotter,
                 self._model_actor,
-                release_callback=on_release,
-                interact_callback=on_move,
-                scale=HANDLE_SCALE,
-                line_radius=HANDLE_THICKNESS,
-                axes_colors=("#F2765A", "#6FCF97", "#6FA8DC"),
+                self._polydata.bounds,
+                on_release,
+                on_move,
             )
         except (AttributeError, TypeError, RuntimeError):
-            # An off-screen plotter has no interactor to attach a widget to.
+            # An off-screen plotter has no interactor to attach observers to.
             self._drag_widget = None
             return False
         return True
@@ -326,7 +311,7 @@ class ViewportScene:
         self._drag_widget = None
         if widget is not None:
             with contextlib.suppress(AttributeError, RuntimeError):
-                widget.Off()
+                widget.stop()
         self.forget_drag()
 
     def forget_drag(self) -> None:

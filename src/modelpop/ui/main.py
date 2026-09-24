@@ -31,6 +31,7 @@ from modelpop.repositories import (
     MyMiniFactoryRepository,
     ThingiverseRepository,
 )
+from modelpop.ui.branding import claim_the_taskbar, icon
 from modelpop.ui.main_window import MainWindow
 from modelpop.vision.photogrammetry import ColmapOpenMvsReconstructor
 
@@ -90,8 +91,12 @@ def build_discovery(secrets: LayeredSecretStore) -> Discovery:
 
 def main() -> int:
     """Start the application."""
+    # Before the QApplication, so the taskbar has the identity from the start.
+    claim_the_taskbar()
+
     app = QApplication(sys.argv)
     app.setApplicationName("ModelPop")
+    app.setWindowIcon(icon())
 
     secrets = default_store()
     window = MainWindow(

@@ -463,17 +463,15 @@ class TestDragHandles:
     def test_it_reports_the_offset_while_the_drag_is_still_happening(self, plotter_on_screen):
         """Silence until the mouse comes up is what made this feel broken.
 
-        Driven by hand with synthetic mouse events, the handles translate and
-        rotate exactly as intended - but nothing says so until release, so a
-        drag that missed the arrow and a drag that worked look identical for
-        as long as the user holds the button down.
+        A drag that missed the arrow and a drag that is working look identical
+        for as long as the button is held, unless something says so.
         """
         scene = ViewportScene(plotter_on_screen)
         scene.show_mesh(unit_cube(20))
         told: list[object] = []
 
         assert scene.start_dragging(lambda _: None, told.append)
-        assert scene._drag_widget._user_interact_callback is not None
+        assert scene._drag_widget._on_move == told.append
 
     def test_a_drag_without_live_reporting_is_still_allowed(self, plotter):
         """The callback is optional, so nothing else has to pass one."""
