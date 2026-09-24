@@ -78,6 +78,11 @@ _OPENMVS_TOOLS = ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh")
 # whether a run takes two minutes or two hours; higher numbers are coarser.
 _RESOLUTION_LEVEL = {Quality.DRAFT: 3, Quality.NORMAL: 2, Quality.FINE: 1}
 
+# Both the message and the test for it, in one place: mapping is judged by
+# its output rather than its exit code, and a *timeout* is the one failure
+# that must escape that rule - see `_run`.
+_TOO_LONG = "took too long and was stopped"
+
 # A third of a million vertices arrives by default and stutters in the viewport.
 # Matches the workspace's own display budget.
 _DISPLAY_BUDGET = 300_000
@@ -327,7 +332,12 @@ class ColmapOpenMvsReconstructor:
         )
 
         model = pick_model_directory(sparse)
-        if model is not None and not mapped.ok:
+        # A timeout escapes the output-is-the-truth rule, and must. It leaves no
+        # model behind either, so without this the user of a large capture is
+        # told to go and take *more* photographs - which is the opposite of
+        # what would help.
+        timed_out = not mapped.ok and _TOO_LONG in mapped.error
+        if not mapped.ok and (model is not None or timed_out):
             return mapped  # type: ignore[return-value]
         if model is None:
             return failure(
@@ -429,7 +439,7 @@ class ColmapOpenMvsReconstructor:
             )
         except subprocess.TimeoutExpired:
             return failure(
-                f"{stage.describe} took too long and was stopped",
+                f"{stage.describe} {_TOO_LONG}",
                 f"It ran for over {settings.timeout_seconds / 60:.0f} minutes. Fewer "
                 "or smaller photographs, or a lower quality setting, will finish.",
             )

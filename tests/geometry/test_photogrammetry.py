@@ -246,3 +246,75 @@ class TestQuality:
 
     def test_an_empty_mesh_still_describes_without_raising(self):
         assert Reconstruction(Mesh.empty()).describe()
+
+
+class TestWhenMappingGoesWrong:
+    """Mapping is judged by its output, and a timeout is the exception.
+
+    The rule exists because the mapper fails two ways and only one is loud.
+    The exception exists because a timeout leaves no model *either*, and
+    without it a user whose large capture ran out of time is told to go and
+    take more photographs - the opposite of what would help.
+    """
+
+    def reconstructor(self, tmp_path, outcome):
+        from modelpop.domain.result import failure as fail
+        from modelpop.domain.result import success as ok
+
+        class Fake(ColmapOpenMvsReconstructor):
+            def _step(self, stage, command, scratch, settings, on_progress):
+                if stage is Stage.MAPPING:
+                    return outcome
+                return ok(stage.name)
+
+        colmap = tmp_path / "colmap.exe"
+        colmap.write_bytes(b"x")
+        tools = tmp_path / "mvs"
+        tools.mkdir()
+        for name in ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh"):
+            (tools / f"{name}.exe").write_bytes(b"x")
+
+        class Io:
+            def load(self, path):
+                return fail("not reached")
+
+            def save(self, mesh, path):
+                return fail("not reached")
+
+            def supported_suffixes(self):
+                return frozenset()
+
+        return Fake(mesh_io=Io(), colmap=colmap, openmvs=tools, lease=None)
+
+    def photos(self, tmp_path):
+        from modelpop.domain.photo_set import PhotoSet
+
+        folder = tmp_path / "shots"
+        folder.mkdir()
+        for index in range(5):
+            (folder / f"p{index}.jpg").write_bytes(b"x")
+        return PhotoSet.of(folder.glob("*.jpg"))
+
+    def test_a_capture_that_will_not_solve_gets_advice_not_colmaps_words(self, tmp_path):
+        from modelpop.domain.result import failure as fail
+
+        noisy = fail("Working out where the camera was failed", "E2026 sfm.cc:310 Failed")
+        outcome = self.reconstructor(tmp_path, noisy).reconstruct(self.photos(tmp_path))
+
+        assert not outcome.ok
+        assert "could not be pieced together" in outcome.reason
+        assert "overlap" in outcome.detail
+        assert "sfm.cc" not in outcome.detail, "COLMAP's own words reached the user"
+
+    def test_a_timeout_says_it_timed_out_rather_than_blaming_the_photographs(self, tmp_path):
+        from modelpop.domain.result import failure as fail
+
+        slow = fail(
+            "Working out where the camera was for each one took too long and was stopped",
+            "It ran for over 60 minutes.",
+        )
+        outcome = self.reconstructor(tmp_path, slow).reconstruct(self.photos(tmp_path))
+
+        assert not outcome.ok
+        assert "took too long" in outcome.reason
+        assert "pieced together" not in outcome.reason, "wrong advice for a timeout"
