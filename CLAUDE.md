@@ -140,6 +140,17 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    background is a gradient, so "differs from the top-left pixel" counts most of the sky as drawn
    and swamps the model. That reading cost an hour and nearly bought a mapper swap that fixed
    nothing - PyVista's default `vtkDataSetMapper` honours clipping planes perfectly well.
+11. **This display scales at 150%, so the VTK render window is 1.5x the Qt widget.** Measured: a
+   700x600 `QtInteractor` owns a 1050x900 render window. `vtkCoordinate` returns *render window*
+   pixels, so any synthetic Qt mouse event built from a world position must be divided by that
+   ratio first. Getting it wrong sends the click hundreds of pixels away and every widget under
+   test looks broken while working perfectly - it cost most of a debugging session on the drag
+   handles, which turned out never to have been faulty.
+12. **The affine drag widget works; its arrows start at the part's centre.** Half of each arrow is
+   inside the geometry, and PyVista reports nothing until the mouse is released. Hover-highlight,
+   press, drag and release were all verified by hand through the real window. Before changing that
+   widget, reproduce with correct coordinates (trap 11) - the picker and `always_visible` are not
+   the problem.
 
 ## Style
 
