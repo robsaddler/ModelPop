@@ -215,6 +215,16 @@ class DocumentHistory:
         """What redo would reapply, for the menu item."""
         return self._entries[self._index + 1].label if self.can_redo else None
 
+    @property
+    def undone_labels(self) -> tuple[str, ...]:
+        """What has been undone, oldest first - what redo would put back.
+
+        The view shows these greyed under the tree. Without them an undone
+        step simply vanishes, and the only evidence that redo would bring
+        something back is whether a button happens to be enabled.
+        """
+        return tuple(entry.label for entry in self._entries[self._index + 1 :])
+
     def push(self, document: Document, label: str) -> None:
         """Record a new state, discarding any redo branch."""
         del self._entries[self._index + 1 :]

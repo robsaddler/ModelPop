@@ -119,6 +119,42 @@ class FakeCompiler:
 
 
 @dataclass
+class DisplacedCompiler(FakeCompiler):
+    """A compiler whose part is *not* neatly on the origin.
+
+    ``FakeCompiler`` always hands back a cube already seated on the plate and
+    centred on it - the one arrangement in which both "drop it on the bed" and
+    "centre it on the plate" correctly do nothing. Anything testing those needs
+    a part that is somewhere else, which is also the arrangement a real model
+    arrives in.
+    """
+
+    down: float = 0.0
+    """How far the part is sunk through the plate, in millimetres."""
+
+    across: float = 0.0
+    """How far it sits off to one side."""
+
+    def build(
+        self,
+        document: Document,
+        timeout_seconds: float = 60.0,
+        part: Part = Part.WHOLE,
+    ) -> Result[ScriptResult]:
+        built = super().build(document, timeout_seconds, part)
+        if not built.ok:
+            return built
+        result = built.unwrap()
+        moved = result.mesh.vertices + np.array([self.across, 0.0, -self.down])
+        return success(
+            ScriptResult(
+                mesh=Mesh(moved, result.mesh.faces),
+                measurements=result.measurements,
+            )
+        )
+
+
+@dataclass
 class FakeIO:
     """Writes a mesh by noting where it was asked to put it."""
 

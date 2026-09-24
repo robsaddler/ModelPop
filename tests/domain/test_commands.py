@@ -221,3 +221,62 @@ class TestInvariants:
     def test_applying_the_same_command_twice_gives_the_same_result_both_times(self, command):
         document = Document()
         assert command.apply(document).content_hash == command.apply(document).content_hash
+
+
+class TestWhatHasBeenUndone:
+    """Undone steps stay knowable, so a view can show them greyed.
+
+    Asked for directly: an undone step used to vanish from the tree, and the
+    only evidence that redo would bring anything back was whether a button
+    happened to be enabled.
+    """
+
+    def history(self) -> DocumentHistory:
+        history = DocumentHistory()
+        for label in ("a box", "a fillet", "a hollow"):
+            history.push(history.current, label)
+        return history
+
+    def test_nothing_is_undone_to_begin_with(self):
+        assert self.history().undone_labels == ()
+
+    def test_one_undo_leaves_one_step_waiting(self):
+        history = self.history()
+        history.undo()
+        assert history.undone_labels == ("a hollow",)
+
+    def test_they_come_back_oldest_first_which_is_redo_order(self):
+        """The order matters: it is the order redo will put them back in."""
+        history = self.history()
+        history.undo()
+        history.undo()
+        assert history.undone_labels == ("a fillet", "a hollow")
+
+    def test_redoing_takes_one_off_the_list_again(self):
+        history = self.history()
+        history.undo()
+        history.undo()
+        history.redo()
+        assert history.undone_labels == ("a hollow",)
+
+    def test_a_new_step_discards_the_branch_that_was_waiting(self):
+        """Doing something else after an undo is what throws redo away."""
+        history = self.history()
+        history.undo()
+        assert history.undone_labels == ("a hollow",)
+
+        history.push(history.current, "a chamfer instead")
+        assert history.undone_labels == ()
+        assert not history.can_redo
+
+    def test_the_list_agrees_with_can_redo(self):
+        history = self.history()
+        assert bool(history.undone_labels) == history.can_redo
+        history.undo()
+        assert bool(history.undone_labels) == history.can_redo
+
+    def test_the_first_of_them_is_what_redo_would_do(self):
+        history = self.history()
+        history.undo()
+        history.undo()
+        assert history.undone_labels[0] == history.redo_label

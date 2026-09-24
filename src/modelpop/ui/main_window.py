@@ -60,6 +60,7 @@ from modelpop.ui.dialogs import (
     SettingsDialog,
 )
 from modelpop.ui.monitor_dialog import MonitorDialog
+from modelpop.ui.place_dialog import PlaceDialog
 from modelpop.ui.reconstruct_dialog import ReconstructDialog
 from modelpop.ui.section_dialog import SectionDialog
 from modelpop.ui.variants_panel import VariantsPanel
@@ -169,6 +170,7 @@ class MainWindow(QMainWindow):
         self._measuring = MeasuringTool()
         self._section = SectionTool()
         self._section_panel: SectionDialog | None = None
+        self._place_panel: PlaceDialog | None = None
         self._pressed_at: QPoint | None = None
         self._findings = QListWidget()
         self._summary = QLabel("Open a model to begin.")
@@ -268,6 +270,7 @@ class MainWindow(QMainWindow):
         panel = QTabWidget()
         panel.addTab(readiness, "Print readiness")
         self._cad_panel = CadPanel(self._modelling)
+        self._cad_panel.place_requested.connect(self._open_place_panel)
         panel.addTab(self._cad_panel, "CAD tools")
         panel.setFixedWidth(420)
 
@@ -378,6 +381,11 @@ class MainWindow(QMainWindow):
         self._section_action.toggled.connect(self._set_section)
         view_menu.addAction(self._section_action)
 
+        self._place_action = QAction("&Move and turn it...", self)
+        self._place_action.setShortcut(QKeySequence("Ctrl+Shift+M"))
+        self._place_action.triggered.connect(self._open_place_panel)
+        view_menu.addAction(self._place_action)
+
         self._drag_action = QAction("&Drag it about", self)
         self._drag_action.setCheckable(True)
         self._drag_action.setShortcut(QKeySequence("Ctrl+D"))
@@ -406,6 +414,27 @@ class MainWindow(QMainWindow):
 
     # -------------------------------------------------------------- dragging
 
+    def _open_place_panel(self) -> None:
+        """Open the panel that moves the part with buttons rather than a gizmo.
+
+        Kept once opened, so the step size and axis the user chose survive
+        closing it - placing a part is a lot of small repeated adjustments.
+        """
+        if self._modelling.state.is_empty:
+            QMessageBox.information(
+                self,
+                "ModelPop",
+                "Moving works on a part with a feature tree.\n\n"
+                "Start one in the CAD tools tab, or describe what you want.",
+            )
+            return
+
+        if self._place_panel is None:
+            self._place_panel = PlaceDialog(self._modelling, self)
+        self._place_panel.show()
+        self._place_panel.raise_()
+        self._place_panel.activateWindow()
+
     def _set_dragging(self, on: bool) -> None:
         """Put drag handles on the model, or take them off.
 
@@ -430,7 +459,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self._scene.start_dragging(self._dragged):
+        if not self._scene.start_dragging(self._dragged, self._dragging):
             self._drag_action.setChecked(False)
             self.statusBar().showMessage("There is nothing on the plate to drag.")
             return
@@ -440,6 +469,15 @@ class MainWindow(QMainWindow):
             "Drag an arrow to move the part, or a ring to turn it. "
             "Each drag joins the feature tree and undoes."
         )
+
+    def _dragging(self, matrix: object) -> None:
+        """Say how far the part has moved, while it is still moving.
+
+        Qt is not touched from a worker here - the widget's callbacks run on
+        the interface thread, because that is where the mouse events arrive.
+        """
+        drag = movement_in(matrix)  # type: ignore[arg-type]
+        self.statusBar().showMessage(drag.describe())
 
     def _dragged(self, matrix: object) -> None:
         """Turn a released drag into commands on the bus.

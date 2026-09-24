@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -50,6 +50,9 @@ __all__ = ["CadPanel", "TextDialog"]
 _HINT_STYLE = "color: #9AA5B1; font-size: 11px;"
 _ASSISTANT_COLOUR = "#9FC5E8"
 _SUPPRESSED_COLOUR = "#6B7280"
+# Undone steps are dimmer still: they are not part of the model at all, they
+# are only waiting to be put back.
+_UNDONE_COLOUR = "#4B5563"
 
 # Which way a row of copies runs. Tuples so the spacing multiplies straight
 # into an offset without a branch per direction.
@@ -181,6 +184,14 @@ class _PanelSignals(QObject):
 
 class CadPanel(QWidget):
     """The CAD toolbar and the feature tree."""
+
+    place_requested = Signal()
+    """Open the panel that moves and turns the part.
+
+    Raised here rather than opened here, because the panel belongs to the
+    window: the viewport has to be visible beside it, and the window is what
+    owns tool windows.
+    """
 
     def __init__(
         self,
@@ -448,6 +459,15 @@ class CadPanel(QWidget):
         self._redo_button.clicked.connect(self._view.redo)
         history_row.addWidget(self._redo_button)
 
+        # Next to undo because it belongs to the same idea: this is where the
+        # steps that make up the part are, and moving it is one of them.
+        self._place_button = QPushButton("Move and turn...")
+        self._place_button.setToolTip(
+            "Nudge it, turn it, drop it on the bed - without having to hit a handle with the mouse."
+        )
+        self._place_button.clicked.connect(self.place_requested.emit)
+        history_row.addWidget(self._place_button)
+
         history_row.addStretch(1)
 
         new_model = QPushButton("Start again")
@@ -561,8 +581,27 @@ class CadPanel(QWidget):
                 item.setForeground(QColor(_SUPPRESSED_COLOUR))
             self._tree.addItem(item)
 
+        self._show_what_was_undone(state)
+
         self._status.setText(state.describe())
         self._refresh()
+
+    def _show_what_was_undone(self, state: ModelState) -> None:
+        """List the undone steps under the tree, greyed and unselectable.
+
+        Asked for directly: an undone step used to vanish, so the only sign
+        that redo would bring anything back was a button being enabled. Now
+        the step stays on screen, dimmed, in the order redo would restore it.
+
+        They are not rows of the model, so they carry no number and cannot be
+        selected - nothing in the tree's own editing applies to them.
+        """
+        for label in state.undone:
+            item = QListWidgetItem(f"↷ {label}")
+            item.setForeground(QColor(_UNDONE_COLOUR))
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            item.setToolTip("Undone. Redo puts this back.")
+            self._tree.addItem(item)
 
     def _refresh(self) -> None:
         """Enable only what the model's current state actually allows."""
@@ -589,6 +628,7 @@ class CadPanel(QWidget):
         self._instruction.setEnabled(self._view.can_describe_a_change)
         self._say_what_a_description_would_do()
         self._split_button.setEnabled(self._view.can_split_colours)
+        self._place_button.setEnabled(operable)
         self._undo_button.setEnabled(self._view.can_undo)
         self._redo_button.setEnabled(self._view.can_redo)
         self._undo_button.setToolTip(self._view.state.undo_label)

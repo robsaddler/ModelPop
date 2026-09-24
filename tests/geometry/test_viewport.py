@@ -11,6 +11,8 @@ to skip it. Everything else here - conversion, camera, picking - is pure VTK
 object work and runs anywhere.
 """
 
+from typing import Any
+
 import numpy as np
 import pytest
 import pyvista as pv
@@ -457,6 +459,28 @@ class TestDragHandles:
         assert scene.start_dragging(lambda _: None) is True
         assert scene.is_dragging
 
+    @pytest.mark.renders
+    def test_it_reports_the_offset_while_the_drag_is_still_happening(self, plotter_on_screen):
+        """Silence until the mouse comes up is what made this feel broken.
+
+        Driven by hand with synthetic mouse events, the handles translate and
+        rotate exactly as intended - but nothing says so until release, so a
+        drag that missed the arrow and a drag that worked look identical for
+        as long as the user holds the button down.
+        """
+        scene = ViewportScene(plotter_on_screen)
+        scene.show_mesh(unit_cube(20))
+        told: list[object] = []
+
+        assert scene.start_dragging(lambda _: None, told.append)
+        assert scene._drag_widget._user_interact_callback is not None
+
+    def test_a_drag_without_live_reporting_is_still_allowed(self, plotter):
+        """The callback is optional, so nothing else has to pass one."""
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(20))
+        assert scene.start_dragging(lambda _: None) is True
+
     def test_there_is_nothing_to_drag_before_a_model_is_open(self, plotter):
         assert ViewportScene(plotter).start_dragging(lambda _: None) is False
 
@@ -516,3 +540,73 @@ class TestDragHandles:
 
         scene.stop_dragging()
         assert not scene.is_dragging
+
+
+class TestNamingThePrinter:
+    """The wireframe box has to say whose build volume it is.
+
+    Without the label the box reads as scenery. The user asked the question
+    directly - "what is the empty cube I start with?" - and then, separately,
+    a sphere appearing half through the plate looked like a bug rather than a
+    shape that had not been put on the bed yet. Both are the same missing
+    sentence.
+    """
+
+    # VTK numbers the corners of a CornerAnnotation, and upper-left is 2.
+    # Reading the text out of that slot is the positional assertion: if the
+    # label moved to another corner, its own corner would come back empty.
+    UPPER_LEFT = 2
+
+    def label_in(self, plotter) -> Any:
+        return plotter.renderer.actors.get("printer-label")
+
+    def text_in(self, plotter) -> str:
+        actor = self.label_in(plotter)
+        assert actor is not None, "there is no printer label in the scene at all"
+        return actor.GetText(self.UPPER_LEFT) or ""
+
+    def test_the_scene_names_the_printer(self, plotter):
+        ViewportScene(plotter, PrinterProfile.p2s())
+        assert "Bambu Lab P2S" in self.text_in(plotter)
+
+    def test_it_says_what_the_box_measures(self, plotter):
+        """So the box is readable as a size, not just as a name."""
+        ViewportScene(plotter, PrinterProfile.p2s())
+        told = self.text_in(plotter)
+        assert told.count("256") == 3
+        assert "build volume" in told
+
+    def test_it_names_whichever_printer_it_was_given(self, plotter):
+        """Not a hard-coded string. A different profile must say so."""
+        other = PrinterProfile(
+            model="Something Else X1",
+            build_width=Length.mm(180),
+            build_depth=Length.mm(180),
+            build_height=Length.mm(180),
+        )
+        ViewportScene(plotter, other)
+        told = self.text_in(plotter)
+        assert "Something Else X1" in told
+        assert "Bambu" not in told
+        assert "180" in told
+
+    def test_it_is_in_the_top_left_and_nowhere_else(self, plotter):
+        """Where it was asked for - the top right was the first attempt."""
+        ViewportScene(plotter, PrinterProfile.p2s())
+        actor = self.label_in(plotter)
+        # An unused corner comes back as None rather than an empty string.
+        corners = {index: actor.GetText(index) or "" for index in range(4)}
+
+        assert "Bambu Lab P2S" in corners[self.UPPER_LEFT]
+        occupied = [index for index, text in corners.items() if text.strip()]
+        assert occupied == [self.UPPER_LEFT], (
+            f"the label is drawn in corners {occupied}, not the top left alone"
+        )
+
+    def test_it_survives_a_model_arriving_and_leaving(self, plotter):
+        """Showing and clearing a model must not take the label with it."""
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_mesh(unit_cube(40))
+        assert "Bambu Lab P2S" in self.text_in(plotter)
+        scene.clear_model()
+        assert "Bambu Lab P2S" in self.text_in(plotter)

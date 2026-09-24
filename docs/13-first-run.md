@@ -56,6 +56,10 @@ In the **CAD tools** tab: **Box**, then **Round**, then **Hollow** with a face l
 You should get: a feature tree with three steps, each readable as a sentence, and **undo** stepping
 back through them. Change the box's size and everything after it rebuilds.
 
+Then **Move and turn...** in the same tab. New shapes are built centred on the origin, so
+half of one sits below the plate until you press **Drop it on the bed** - which is the button to
+reach for whenever something looks welded through the bed.
+
 Then **View → Cut it open** (Ctrl+K) and drag the slider through it — this is the only way to see
 whether the hollow really came out at the wall thickness you asked for.
 

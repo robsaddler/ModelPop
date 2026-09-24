@@ -153,6 +153,7 @@ class ViewportScene:
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._draw_build_volume()
+        self._name_the_printer()
 
     # ----------------------------------------------------------------- scene
 
@@ -180,6 +181,25 @@ class ViewportScene:
             opacity=0.5,
             name="build-envelope",
             pickable=False,
+        )
+
+    def _name_the_printer(self) -> None:
+        """Say whose build volume that wireframe box is.
+
+        Drawn in the envelope's own colour, which is the point: the label and
+        the box it names are visibly the same thing. Without it the box reads
+        as scenery, and a new model appearing half inside it looks like a bug
+        rather than a shape that has not been put on the bed yet.
+        """
+        width, depth, height = self._printer.envelope
+        self._plotter.add_text(
+            f"{self._printer.model}\n"
+            f"{width.format(places=0)} x {depth.format(places=0)} x "
+            f"{height.format(places=0)} build volume",
+            position="upper_left",
+            font_size=11,
+            color=ENVELOPE_COLOUR,
+            name="printer-label",
         )
 
     def show_mesh(self, mesh: Mesh | None, *, has_problems: bool = False) -> None:
@@ -253,12 +273,21 @@ class ViewportScene:
 
     # ------------------------------------------------------------- dragging
 
-    def start_dragging(self, on_release: Callable[[Any], None]) -> bool:
+    def start_dragging(
+        self,
+        on_release: Callable[[Any], None],
+        on_move: Callable[[Any], None] | None = None,
+    ) -> bool:
         """Put translate and rotate handles on the model.
 
         Returns whether there was anything to put them on. The caller needs to
         know: a menu item that silently does nothing is worse than one that is
         greyed out.
+
+        ``on_move`` is told the live transform during a drag. Without it a drag
+        that is not working and a drag that is working look identical until the
+        mouse comes up, which is exactly how this felt broken: the arrow lights
+        up, the part moves a few pixels, and nothing says what is happening.
 
         The widget is re-made on every model, because it is attached to an
         *actor* and every rebuild replaces that actor. Left alone it would go
@@ -274,6 +303,7 @@ class ViewportScene:
             self._drag_widget = self._plotter.add_affine_transform_widget(
                 self._model_actor,
                 release_callback=on_release,
+                interact_callback=on_move,
                 scale=HANDLE_SCALE,
                 line_radius=HANDLE_THICKNESS,
                 axes_colors=("#F2765A", "#6FCF97", "#6FA8DC"),

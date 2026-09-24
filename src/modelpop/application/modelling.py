@@ -101,6 +101,9 @@ class ModelState:
     can_redo: bool = False
     undo_label: str = ""
     redo_label: str = ""
+    # What has been undone, oldest first. Shown greyed beneath the tree so an
+    # undone step is visibly waiting rather than simply gone.
+    undone: tuple[str, ...] = ()
     rebuild_seconds: float = 0.0
 
     @property
@@ -372,6 +375,7 @@ class ModellingSession:
                 can_redo=self._bus.history.can_redo,
                 undo_label=self._bus.history.undo_label or "",
                 redo_label=self._bus.history.redo_label or "",
+                undone=self._bus.history.undone_labels,
             )
             return success(self._state)
 
@@ -388,6 +392,7 @@ class ModellingSession:
             can_redo=self._bus.history.can_redo,
             undo_label=self._bus.history.undo_label or "",
             redo_label=self._bus.history.redo_label or "",
+            undone=self._bus.history.undone_labels,
             rebuild_seconds=result.duration_seconds,
         )
         return success(self._state)

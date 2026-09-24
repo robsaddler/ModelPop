@@ -145,17 +145,44 @@ all useful rather than one where every position is a hair's breadth from the mid
 
 ---
 
-## Moving it by hand
+## Moving it
 
-**View → Drag it about** (Ctrl+D) puts handles on the part: an arrow to move it, a ring to turn it.
+Two ways, and the buttons are the one to reach for first.
 
-A drag is not a special case. It ends as the same **move** and **rotate** steps the toolbar emits,
-so it joins the feature tree, reads back as a sentence and undoes in one step.
+### With buttons (the reliable way)
 
-It only works on a part with a feature tree — an imported mesh has nowhere to put the steps, and
-the app says so rather than letting you drag something that springs back. A twist about two axes at
-once is refused rather than rounded to the nearest one, because rounding would put the part
-somewhere you did not ask for; turn about one axis at a time.
+**Move and turn...** in the CAD tools tab, or **View → Move and turn it...** (Ctrl+Shift+M).
+
+Six direction buttons, a step size, quarter turns about any axis, and the two placements worth
+having on a button of their own:
+
+- **Drop it on the bed** puts the lowest point of the part on the plate. It lifts as well as drops,
+  so a shape sitting half through the bed — which is where a new one starts, because shapes are
+  built centred on the origin — is fixed in one click.
+- **Centre it on the plate** slides it over the middle and leaves the height alone.
+
+The arrow keys move it about the plate while the panel has focus, and Page Up and Page Down raise
+and lower it. The line at the top says where the part is now, so you can see each nudge land.
+
+### With handles in the viewport
+
+**View → Drag it about** (Ctrl+D) puts handles on the part: an arrow to move it, a ring to
+turn it. The status bar shows how far it has gone while you are still dragging.
+
+Worth knowing: the handles start at the *centre* of the part, so the inner half of each arrow is
+inside the shape itself. Aim at the outer end of an arrow, away from the geometry. That is why fine
+placement is easier with the buttons.
+
+### Either way, it is a step in the tree
+
+A drag is not a special case, and neither is a button. Both end as the same **move** and **rotate**
+steps the toolbar emits, so they join the feature tree, read back as a sentence and undo in one
+step.
+
+Both need a part with a feature tree — an imported mesh has nowhere to put the steps, and the
+app says so rather than letting you move something that springs back on the next rebuild. A twist
+about two axes at once is refused rather than rounded to the nearest one, because rounding would
+put the part somewhere you did not ask for; turn about one axis at a time.
 
 ---
 
