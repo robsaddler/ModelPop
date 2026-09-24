@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from modelpop.application.cad_ports import (
+    BuiltBody,
     FeatureCompiler,
     Part,
     ScriptResult,
@@ -68,6 +69,13 @@ def cube(size: float = 10.0) -> Mesh:
     return Mesh(vertices, faces)
 
 
+def _shifted(mesh: Mesh, along_x: float) -> Mesh:
+    """The same shape, standing somewhere else."""
+    if not along_x:
+        return mesh
+    return Mesh(mesh.vertices + np.array([along_x, 0.0, 0.0]), mesh.faces)
+
+
 @dataclass
 class FakeCompiler:
     """A compiler that builds whatever it is given, unless told otherwise."""
@@ -105,15 +113,24 @@ class FakeCompiler:
             f.name == self.refuse_containing for f in document.active_features
         ):
             return failure("The kernel refused it", "OCCT could not make that shape.")
+        measured = SolidMeasurements(
+            volume_mm3=1000.0,
+            width=Length.mm(10),
+            depth=Length.mm(10),
+            height=Length.mm(10),
+        )
+        # One body per object in the document, spaced apart so a test can tell
+        # them from each other. The real compiler builds every object in one
+        # subprocess and hands them back the same way.
+        bodies = tuple(
+            BuiltBody(body=body, mesh=_shifted(cube(), index * 30.0), measurements=measured)
+            for index, body in enumerate(document.body_ids)
+        )
         return success(
             ScriptResult(
-                mesh=cube(),
-                measurements=SolidMeasurements(
-                    volume_mm3=1000.0,
-                    width=Length.mm(10),
-                    depth=Length.mm(10),
-                    height=Length.mm(10),
-                ),
+                mesh=bodies[0].mesh if bodies else cube(),
+                measurements=measured,
+                bodies=bodies,
             )
         )
 

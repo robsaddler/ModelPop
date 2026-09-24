@@ -18,6 +18,7 @@ from modelpop.domain.result import Result
 from modelpop.domain.units import Length
 
 __all__ = [
+    "BuiltBody",
     "CadKernel",
     "Dimension",
     "DimensionTable",
@@ -104,14 +105,30 @@ class SolidMeasurements:
 
 
 @dataclass(frozen=True, slots=True)
+class BuiltBody:
+    """One object the script produced, and what it measures."""
+
+    body: str
+    mesh: Mesh
+    measurements: SolidMeasurements
+
+
+@dataclass(frozen=True, slots=True)
 class ScriptResult:
-    """The outcome of running a generated CAD script."""
+    """The outcome of running a generated CAD script.
+
+    ``mesh`` and ``measurements`` describe the *first* object, which is all a
+    single-object scene has and what everything expecting one solid still
+    reads. ``bodies`` is the whole scene, in the order the objects were
+    started.
+    """
 
     mesh: Mesh
     measurements: SolidMeasurements
     step_path: Path | None = None
     stdout: str = ""
     duration_seconds: float = 0.0
+    bodies: tuple[BuiltBody, ...] = ()
 
 
 @runtime_checkable

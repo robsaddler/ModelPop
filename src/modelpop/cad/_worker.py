@@ -94,6 +94,50 @@ def _find_result(namespace: dict[str, Any]) -> Any:
     return None
 
 
+def _find_bodies(namespace: dict[str, Any]) -> dict[str, Any]:
+    """The scene's objects, if the script built a scene rather than one part.
+
+    A scene script collects each object into ``results`` keyed by body id. One
+    run of this worker therefore produces every object on the plate, which is
+    the point: an OCCT rebuild is a couple of seconds and a maker with five
+    objects must not wait five times that for one nudge.
+    """
+    found = namespace.get("results")
+    if not isinstance(found, dict):
+        return {}
+    return {str(key): value for key, value in found.items() if _looks_like_a_solid(value)}
+
+
+def _report_bodies(bodies: dict[str, Any], output_dir: Path, started: float) -> dict[str, Any]:
+    """Measure and export every object the scene produced."""
+    from build123d import export_stl
+
+    reported: list[dict[str, Any]] = []
+    for index, (body, solid) in enumerate(bodies.items()):
+        try:
+            measurements = _measure(solid)
+        except Exception as exc:
+            return {"ok": False, "error": f"{body} could not be measured: {exc}"}
+        if measurements["volume_mm3"] <= 0:
+            return {"ok": False, "error": f"{body} came out with no volume"}
+
+        # Named by position rather than by body id: an id is user-visible text
+        # and has no business being a file name.
+        stl_path = output_dir / f"body-{index}.stl"
+        try:
+            export_stl(solid, str(stl_path), tolerance=0.01, angular_tolerance=0.1)
+        except Exception as exc:
+            return {"ok": False, "error": f"{body} could not be tessellated: {exc}"}
+
+        reported.append({"body": body, "stl": str(stl_path), "measurements": measurements})
+
+    return {
+        "ok": True,
+        "bodies": reported,
+        "duration_seconds": time.perf_counter() - started,
+    }
+
+
 def run_job(job: dict[str, Any]) -> dict[str, Any]:
     """Execute one script and write its outputs."""
     started = time.perf_counter()
@@ -120,6 +164,10 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
             "error": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(limit=5),
         }
+
+    bodies = _find_bodies(namespace)
+    if bodies:
+        return _report_bodies(bodies, output_dir, started)
 
     solid = _find_result(namespace)
     if solid is None:

@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 
 from modelpop.application.cad_ports import Part
 from modelpop.domain.cad_commands import command_from
-from modelpop.domain.commands import CommandBus, Document, DocumentHistory, Origin
+from modelpop.domain.commands import FIRST_BODY, CommandBus, Document, DocumentHistory, Origin
+from modelpop.domain.mesh import Mesh
 from modelpop.domain.result import Result, failure, success
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     from modelpop.application.ports import MeshIO
     from modelpop.application.project_ports import ProjectStore
     from modelpop.domain.commands import Command, Feature
-    from modelpop.domain.mesh import Mesh
+    from modelpop.domain.mesh import BoundingBox, Mesh
 
 __all__ = ["ColourParts", "FeatureLine", "ModelState", "ModellingSession"]
 
@@ -91,6 +92,21 @@ class FeatureLine:
 
 
 @dataclass(frozen=True, slots=True)
+class SceneBody:
+    """One object in the scene, as the interface needs to see it."""
+
+    id: str
+    label: str
+    mesh: Mesh
+    measurements: SolidMeasurements
+
+    @property
+    def bounds(self) -> BoundingBox:
+        """Where it stands, in millimetres."""
+        return self.mesh.bounds
+
+
+@dataclass(frozen=True, slots=True)
 class ModelState:
     """Everything known about the parametric model currently open."""
 
@@ -105,6 +121,26 @@ class ModelState:
     # undone step is visibly waiting rather than simply gone.
     undone: tuple[str, ...] = ()
     rebuild_seconds: float = 0.0
+
+    bodies: tuple[SceneBody, ...] = ()
+    """Every object on the plate, in the order they were started.
+
+    ``mesh`` is all of them together, which is what the readiness checks, the
+    slicer and the exporter want. This is what the viewport draws, because a
+    scene of separate objects has to be pickable and movable one at a time.
+    """
+
+    selected: str = ""
+    """Which object the toolbar and the handles act on. Empty means none."""
+
+    @property
+    def selected_body(self) -> SceneBody | None:
+        """The object currently being worked on."""
+        return next((b for b in self.bodies if b.id == self.selected), None)
+
+    def body(self, body_id: str) -> SceneBody | None:
+        """One object by id."""
+        return next((b for b in self.bodies if b.id == body_id), None)
 
     @property
     def has_geometry(self) -> bool:
@@ -181,6 +217,10 @@ class ModellingSession:
         self._io = mesh_io
         self._bus = CommandBus()
         self._state = ModelState()
+        # Which object the toolbar acts on. A maker adds a shape and expects
+        # the next thing they do to happen to *that* shape.
+        self._selected = ""
+        self._next_body = 1
 
     @property
     def state(self) -> ModelState:
@@ -192,17 +232,89 @@ class ModellingSession:
         """Whether a rebuild is possible right now."""
         return self._compiler is not None and self._compiler.is_available()
 
+    # -------------------------------------------------------------- the scene
+
+    @property
+    def selected(self) -> str:
+        """Which object is being worked on. Empty when there is none."""
+        return self._selected
+
+    def select(self, body: str) -> Result[ModelState]:
+        """Work on a different object from now on.
+
+        No rebuild: nothing about the geometry changes, only which of it the
+        next command lands on.
+        """
+        if body and body not in self._bus.document.body_ids:
+            return failure("There is no such object", body)
+        self._selected = body
+        self._state = replace(self._state, selected=body)
+        return success(self._state)
+
+    def start_a_new_body(self) -> str:
+        """Reserve an id for an object that does not exist yet."""
+        while True:
+            self._next_body += 1
+            candidate = f"body-{self._next_body}"
+            if candidate not in self._bus.document.body_ids:
+                return candidate
+
+    def _settle_selection(self, bodies: tuple[SceneBody, ...]) -> str:
+        """Keep the selection pointing at something real.
+
+        An object can vanish under the selection - undo, or a delete - and a
+        toolbar aimed at nothing is how a click ends up doing nothing with no
+        explanation.
+        """
+        ids = [b.id for b in bodies]
+        if self._selected not in ids:
+            self._selected = ids[-1] if ids else ""
+        return self._selected
+
+    def delete(self, body: str) -> Result[ModelState]:
+        """Remove an object and everything that shaped it."""
+        if body not in self._bus.document.body_ids:
+            return failure("There is no such object", body)
+        label = self._bus.document.label_for(body)
+        self._bus.set_document(self._bus.document.without_body(body), f"Delete {label}")
+        if self._selected == body:
+            self._selected = ""
+        return self._rebuild()
+
+    def rename(self, body: str, label: str) -> Result[ModelState]:
+        """Call an object something else."""
+        wanted = label.strip()
+        if not wanted:
+            return failure("An object needs a name")
+        if body not in self._bus.document.body_ids:
+            return failure("There is no such object", body)
+        self._bus.set_document(self._bus.document.named(body, wanted), f"Rename to {wanted}")
+        return self._rebuild()
+
     # ------------------------------------------------------------- changing
 
-    def apply(self, command: Command, origin: Origin = Origin.USER) -> Result[ModelState]:
-        """Apply a command, rebuild, and keep it only if the rebuild worked.
+    def apply(
+        self,
+        command: Command,
+        origin: Origin = Origin.USER,
+        body: str | None = None,
+    ) -> Result[ModelState]:
+        """Apply a command to one object, rebuild, and keep it only if it worked.
 
         A command the kernel refuses leaves the model exactly as it was. The
         alternative - appending it anyway and reporting an error - gives the
         user a broken model *and* a broken history, and they then have to
         realise that undoing is what fixes it.
+
+        Args:
+            command: what to do.
+            origin: who asked.
+            body: which object to do it to. ``None`` means the selected one,
+                or the first object in a scene that has only one.
         """
-        self._bus.execute(command, origin)
+        target = body or self._selected or FIRST_BODY
+        self._bus.execute(command, origin, target)
+        self._selected = target
 
         rebuilt = self._rebuild()
         if rebuilt.ok:
@@ -369,6 +481,7 @@ class ModellingSession:
             # one was why undoing the *first* step disabled Redo: there was
             # nothing to rebuild, so the flags that drive the buttons were
             # never carried across and defaulted to False.
+            self._selected = ""
             self._state = ModelState(
                 document=self._bus.document,
                 can_undo=self._bus.history.can_undo,
@@ -384,10 +497,24 @@ class ModellingSession:
             return built  # type: ignore[return-value]
 
         result = built.unwrap()
+        bodies = tuple(
+            SceneBody(
+                id=one.body,
+                label=self._bus.document.label_for(one.body),
+                mesh=one.mesh,
+                measurements=one.measurements,
+            )
+            for one in result.bodies
+        )
+        # Everything on the plate as one mesh. Concatenated, not fused: two
+        # objects that touch are still two objects.
+        whole = Mesh.all_of([b.mesh for b in bodies]) if bodies else result.mesh
         self._state = ModelState(
             document=self._bus.document,
-            mesh=result.mesh,
+            mesh=whole,
             measurements=result.measurements,
+            bodies=bodies,
+            selected=self._settle_selection(bodies),
             can_undo=self._bus.history.can_undo,
             can_redo=self._bus.history.can_redo,
             undo_label=self._bus.history.undo_label or "",

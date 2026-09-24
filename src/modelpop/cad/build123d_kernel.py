@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from modelpop.application.cad_ports import ScriptResult, SolidMeasurements
+from modelpop.application.cad_ports import BuiltBody, ScriptResult, SolidMeasurements
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.result import Result, failure, success
 from modelpop.domain.units import Length
@@ -222,6 +222,8 @@ class Build123dKernel:
 
     def _collect(self, outcome: dict[str, Any], stdout: str) -> Result[ScriptResult]:
         """Load the worker's output before its directory is swept away."""
+        if outcome.get("bodies"):
+            return self._collect_bodies(outcome, stdout)
         stl_path = Path(outcome["stl"])
         if not stl_path.is_file():
             return failure("The script produced no geometry", "no mesh was written")
@@ -230,18 +232,7 @@ class Build123dKernel:
         if mesh is None:
             return failure("The script produced unreadable geometry", str(stl_path.name))
 
-        raw = outcome["measurements"]
-        measurements = SolidMeasurements(
-            volume_mm3=float(raw["volume_mm3"]),
-            width=Length.mm(float(raw["width"])),
-            depth=Length.mm(float(raw["depth"])),
-            height=Length.mm(float(raw["height"])),
-            face_count=int(raw.get("face_count", 0)),
-            edge_count=int(raw.get("edge_count", 0)),
-            vertex_count=int(raw.get("vertex_count", 0)),
-            solid_count=int(raw.get("solid_count", 1)),
-            is_valid=bool(raw.get("is_valid", True)),
-        )
+        measurements = _measurements_from(outcome["measurements"])
 
         step_path = self._keep(outcome.get("step"))
         return success(
@@ -251,6 +242,41 @@ class Build123dKernel:
                 step_path=step_path,
                 stdout=stdout[:4000],
                 duration_seconds=float(outcome.get("duration_seconds", 0.0)),
+            )
+        )
+
+    def _collect_bodies(self, outcome: dict[str, Any], stdout: str) -> Result[ScriptResult]:
+        """Load every object a scene produced.
+
+        All of it before the job directory is swept away, which is why this
+        reads rather than returning paths.
+        """
+        built: list[BuiltBody] = []
+        for entry in outcome["bodies"]:
+            mesh = self._read_stl(Path(entry["stl"]))
+            if mesh is None:
+                return failure(
+                    "One of the objects came out unreadable",
+                    str(entry.get("body", "?")),
+                )
+            built.append(
+                BuiltBody(
+                    body=str(entry["body"]),
+                    mesh=mesh,
+                    measurements=_measurements_from(entry["measurements"]),
+                )
+            )
+
+        if not built:
+            return failure("The scene produced no geometry", "no object was written")
+
+        return success(
+            ScriptResult(
+                mesh=built[0].mesh,
+                measurements=built[0].measurements,
+                stdout=stdout[:4000],
+                duration_seconds=float(outcome.get("duration_seconds", 0.0)),
+                bodies=tuple(built),
             )
         )
 
@@ -297,3 +323,18 @@ class Build123dKernel:
         except OSError:
             return None
         return destination
+
+
+def _measurements_from(raw: dict[str, Any]) -> SolidMeasurements:
+    """Turn the worker's JSON into the measurements the application speaks."""
+    return SolidMeasurements(
+        volume_mm3=float(raw["volume_mm3"]),
+        width=Length.mm(float(raw["width"])),
+        depth=Length.mm(float(raw["depth"])),
+        height=Length.mm(float(raw["height"])),
+        face_count=int(raw.get("face_count", 0)),
+        edge_count=int(raw.get("edge_count", 0)),
+        vertex_count=int(raw.get("vertex_count", 0)),
+        solid_count=int(raw.get("solid_count", 1)),
+        is_valid=bool(raw.get("is_valid", True)),
+    )

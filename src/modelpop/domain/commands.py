@@ -28,6 +28,7 @@ from enum import Enum
 from typing import Any, Self
 
 __all__ = [
+    "FIRST_BODY",
     "Command",
     "CommandBus",
     "Document",
@@ -35,6 +36,10 @@ __all__ = [
     "Feature",
     "Origin",
 ]
+
+
+FIRST_BODY = "body-1"
+"""The object a document starts with, so a single-object scene names nothing."""
 
 
 class Origin(Enum):
@@ -65,6 +70,16 @@ class Feature:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     suppressed: bool = False
 
+    body: str = FIRST_BODY
+    """Which object in the scene this feature belongs to.
+
+    A scene holds several independent objects - a maker adds a cube, then a
+    sphere, and expects to pick either one up. Every feature names the object
+    it shapes, and each object is built from its own features alone. Without
+    this the whole document compiled to a single boolean union, so two shapes
+    were one part with two lumps and moving either moved both.
+    """
+
     def canonical(self) -> str:
         """A stable string form, used for hashing and diffing.
 
@@ -75,6 +90,7 @@ class Feature:
             "name": self.name,
             "parameters": self.parameters,
             "suppressed": self.suppressed,
+            "body": self.body,
         }
         return json.dumps(payload, sort_keys=True, default=str)
 
@@ -89,6 +105,43 @@ class Document:
 
     features: tuple[Feature, ...] = ()
     name: str = "Untitled"
+    labels: dict[str, str] = field(default_factory=dict)
+    """What each object is called, by body id. Absent means "use the default"."""
+
+    @property
+    def body_ids(self) -> tuple[str, ...]:
+        """The objects in this document, in the order they were started."""
+        seen: list[str] = []
+        for feature in self.active_features:
+            if feature.body not in seen:
+                seen.append(feature.body)
+        return tuple(seen)
+
+    def features_for(self, body: str) -> tuple[Feature, ...]:
+        """The active features that shape one object."""
+        return tuple(f for f in self.active_features if f.body == body)
+
+    def label_for(self, body: str) -> str:
+        """What to call an object in a list or a menu."""
+        if body in self.labels:
+            return self.labels[body]
+        features = self.features_for(body)
+        if not features:
+            return body
+        # Named after whatever started it, which is what a maker would call
+        # it: the sphere, the box. Better than "Body 2".
+        first = features[0].name.replace("create-", "").replace("-", " ")
+        return first.capitalize()
+
+    def named(self, body: str, label: str) -> Document:
+        """A copy with one object renamed."""
+        return replace(self, labels={**self.labels, body: label})
+
+    def without_body(self, body: str) -> Document:
+        """A copy with one object and everything shaping it removed."""
+        kept = tuple(f for f in self.features if f.body != body)
+        labels = {key: value for key, value in self.labels.items() if key != body}
+        return replace(self, features=kept, labels=labels)
 
     @property
     def content_hash(self) -> str:
@@ -148,17 +201,22 @@ class Command(ABC):
         """A short human-readable label for the undo stack and the history panel."""
         return self.name
 
-    def to_feature(self, origin: Origin = Origin.USER) -> Feature:
-        """Record this command as a feature."""
-        return Feature(name=self.name, parameters=self.parameters, origin=origin)
+    def to_feature(self, origin: Origin = Origin.USER, body: str = FIRST_BODY) -> Feature:
+        """Record this command as a feature of one object."""
+        return Feature(name=self.name, parameters=self.parameters, origin=origin, body=body)
 
-    def apply(self, document: Document, origin: Origin = Origin.USER) -> Document:
-        """Return a new document with this command appended.
+    def apply(
+        self,
+        document: Document,
+        origin: Origin = Origin.USER,
+        body: str = FIRST_BODY,
+    ) -> Document:
+        """Return a new document with this command appended to one object.
 
         Override only if a command does something other than append - for
         example, editing an existing feature's parameters in place.
         """
-        return document.with_feature(self.to_feature(origin))
+        return document.with_feature(self.to_feature(origin, body))
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,15 +335,23 @@ class CommandBus:
         """Register a callable invoked with the new document after each change."""
         self._listeners.append(listener)
 
-    def execute(self, command: Command, origin: Origin = Origin.USER) -> Document:
-        """Apply a command and record it in the history."""
-        updated = command.apply(self.document, origin)
+    def execute(
+        self,
+        command: Command,
+        origin: Origin = Origin.USER,
+        body: str = FIRST_BODY,
+    ) -> Document:
+        """Apply a command to one object and record it in the history."""
+        updated = command.apply(self.document, origin, body)
         self._history.push(updated, command.describe())
         self._notify(updated)
         return updated
 
     def execute_all(
-        self, commands: Sequence[Command], origin: Origin = Origin.ASSISTANT
+        self,
+        commands: Sequence[Command],
+        origin: Origin = Origin.ASSISTANT,
+        body: str = FIRST_BODY,
     ) -> Document:
         """Apply several commands as one undoable step.
 
@@ -296,12 +362,24 @@ class CommandBus:
             return self.document
         document = self.document
         for command in commands:
-            document = command.apply(document, origin)
+            document = command.apply(document, origin, body)
         label = (
             commands[0].describe()
             if len(commands) == 1
             else f"{len(commands)} changes ({commands[0].describe()}, ...)"
         )
+        self._history.push(document, label)
+        self._notify(document)
+        return document
+
+    def set_document(self, document: Document, label: str) -> Document:
+        """Record a document arrived at some other way than by one command.
+
+        Deleting an object removes several features at once, and renaming one
+        touches no feature at all. Neither is a command in the vocabulary, and
+        both still have to land in the history so they undo like everything
+        else.
+        """
         self._history.push(document, label)
         self._notify(document)
         return document

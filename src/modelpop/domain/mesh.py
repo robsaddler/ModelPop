@@ -11,6 +11,7 @@ package the domain is allowed to import; see ``.importlinter`` for why.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Self
 
@@ -262,6 +263,38 @@ class Mesh:
         high = self.vertices.max(axis=0)
         offset = np.array([(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, low[2]])
         return Mesh(self.vertices - offset, self.faces, self.unit)
+
+    @classmethod
+    def all_of(cls, meshes: Sequence[Mesh]) -> Mesh:
+        """Every mesh in one, side by side.
+
+        Not a boolean union: the triangles are concatenated and the face
+        indices offset. That is exactly right for what it is for - several
+        separate objects standing on a plate, which is what the slicer, the
+        readiness checks and the exporter each want to see as a whole.
+
+        Fusing them with a real union would be both far slower and wrong: two
+        objects that touch are still two objects, and printing them as one
+        solid is not what anybody asked for.
+        """
+        real = [mesh for mesh in meshes if not mesh.is_empty]
+        if not real:
+            return cls.empty()
+        if len(real) == 1:
+            return real[0]
+
+        vertices = []
+        faces = []
+        offset = 0
+        for mesh in real:
+            vertices.append(mesh.vertices)
+            faces.append(mesh.faces + offset)
+            offset += len(mesh.vertices)
+        return cls(
+            np.concatenate(vertices).astype(np.float64),
+            np.concatenate(faces).astype(np.int32),
+            real[0].unit,
+        )
 
     # ------------------------------------------------------------------ dunder
 

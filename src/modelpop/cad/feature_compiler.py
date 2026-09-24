@@ -48,13 +48,13 @@ from modelpop.domain.cad_commands import (
     TextOnSurface,
     command_from,
 )
-from modelpop.domain.result import Result, failure, success
+from modelpop.domain.result import Failure, Result, failure, success
 
 if TYPE_CHECKING:
     from modelpop.application.cad_ports import CadKernel, ScriptResult
     from modelpop.domain.commands import Command, Document, Feature
 
-__all__ = ["Build123dCompiler", "compile_document"]
+__all__ = ["Build123dCompiler", "compile_document", "compile_scene"]
 
 
 # A rebuild replays everything, so the cost is linear in the tree. This is far
@@ -71,6 +71,14 @@ from build123d import *
 # Raised lettering accumulates here as well as being fused into the body, so the
 # same tree can be compiled as one object or as two colours.
 _decoration = None
+"""
+
+_SCENE_PREAMBLE = """from build123d import *
+
+# Built from a ModelPop feature tree. Each object in the scene is built from
+# its own features alone and collected below. Objects are never unioned with
+# each other: they are separate things on a plate, and they move separately.
+results = {}
 """
 
 _EDGE_FILTERS: dict[EdgeSelector, str] = {
@@ -93,7 +101,56 @@ _FACE_PICKERS: dict[Face, str] = {
 }
 
 
-def compile_document(document: Document, part: Part = Part.WHOLE) -> Result[str]:
+def compile_scene(document: Document, part: Part = Part.WHOLE) -> Result[str]:
+    """Turn a whole scene - every object in it - into one build123d script.
+
+    One script, and therefore one subprocess, however many objects there are.
+    Compiling them separately would be simpler and would multiply the cost of
+    every edit by the number of things on the plate: an OCCT rebuild is two
+    seconds, and a maker with five objects would wait ten for each nudge.
+
+    Each object is built from its own features alone and collected into
+    ``results``, keyed by body id. Nothing is unioned across objects - that
+    union was the whole reason two shapes could not be moved independently.
+    """
+    bodies = document.body_ids
+    if not bodies:
+        return failure("There is nothing to build", "The scene has no objects yet.")
+
+    lines: list[str] = [_SCENE_PREAMBLE]
+    built: list[str] = []
+    refusals: list[str] = []
+
+    for body in bodies:
+        one = compile_document(document, part, body=body)
+        if isinstance(one, Failure):
+            refusals.append(f"{document.label_for(body)}: {one.reason}")
+            continue
+        # Emitted at module level rather than wrapped in a function: the
+        # preamble each object carries does `from build123d import *`, and a
+        # star import inside a function is a syntax error. Each object's first
+        # feature assigns `result` outright, so nothing leaks between them.
+        lines.append(f"# ======== {document.label_for(body)} ({body}) ========")
+        lines.append(one.unwrap())
+        lines.append(f"results[{body!r}] = result")
+        lines.append("")
+        built.append(body)
+
+    if not built:
+        return failure(
+            "Nothing in the scene could be rebuilt",
+            "; ".join(refusals) or "every object was empty.",
+        )
+
+    # The first object also lands in `result`, so anything still expecting a
+    # single solid - the STEP export, the older worker path - keeps working.
+    lines.append(f"result = results[{built[0]!r}]")
+    return success("\n".join(lines))
+
+
+def compile_document(
+    document: Document, part: Part = Part.WHOLE, body: str | None = None
+) -> Result[str]:
     """Turn a feature tree into a build123d script.
 
     Pure: no kernel, no file system, no subprocess. That is what makes the
@@ -105,8 +162,10 @@ def compile_document(document: Document, part: Part = Part.WHOLE) -> Result[str]
         document: the feature tree.
         part: which piece to build. The default is the whole model; the other
             two separate a lettered model into its two colours.
+        body: build only this object's features. ``None`` builds every feature
+            in the document, which is what a single-object scene amounts to.
     """
-    features = document.active_features
+    features = document.features_for(body) if body is not None else document.active_features
     if not features:
         return failure("There is nothing to build", "The model has no features yet.")
     if len(features) > MAX_FEATURES:
@@ -607,8 +666,12 @@ class Build123dCompiler:
         timeout_seconds: float = 60.0,
         part: Part = Part.WHOLE,
     ) -> Result[ScriptResult]:
-        """Rebuild the tree and return the solid."""
-        script = compile_document(document, part)
+        """Rebuild every object in the scene and return them.
+
+        One script and therefore one subprocess, however many objects there
+        are - see ``compile_scene``.
+        """
+        script = compile_scene(document, part)
         if not script.ok:
             return script  # type: ignore[return-value]
         return self._kernel.run(script.unwrap(), timeout_seconds)
