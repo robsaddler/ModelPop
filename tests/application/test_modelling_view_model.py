@@ -551,3 +551,68 @@ class TestSweepingAndBlending:
         model.loft([([(-5.0, -5.0), (5.0, -5.0), (0.0, 6.0)], 0.0), (self.NARROW, 12.0)])
 
         assert len(model.state.features) == 2
+
+
+class TestEmptyingTheModel:
+    """An empty tree is a result, not the absence of one.
+
+    The bug a user found in about a minute: add a sphere, undo, and the sphere
+    is still on screen. The tree really was empty - nothing downstream had been
+    told, because the hand-off only fired when there was a mesh to hand over.
+    """
+
+    def watched(self):
+        seen: list[object] = []
+        model = ModellingViewModel(
+            ModellingSession(FakeCompiler()),
+            on_geometry=lambda mesh: seen.append("cleared" if mesh is None else "mesh"),
+        )
+        return model, seen
+
+    def test_undoing_the_only_step_clears_the_viewport(self):
+        model, seen = self.watched()
+        model.add_box(20, 20, 20)
+        model.undo()
+
+        assert seen == ["mesh", "cleared"]
+
+    def test_redoing_puts_it_back(self):
+        model, seen = self.watched()
+        model.add_box(20, 20, 20)
+        model.undo()
+        model.redo()
+
+        assert seen == ["mesh", "cleared", "mesh"]
+
+    def test_starting_again_clears_the_viewport(self):
+        """The other half: the tree emptied and the shape stayed in front of it."""
+        model, seen = self.watched()
+        model.add_box(20, 20, 20)
+        model.clear()
+
+        assert seen == ["mesh", "cleared"]
+
+    def test_undoing_to_a_smaller_model_still_hands_over_geometry(self):
+        model, seen = self.watched()
+        model.add_box(20, 20, 20)
+        model.add_sphere(10)
+        model.undo()
+
+        assert seen == ["mesh", "mesh", "mesh"]
+        assert len(model.state.features) == 1
+
+    def test_the_workspace_clears_when_it_is_handed_nothing(self):
+        """The receiving half of the same fix."""
+        from modelpop.application.workspace import Workspace
+        from modelpop.presentation.workspace_view_model import WorkspaceViewModel
+
+        from .test_workspace import FakeIO, FakeOps, box
+
+        view = WorkspaceViewModel(Workspace(FakeIO(), FakeOps()))
+        view.adopt(box(20))
+        assert view.state.has_model
+
+        view.adopt(None)
+
+        assert not view.state.has_model
+        assert view.state.mesh is None

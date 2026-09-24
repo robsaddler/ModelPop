@@ -89,7 +89,7 @@ class ModellingViewModel:
         self,
         session: ModellingSession | None = None,
         runner: Runner = run_inline,
-        on_geometry: Callable[[Mesh], None] | None = None,
+        on_geometry: Callable[[Mesh | None], None] | None = None,
         describe_change: Callable[[str], Result[CommandEditRun]] | None = None,
     ) -> None:
         """Create the view-model.
@@ -99,8 +99,10 @@ class ModellingViewModel:
             runner: how to execute a rebuild. Defaults to running inline; the
                 interface supplies one that uses a worker thread, because a
                 rebuild is a subprocess and takes a second or two.
-            on_geometry: called with the new mesh after every successful
-                rebuild, so the viewport and the print pipeline see it.
+            on_geometry: called after every successful rebuild - with the
+                new mesh, or with ``None`` when the tree is now empty. The
+                empty case matters: without it, undoing the first step leaves
+                the shape on screen with nothing behind it.
             describe_change: asks a language model to change the model. Passed
                 in rather than built here, because the presentation layer must
                 not know which provider is in use.
@@ -494,8 +496,15 @@ class ModellingViewModel:
         return not self.state.is_empty and not self._busy
 
     def clear(self) -> None:
-        """Start a new model."""
+        """Start a new model.
+
+        Tells the viewport as well as the tree. Forgetting that was half of
+        "start again did nothing": the tree really was empty, and the old
+        shape was still on screen in front of it.
+        """
         self._session.clear()
+        if self._on_geometry is not None:
+            self._on_geometry(None)
         self._announce_state()
         self._announce(Outcome("Started a new model."))
 
@@ -569,9 +578,11 @@ class ModellingViewModel:
             self._announce(Outcome(result.reason, result.detail, refused=True))
             return
 
-        mesh = result.unwrap().mesh
-        if mesh is not None and self._on_geometry is not None:
-            self._on_geometry(mesh)
+        # Announced whether or not there is geometry. An empty tree is a
+        # result, not the absence of one, and saying nothing about it leaves
+        # the last shape on screen - which is what "undo did nothing" was.
+        if self._on_geometry is not None:
+            self._on_geometry(result.unwrap().mesh)
         self._announce(Outcome(label))
 
     def _set_busy(self, busy: bool) -> None:
