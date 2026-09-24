@@ -194,6 +194,8 @@ class MainWindow(QMainWindow):
         # True while a *new* model is on its way in - opened, generated,
         # reconstructed - as opposed to the one that is there being reworked.
         self._bringing_in_a_new_model = False
+        # True between turning an object and putting it back on the plate.
+        self._reseat_when_it_settles = False
         self._findings = QListWidget()
         self._summary = QLabel("Open a model to begin.")
         self._summary.setWordWrap(True)
@@ -655,6 +657,24 @@ class MainWindow(QMainWindow):
         self._handles_action = self._scene_menu.addAction("Put &handles on it")
         self._handles_action.triggered.connect(lambda: self._drag_action.setChecked(True))
 
+        # Quarter turns, right there. Standing a model up that came out on its
+        # back is the commonest single thing anybody does to a model from a
+        # picture, and it should not need a panel opened to do it.
+        turn = self._scene_menu.addMenu("&Turn it")
+        self._turn_actions = []
+        for label, degrees, axis in (
+            ("Stand it &up (90 about X)", 90.0, "X"),
+            ("Lay it &back (-90 about X)", -90.0, "X"),
+            ("Tip it &right (90 about Y)", 90.0, "Y"),
+            ("Tip it &left (-90 about Y)", -90.0, "Y"),
+            ("Spin it a &quarter (90 about Z)", 90.0, "Z"),
+            ("&Half turn (180 about Z)", 180.0, "Z"),
+        ):
+            action = turn.addAction(label)
+            action.triggered.connect(lambda _=False, d=degrees, a=axis: self._turn_it(d, a))
+            self._turn_actions.append(action)
+        self._turn_menu = turn
+
         self._resize_here_action = self._scene_menu.addAction("&Resize it...")
         self._resize_here_action.triggered.connect(self._resize_whatever_is_there)
 
@@ -726,6 +746,9 @@ class MainWindow(QMainWindow):
 
         for action in (self._resize_here_action, self._drop_action):
             action.setEnabled(a_part or a_mesh)
+        self._turn_menu.setEnabled(a_part)
+        for action in self._turn_actions:
+            action.setEnabled(a_part)
 
         self._repair_here_action.setEnabled(a_mesh and self._view_model.can_repair)
         self._simplify_here_action.setEnabled(a_mesh)
@@ -744,6 +767,31 @@ class MainWindow(QMainWindow):
         self._resize_panel.show()
         self._resize_panel.raise_()
         self._resize_panel.activateWindow()
+
+    def _turn_it(self, degrees: float, axis: str) -> None:
+        """Turn the selected object a quarter or a half, and reseat it.
+
+        A turn is about the world origin - that is what the feature records -
+        so a part that was standing on the plate is under it afterwards. Every
+        slicer reseats a model after turning it for exactly this reason, and
+        having to notice and fix it by hand each time is not a feature.
+        """
+        if self._modelling.selected_body is None:
+            return
+        self._modelling.rotate(degrees, axis)
+        self._reseat_when_it_settles = True
+
+    def _reseat_if_asked(self) -> None:
+        """Put a just-turned object back on the bed."""
+        if not self._reseat_when_it_settles or self._modelling.is_busy:
+            return
+        self._reseat_when_it_settles = False
+        body = self._modelling.selected_body
+        if body is None:
+            return
+        move = settle_onto_bed(body.bounds)
+        if move.dz:
+            self._modelling.move(move.dx, move.dy, move.dz)
 
     def _drop_whatever_is_there(self) -> None:
         """Settle whatever is on the plate onto it, part or mesh."""
@@ -1331,6 +1379,7 @@ class MainWindow(QMainWindow):
             self._scene.start_dragging(self._dragged, self._dragging)
         self._viewport.render()
         self._refresh_scene_menu()
+        QTimer.singleShot(0, self._reseat_if_asked)
 
     def _on_cad_outcome(self, outcome: Outcome) -> None:
         """Report what a CAD command did.

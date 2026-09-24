@@ -298,3 +298,53 @@ class TestWhatTheChangeControlsActOn:
         model.add_box(10, 10, 10)
 
         assert len(model.bodies) == 1
+
+
+class TestNewThingsStandOnThePlate:
+    """A new object arrives on the bed, not halfway through it.
+
+    Shapes are built centred on the origin, so every new one appeared with half
+    of itself below the plate - reported as the application sinking every model
+    it was given. Lifting each by half its height puts it where anybody would
+    expect a thing they just added to be.
+    """
+
+    def test_a_box_stands_on_the_bed(self):
+        model = scene()
+        model.add_box(40, 40, 40)
+        assert model.state.document.active_features[-1].parameters["z"] == pytest.approx(20.0)
+
+    def test_a_sphere_rests_on_the_bed(self):
+        model = scene()
+        model.add_sphere(15)
+        assert model.state.document.active_features[-1].parameters["z"] == pytest.approx(15.0)
+
+    def test_a_cylinder_stands_on_the_bed(self):
+        model = scene()
+        model.add_cylinder(8, 30)
+        assert model.state.document.active_features[-1].parameters["z"] == pytest.approx(15.0)
+
+    def test_a_cutter_is_left_exactly_where_it_was_aimed(self):
+        """A drill is positioned to cut something; moving it moves the hole."""
+        model = scene()
+        model.add_box(40, 40, 40)
+        model.add_cylinder(3, 60, cut=True)
+        assert model.state.document.active_features[-1].parameters["z"] == pytest.approx(0.0)
+
+    def test_a_position_the_caller_asked_for_is_honoured(self):
+        model = scene()
+        model.add_box(10, 10, 10, at=(5.0, 5.0, 5.0))
+        placed = model.state.document.active_features[-1].parameters
+        assert (placed["x"], placed["y"], placed["z"]) == pytest.approx((5.0, 5.0, 5.0))
+
+    def test_the_tree_does_not_spell_out_the_obvious_position(self):
+        """Every row saying "at (0, 0, 20)" is noise on a line meant to read
+        like a sentence."""
+        model = scene()
+        model.add_box(40, 40, 40)
+        assert model.state.features[-1].label == "Add a 40 x 40 x 40 mm box"
+
+    def test_it_still_says_where_a_shape_was_deliberately_put(self):
+        model = scene()
+        model.add_box(10, 10, 10, at=(5.0, 0.0, 30.0))
+        assert "at (5, 0, 30)" in model.state.features[-1].label

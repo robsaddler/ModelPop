@@ -164,6 +164,21 @@ the view out with it.
 
 ---
 
+## Where new things land
+
+Anything added stands **on** the plate, not through it - a shape, a model from a picture, a file
+you opened. Shapes are built centred on the origin, so each is lifted by half its height as it is
+added; the tree does not spell that out, because every row saying "at (0, 0, 20)" would be noise.
+
+A cutter is the exception: a drill is positioned to cut something, and moving it to the plate would
+put the hole somewhere you did not ask for.
+
+A model that arrives with no scale at all - which is what a picture produces, routinely a single
+millimetre across - is given a workable 60 mm and says so in its own name. Set the real size with
+**Resize it...** when you know it.
+
+---
+
 ## What the tools act on
 
 Everything under **Change it** → round, chamfer, hollow, move, turn, scale, text, mirror, repeat
@@ -206,6 +221,19 @@ turn it. The status bar shows how far it has gone while you are still dragging.
 Worth knowing: the handles start at the *centre* of the part, so the inner half of each arrow is
 inside the shape itself. Aim at the outer end of an arrow, away from the geometry. That is why fine
 placement is easier with the buttons.
+
+### Turning it
+
+Right-click → **Turn it** has the quarter turns: stand it up, lay it back, tip it left or
+right, spin it a quarter or a half. Standing a model up that came out on its back is the commonest
+single thing anybody does to one, and it should not need a panel. After a turn the object is put
+back on the plate, because a turn is about the world origin and would otherwise leave it under the
+bed.
+
+Dragging a ring **snaps to 15 degrees**, which divides into 45, 90 and 180. Hold **Shift** while
+dragging for a free angle.
+
+**Move and turn...** has the same turns about any axis, plus a typed angle.
 
 ### Resizing it
 

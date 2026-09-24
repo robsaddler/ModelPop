@@ -70,6 +70,10 @@ TIP = 0.036
 RING = 0.007
 """Rotation ring tube radius, as a fraction of the part."""
 
+SNAP_DEGREES = 15.0
+"""What a turn snaps to. Fifteen divides into 45, 90 and 180, which is every
+turn anybody actually makes. Hold Shift while dragging for a free angle."""
+
 RESTING_OPACITY = 0.18
 """How faint the handles go while they cannot be grabbed."""
 
@@ -207,6 +211,9 @@ class DragHandles:
         self._started_at: float | None = None
         self._observers: list[int] = []
         self._active = True
+        # Held down while dragging a ring, a free angle is allowed instead of
+        # the usual snap.
+        self._free_angle = False
         self._arrow_picker: Any = None
         self._ring_picker: Any = None
         self._corner_picker: Any = None
@@ -522,6 +529,9 @@ class DragHandles:
             return
 
         self._stop_the_camera(interactor)
+        # Read every time rather than on press: somebody reaches for Shift
+        # halfway through a turn, having seen where the snap is putting it.
+        self._free_angle = bool(interactor.GetShiftKey())
         ray = self._ray(interactor)
         if ray is None or self._started_at is None:
             return
@@ -589,7 +599,7 @@ class DragHandles:
             return _grow_about(self._centre, self._factor_from(moved))
 
         index = self._rings.index(handle)
-        return _turn_about(self._pivot, _AXES[index], moved)
+        return _turn_about(self._pivot, _AXES[index], self._snapped(moved))
 
     def _factor_from(self, moved: float) -> float:
         """A corner drag, as the proportion it scales the part by.
@@ -603,6 +613,19 @@ class DragHandles:
             return 1.0
         factor = (self._started_at + moved) / self._started_at
         return float(np.clip(factor, LEAST_GROWTH, MOST_GROWTH))
+
+    def _snapped(self, radians: float) -> float:
+        """A turn, rounded to a step unless the user asked for it not to be.
+
+        Snapping by default, because almost every turn anybody makes is a
+        quarter, a half or a sixth - laying a part on its side, standing it up,
+        putting a face towards the plate. A free angle is the exception, and
+        Shift is where every other tool puts it.
+        """
+        if self._free_angle:
+            return radians
+        step = np.radians(SNAP_DEGREES)
+        return float(np.round(radians / step) * step)
 
     def _reading_is_a_scale(self) -> bool:
         """Whether the handle being held resizes rather than moves or turns."""

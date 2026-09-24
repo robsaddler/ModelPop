@@ -109,10 +109,20 @@ def _verb(command: Any) -> str:
     return "Cut" if command.cut else "Add"
 
 
-def _where(command: Any) -> str:
-    """A phrase naming where a shape sits, or nothing when it is centred."""
-    if command.x == 0 and command.y == 0 and command.z == 0:
-        return ""
+def _where(command: Any, standing: float = 0.0) -> str:
+    """A phrase naming where a shape sits, or nothing when it is unremarkable.
+
+    Two positions say nothing worth reading: centred on the origin, and simply
+    standing on the build plate. The second is where every new shape is put -
+    a shape centred on the origin has half of itself below the bed - and
+    spelling out "at (0, 0, 20)" on every row would be noise on the one line
+    that is meant to read like a sentence.
+    """
+    if command.x == 0 and command.y == 0:
+        if command.z == 0:
+            return ""
+        if standing and abs(command.z - standing / 2) < 1e-9:
+            return ""
     return f" at ({command.x:g}, {command.y:g}, {command.z:g})"
 
 
@@ -292,7 +302,7 @@ class CreateBox(Command):
     def describe(self) -> str:
         """A line for the feature tree."""
         shape = f"{self.width:g} x {self.depth:g} x {self.height:g} mm box"
-        return f"{_verb(self)} a {shape}{_where(self)}"
+        return f"{_verb(self)} a {shape}{_where(self, self.height)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,7 +341,7 @@ class CreateCylinder(Command):
         if self.cut:
             return f"Drill a {self.radius * 2:g} mm hole{_where(self)}"
         shape = f"{self.radius:g} mm radius cylinder, {self.height:g} mm tall"
-        return f"Add a {shape}{_where(self)}"
+        return f"Add a {shape}{_where(self, self.height)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,7 +371,7 @@ class CreateSphere(Command):
 
     def describe(self) -> str:
         """A line for the feature tree."""
-        return f"{_verb(self)} a {self.radius:g} mm radius sphere{_where(self)}"
+        return f"{_verb(self)} a {self.radius:g} mm radius sphere{_where(self, self.radius * 2)}"
 
 
 @dataclass(frozen=True, slots=True)

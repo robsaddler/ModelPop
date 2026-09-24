@@ -24,6 +24,7 @@ from modelpop.rendering.drag_handles import (
     MOST_GROWTH,
     RING_LEAST,
     RING_MOST,
+    SNAP_DEGREES,
     DragHandles,
     along_axis,
     on_plane,
@@ -770,3 +771,51 @@ def _pick_order(handles):
         (handles._arrow_picker, handles._arrows),
         (handles._ring_picker, handles._rings),
     )
+
+
+class TestTurningSnaps:
+    """A turn lands on a step unless the user asks for a free angle.
+
+    Almost every turn anybody makes is a quarter, a half or a sixth - laying a
+    part on its side, standing it up, putting a face towards the plate. Asked
+    for directly, and the model that prompted it was lying on its back.
+    """
+
+    def handles(self, plotter):
+        import pyvista as pv
+
+        bounds = (-20.0, 20.0, -20.0, 20.0, 0.0, 40.0)
+        actor = plotter.add_mesh(pv.Box(bounds=bounds))
+        return DragHandles(plotter, actor, bounds, lambda _: None)
+
+    def turned_by(self, handles, radians: float) -> float:
+        """The angle a ring drag of this size actually produces, in degrees."""
+        step = handles._step(handles._rings[2], radians)
+        return float(np.degrees(np.arctan2(step[1, 0], step[0, 0])))
+
+    def test_a_turn_lands_on_the_nearest_step(self, plotter):
+        handles = self.handles(plotter)
+        assert self.turned_by(handles, np.radians(43.0)) == pytest.approx(45.0, abs=0.01)
+
+    def test_a_small_wobble_lands_on_nothing(self, plotter):
+        handles = self.handles(plotter)
+        assert self.turned_by(handles, np.radians(4.0)) == pytest.approx(0.0, abs=0.01)
+
+    def test_a_quarter_turn_is_exact(self, plotter):
+        handles = self.handles(plotter)
+        assert self.turned_by(handles, np.radians(88.0)) == pytest.approx(90.0, abs=0.01)
+
+    def test_the_step_divides_into_the_turns_people_make(self, plotter):
+        for quarter in (45.0, 90.0, 180.0):
+            assert quarter % SNAP_DEGREES == pytest.approx(0.0)
+
+    def test_holding_shift_gives_a_free_angle(self, plotter):
+        handles = self.handles(plotter)
+        handles._free_angle = True
+        assert self.turned_by(handles, np.radians(43.0)) == pytest.approx(43.0, abs=0.01)
+
+    def test_moving_is_never_snapped(self, plotter):
+        """Only turns. A nudge of 3.2 mm is a nudge of 3.2 mm."""
+        handles = self.handles(plotter)
+        step = handles._step(handles._arrows[2], 3.2)
+        assert step[2, 3] == pytest.approx(3.2)

@@ -283,6 +283,11 @@ class ModellingViewModel:
             )
             note = f"{note} (sized to fit, set the real size when you know it)" if note else note
 
+        # Standing on the plate, not through it. A model from a picture is
+        # centred on nothing in particular, and arriving half-buried was
+        # reported as the application sinking every new model into the bed.
+        mesh = mesh.dropped_to_bed()
+
         # Reserved before the work starts, so the rebuild knows which object
         # it is filling in.
         body = self._session.start_a_new_body()
@@ -376,7 +381,10 @@ class ModellingViewModel:
         cut: bool = False,
     ) -> None:
         """Add a rectangular block, or cut a pocket into the selected object."""
-        self._apply(CreateBox(width, depth, height, *at, cut=cut), body=self._for_a_shape(cut))
+        self._apply(
+            CreateBox(width, depth, height, *self._on_the_bed(at, height, cut), cut=cut),
+            body=self._for_a_shape(cut),
+        )
 
     def add_cylinder(
         self,
@@ -387,7 +395,10 @@ class ModellingViewModel:
         cut: bool = False,
     ) -> None:
         """Add a cylinder, or drill a hole through the selected object."""
-        self._apply(CreateCylinder(radius, height, *at, cut=cut), body=self._for_a_shape(cut))
+        self._apply(
+            CreateCylinder(radius, height, *self._on_the_bed(at, height, cut), cut=cut),
+            body=self._for_a_shape(cut),
+        )
 
     def add_sphere(
         self,
@@ -397,7 +408,10 @@ class ModellingViewModel:
         cut: bool = False,
     ) -> None:
         """Add a sphere, or scoop one out of the selected object."""
-        self._apply(CreateSphere(radius, *at, cut=cut), body=self._for_a_shape(cut))
+        self._apply(
+            CreateSphere(radius, *self._on_the_bed(at, radius * 2, cut), cut=cut),
+            body=self._for_a_shape(cut),
+        )
 
     def drill(self, diameter: float, depth: float, at: tuple[float, float] = (0.0, 0.0)) -> None:
         """Drill a hole straight through.
@@ -730,6 +744,24 @@ class ModellingViewModel:
         return result.unwrap() if result.ok else f"# {result.error}"
 
     # ------------------------------------------------------------- internal
+
+    def _on_the_bed(
+        self, at: tuple[float, float, float], height: float, cut: bool
+    ) -> tuple[float, float, float]:
+        """Where to put a new shape: standing on the plate, not through it.
+
+        Shapes are built centred on the origin, so a new one appeared with half
+        of itself below the bed - reported as the application sinking every new
+        model halfway through the plate. Lifting it by half its height puts it
+        where anybody would expect a thing they just added to be.
+
+        Left alone when the caller said where to put it, and when the shape is
+        a cutter: a drill is positioned to cut something, and moving it to the
+        plate would put the hole somewhere nobody asked for.
+        """
+        if cut or at != (0.0, 0.0, 0.0):
+            return at
+        return (at[0], at[1], height / 2)
 
     def _for_a_shape(self, cut: bool) -> str | None:
         """Which object a new shape belongs to.

@@ -279,3 +279,20 @@ class TestAModelThatArrivesWithNoScale:
         model = scene()
         model.place_mesh(cube(4000), "Opened")
         assert model.bodies[0].bounds.largest_dimension.millimetres == pytest.approx(60.0, abs=0.1)
+
+
+class TestItArrivesOnThePlate:
+    def test_a_model_lands_on_the_bed_rather_than_through_it(self):
+        """Reported as the application sinking every model it was given."""
+        model = scene()
+        sunk = Mesh(cube(40).vertices - np.array([0.0, 0.0, 20.0]), cube(40).faces)
+        assert sunk.bounds.min_z == pytest.approx(-20.0)
+
+        model.place_mesh(sunk, "Made from a picture")
+        assert model.bodies[0].bounds.min_z == pytest.approx(0.0, abs=0.01)
+
+    def test_a_model_floating_above_the_bed_is_brought_down_too(self):
+        model = scene()
+        floating = Mesh(cube(40).vertices + np.array([0.0, 0.0, 90.0]), cube(40).faces)
+        model.place_mesh(floating, "Made from a picture")
+        assert model.bodies[0].bounds.min_z == pytest.approx(0.0, abs=0.01)
