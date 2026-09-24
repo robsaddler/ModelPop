@@ -524,20 +524,66 @@ class TestDragHandles:
             )
 
     @pytest.mark.renders
-    def test_the_handles_attach_and_survive_a_new_model(self, plotter_on_screen):
-        """A rebuild replaces the actor the handles are bolted to."""
+    def test_the_handles_stay_on_across_a_new_model(self, plotter_on_screen):
+        """A rebuild replaces the actor the handles are bolted to.
+
+        They used to be removed and re-added around that swap, which meant
+        they blinked out for the length of a rebuild - seconds of subprocess -
+        and it was reported as the controls disappearing. They are re-pointed
+        at the new actor instead, and stay in the scene from being switched on
+        to being switched off.
+        """
         scene = ViewportScene(plotter_on_screen)
         scene.show_mesh(unit_cube(40).dropped_to_bed())
 
         assert scene.start_dragging(lambda _: None)
         assert scene.is_dragging
+        handles = scene._drag_widget
 
         scene.show_mesh(unit_cube(20).dropped_to_bed())
-        assert not scene.is_dragging, "the handles stayed on the actor that went away"
-        assert scene.start_dragging(lambda _: None), "and cannot go back on the new one"
+
+        assert scene.is_dragging, "the handles came off when the model was replaced"
+        assert scene._drag_widget is handles, "they were rebuilt rather than re-pointed"
+        assert handles._actor is scene._model_actor, (
+            "they are still bolted to the actor that went away"
+        )
 
         scene.stop_dragging()
         assert not scene.is_dragging
+
+    @pytest.mark.renders
+    def test_they_follow_a_part_that_has_changed_size(self, plotter_on_screen):
+        """Re-pointing is not enough on its own: they have to fit the new part."""
+        scene = ViewportScene(plotter_on_screen)
+        scene.show_mesh(unit_cube(40).dropped_to_bed())
+        scene.start_dragging(lambda _: None)
+        small = max(abs(v) for v in scene._drag_widget._arrows[2].GetBounds())
+
+        scene.show_mesh(unit_cube(120).dropped_to_bed())
+        large = max(abs(v) for v in scene._drag_widget._arrows[2].GetBounds())
+
+        assert large > small * 2, "the handles kept the old part's size"
+
+    def test_pausing_leaves_them_on_screen_but_ungrabbable(self, plotter):
+        """What happens while a released drag is being turned into features."""
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(40).dropped_to_bed())
+        scene.start_dragging(lambda _: None)
+
+        scene.pause_dragging()
+
+        assert scene.is_dragging, "the handles left the scene"
+        assert not scene.can_be_dragged, "they would still accept a grab"
+
+    def test_a_new_model_wakes_them_up_again(self, plotter):
+        scene = ViewportScene(plotter)
+        scene.show_mesh(unit_cube(40).dropped_to_bed())
+        scene.start_dragging(lambda _: None)
+        scene.pause_dragging()
+
+        scene.show_mesh(unit_cube(40).dropped_to_bed())
+
+        assert scene.can_be_dragged
 
 
 class TestNamingThePrinter:
@@ -608,3 +654,80 @@ class TestNamingThePrinter:
         assert "Bambu Lab P2S" in self.text_in(plotter)
         scene.clear_model()
         assert "Bambu Lab P2S" in self.text_in(plotter)
+
+
+class TestTheProjection:
+    """No perspective. The scene is mostly a 256 mm box and it must look like one.
+
+    VTK's default camera is perspective with a 30-degree view angle. Zoomed in
+    on a build volume that is actively misleading: the envelope's edges fan
+    out, the far wall shrinks, and the box stops reading as a box. It was
+    reported twice - "the default cube distorts into not a cube" and "the
+    printer perspective went wonky" - and neither was the geometry.
+    """
+
+    def test_the_camera_draws_without_perspective(self, plotter):
+        ViewportScene(plotter)
+        assert plotter.camera.parallel_projection
+
+    def test_the_envelope_stays_a_box_however_close_the_camera_gets(self, plotter):
+        """The property, rather than a screenshot: parallel edges stay parallel.
+
+        The top and bottom edges of the envelope's front face are the same
+        length in world space. Under perspective their projected lengths
+        diverge as the camera closes in; under parallel projection they cannot.
+        """
+        import vtk
+
+        scene = ViewportScene(plotter)
+        scene.set_view("iso")
+        plotter.reset_camera()
+
+        width = scene._printer.build_width.millimetres
+        height = scene._printer.build_height.millimetres
+
+        def on_screen(point):
+            coordinate = vtk.vtkCoordinate()
+            coordinate.SetCoordinateSystemToWorld()
+            coordinate.SetValue(*point)
+            return np.array(coordinate.GetComputedDoubleDisplayValue(plotter.renderer))
+
+        def front_edges():
+            bottom = np.linalg.norm(
+                on_screen((-width / 2, -width / 2, 0.0)) - on_screen((width / 2, -width / 2, 0.0))
+            )
+            top = np.linalg.norm(
+                on_screen((-width / 2, -width / 2, height))
+                - on_screen((width / 2, -width / 2, height))
+            )
+            return bottom, top
+
+        for zoom in (1.0, 2.0, 4.0):
+            plotter.camera.zoom(zoom)
+            plotter.render()
+            bottom, top = front_edges()
+            assert top == pytest.approx(bottom, rel=1e-3), (
+                f"at zoom {zoom} the top edge measured {top:.1f}px and the bottom "
+                f"{bottom:.1f}px - the box is being drawn with perspective"
+            )
+
+    def test_two_parts_of_the_same_size_measure_the_same_wherever_they_sit(self, plotter):
+        """What parallel projection is actually for: a view you can judge size in."""
+        import vtk
+
+        scene = ViewportScene(plotter)
+        scene.set_view("iso")
+        plotter.reset_camera()
+
+        def span(centre):
+            coordinate = vtk.vtkCoordinate()
+            coordinate.SetCoordinateSystemToWorld()
+            points = []
+            for offset in ((-10.0, 0.0, 0.0), (10.0, 0.0, 0.0)):
+                coordinate.SetValue(*(np.array(centre) + np.array(offset)))
+                points.append(np.array(coordinate.GetComputedDoubleDisplayValue(plotter.renderer)))
+            return float(np.linalg.norm(points[0] - points[1]))
+
+        near_the_front = span((0.0, -100.0, 10.0))
+        near_the_back = span((0.0, 100.0, 10.0))
+        assert near_the_back == pytest.approx(near_the_front, rel=1e-3)

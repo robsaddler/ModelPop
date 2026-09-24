@@ -70,6 +70,9 @@ TIP = 0.036
 RING = 0.007
 """Rotation ring tube radius, as a fraction of the part."""
 
+RESTING_OPACITY = 0.18
+"""How faint the handles go while they cannot be grabbed."""
+
 RING_OPACITY = 0.45
 """Rings sit back so the arrows read first. Moving is much the commoner intent,
 and three full-strength circles round a small part is what got the old handles
@@ -172,14 +175,9 @@ class DragHandles:
                 what is happening while it is still happening.
         """
         self._plotter = plotter
-        self._actor = actor
         self._on_release = on_release
         self._on_move = on_move
 
-        low = np.array(bounds[0::2], dtype=np.float64)
-        high = np.array(bounds[1::2], dtype=np.float64)
-        self._centre = (low + high) / 2.0
-        self._size = float(max(high - low)) or 1.0
         # A Rotate feature compiles to build123d's ``Rot``, which turns the
         # part about the **world origin**. So that is what the rings turn
         # about too. Pivoting the preview on the part's own centre instead -
@@ -190,19 +188,82 @@ class DragHandles:
 
         self._arrows: list[Any] = []
         self._rings: list[Any] = []
-        self._build(low, high)
-
         self._held: Any = None
         self._hovered: Any = None
         self._matrix = np.eye(4)
         self._started_at: float | None = None
         self._observers: list[int] = []
-        # Two, so that moving always beats turning where both are under the
-        # cursor. Grabbing a ring when you aimed at an arrow is the kind of
-        # thing that gets a gizmo called broken.
+        self._active = True
+        self._arrow_picker: Any = None
+        self._ring_picker: Any = None
+
+        self.attach(actor, bounds)
+        self._watch()
+
+    # ------------------------------------------------------- staying on screen
+
+    def attach(
+        self,
+        actor: Any,
+        bounds: tuple[float, float, float, float, float, float],
+    ) -> None:
+        """Point the handles at a part, replacing whatever they were on.
+
+        Every rebuild makes a new actor, and the part it draws may be a
+        different size and in a different place - so the handles have to be
+        re-made around it. They are replaced **by name**, which swaps the
+        geometry inside the existing actors rather than removing them and
+        adding new ones.
+
+        That distinction is the whole point of this method. Taking them out of
+        the scene and putting them back is what made them blink out for the
+        length of a rebuild, which was reported - reasonably - as the controls
+        disappearing. They now stay on screen from the moment they are turned
+        on until they are turned off.
+        """
+        self._actor = actor
+        low = np.array(bounds[0::2], dtype=np.float64)
+        high = np.array(bounds[1::2], dtype=np.float64)
+        self._centre = (low + high) / 2.0
+        self._size = float(max(high - low)) or 1.0
+
+        self._arrows = []
+        self._rings = []
+        self._build(low, high)
+
+        # The pickers hold actor references, so they are remade with them.
+        # Two of them, so that moving always beats turning where both are
+        # under the cursor: grabbing a ring when you aimed at an arrow is the
+        # kind of thing that gets a gizmo called broken.
         self._arrow_picker = self._make_picker(self._arrows)
         self._ring_picker = self._make_picker(self._rings)
-        self._watch()
+
+        self._held = None
+        self._hovered = None
+        self._started_at = None
+        self._matrix = np.eye(4)
+        self.set_active(True)
+
+    def set_active(self, active: bool) -> None:
+        """Whether the handles can be grabbed.
+
+        They stay visible either way. While a released drag is being turned
+        into features the part is already where it was put but the feature
+        tree has not caught up, and a second drag started against that state
+        is refused outright by the command bus and silently lost. So they go
+        quiet instead of going away - dimmed, because handles that look live
+        and ignore you are worse than handles that say they are not ready.
+        """
+        self._active = active
+        for handle in self._arrows:
+            handle.prop.opacity = 1.0 if active else RESTING_OPACITY
+        for handle in self._rings:
+            handle.prop.opacity = RING_OPACITY if active else RESTING_OPACITY
+
+    @property
+    def is_active(self) -> bool:
+        """Whether a grab would be accepted."""
+        return self._active
 
     # --------------------------------------------------------------- the look
 
@@ -384,6 +445,8 @@ class DragHandles:
 
     def _pressed(self, interactor: Any, _event: str) -> None:
         """Grab whatever is under the cursor, if it is one of ours."""
+        if not self._active:
+            return
         handle = self._handle_under(interactor)
         if handle is None:
             return
@@ -404,7 +467,7 @@ class DragHandles:
     def _moved(self, interactor: Any, _event: str) -> None:
         """Track the cursor if a handle is held, otherwise just light one up."""
         if self._held is None:
-            self._hover(self._handle_under(interactor))
+            self._hover(self._handle_under(interactor) if self._active else None)
             return
 
         self._stop_the_camera(interactor)
@@ -500,7 +563,10 @@ class DragHandles:
     def _unhighlight(self, handle: Any) -> None:
         index = (self._arrows + self._rings).index(handle) % 3
         handle.prop.color = AXIS_COLOURS[index]
-        handle.prop.opacity = 1.0 if handle in self._arrows else RING_OPACITY
+        if not self._active:
+            handle.prop.opacity = RESTING_OPACITY
+        else:
+            handle.prop.opacity = 1.0 if handle in self._arrows else RING_OPACITY
 
 
 def _ring(centre: NDArray[np.float64], index: int, radius: float, thickness: float) -> pv.PolyData:

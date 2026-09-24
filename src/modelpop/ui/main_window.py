@@ -495,10 +495,12 @@ class MainWindow(QMainWindow):
         back to where it started for the whole of that was reported - fairly -
         as the drag being thrown away: you let go, and it jumps back.
 
-        The handles come off for the same interval. A second drag started
-        against a part whose move is still in flight would begin from a
-        transform the feature tree is about to account for, and end up moving
-        it twice. They go back on, over the new geometry, in
+        The handles stay on screen for the same interval but stop accepting a
+        grab. A second drag started against a part whose move is still in
+        flight is refused by the command bus and silently lost - so it must
+        not be possible to start one, but taking the handles away to achieve
+        that made them disappear and come back, which is worse. They go quiet
+        and dim instead, and wake up over the new geometry in
         ``_on_state_changed``.
 
         Nothing here undoes the transform, because the actor is replaced
@@ -514,7 +516,7 @@ class MainWindow(QMainWindow):
             return
 
         self._drag_in_flight = True
-        self._scene.stop_dragging(keep_where_it_was_dragged=True)
+        self._scene.pause_dragging()
         for command in drag.commands:
             self._modelling.apply_from_the_viewport(command)
         self.statusBar().showMessage(drag.describe())

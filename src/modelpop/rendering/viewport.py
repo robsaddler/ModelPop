@@ -138,10 +138,28 @@ class ViewportScene:
         self._drag_widget: Any = None
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
+        self._use_parallel_projection()
         self._draw_build_volume()
         self._name_the_printer()
 
     # ----------------------------------------------------------------- scene
+
+    def _use_parallel_projection(self) -> None:
+        """Draw without perspective, the way every CAD package does.
+
+        VTK defaults to a perspective camera with a 30-degree view angle. On a
+        scene that is mostly a 256 mm box that is actively misleading: zoom in
+        and the envelope's edges fan out, the far wall shrinks, and the box
+        stops reading as a box. It was reported twice - "the default cube
+        distorts into not a cube" and "the printer perspective went wonky" -
+        and both times it was this, not the geometry.
+
+        Parallel projection also makes the view *measurable*: two features the
+        same size are the same size on screen wherever they sit in the volume,
+        which is the whole point of looking at a part before printing it.
+        """
+        camera = self._plotter.camera
+        camera.enable_parallel_projection()
 
     def _draw_build_volume(self) -> None:
         """Draw the bed and a wireframe of the printable envelope.
@@ -195,10 +213,14 @@ class ViewportScene:
             mesh: the geometry to show; ``None`` clears the view.
             has_problems: colour it as a warning rather than as normal geometry.
         """
-        self.clear_model()
         if mesh is None or mesh.is_empty:
+            self.clear_model()
             return
 
+        # Not ``clear_model``: that takes the drag handles off, and they are
+        # meant to stay on screen from being switched on to being switched
+        # off. The actor is replaced below in any case.
+        self._remove_model()
         self._polydata = to_polydata(mesh)
         self._model_actor = self._plotter.add_mesh(
             self._polydata,
@@ -216,12 +238,24 @@ class ViewportScene:
         self._show_the_inside(self._model_actor)
         self._locator = None  # invalidated: it belongs to the old geometry
 
+        # The handles were on the actor that has just been replaced, and the
+        # part may be a different size and in a different place. Re-pointing
+        # them keeps them on screen across the swap; removing and re-adding
+        # them is what made them blink out for the length of a rebuild.
+        if self._drag_widget is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                self._drag_widget.attach(self._model_actor, self._polydata.bounds)
+
     def clear_model(self) -> None:
         """Remove the model, leaving the build volume in place."""
         self.clear_measurement()
-        # The handles belong to this actor. Left behind they would go on
-        # dragging geometry that is no longer in the scene.
+        # The handles belong to this actor. With nothing to put them back on
+        # they would hover over geometry that is no longer in the scene.
         self.stop_dragging()
+        self._remove_model()
+
+    def _remove_model(self) -> None:
+        """Take the model's actor out, leaving everything else alone."""
         if self._model_actor is not None:
             self._plotter.remove_actor(self._model_actor, render=False)
         self._model_actor = None
@@ -287,9 +321,15 @@ class ViewportScene:
         floating over a model they do not move, which looks like the feature is
         broken rather than stale.
         """
-        self.stop_dragging()
         if self._model_actor is None or self._polydata is None:
             return False
+
+        if self._drag_widget is not None:
+            # Already on: re-point them rather than replacing them, so they do
+            # not blink out between one model and the next.
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                self._drag_widget.attach(self._model_actor, self._polydata.bounds)
+                return True
 
         try:
             self._drag_widget = DragHandles(
@@ -346,10 +386,28 @@ class ViewportScene:
         with contextlib.suppress(AttributeError, RuntimeError, ValueError):
             self._model_actor.user_matrix = np.eye(4)
 
+    def pause_dragging(self) -> None:
+        """Leave the handles on screen but stop them being grabbed.
+
+        For the moment between letting go and the rebuild landing. A second
+        drag started against a part whose move is still in flight is refused
+        outright by the command bus and silently lost, so it must not be
+        possible to start one - but taking the handles away to achieve that is
+        what made them disappear and come back, which is worse.
+        """
+        if self._drag_widget is not None:
+            with contextlib.suppress(AttributeError, RuntimeError):
+                self._drag_widget.set_active(False)
+
     @property
     def is_dragging(self) -> bool:
         """Whether the handles are currently on the model."""
         return self._drag_widget is not None
+
+    @property
+    def can_be_dragged(self) -> bool:
+        """Whether the handles are on *and* willing to be grabbed."""
+        return self._drag_widget is not None and bool(self._drag_widget.is_active)
 
     # ---------------------------------------------------------- section view
 
