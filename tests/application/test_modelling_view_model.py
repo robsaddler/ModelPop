@@ -592,6 +592,39 @@ class TestEmptyingTheModel:
 
         assert seen == ["mesh", "cleared"]
 
+    def test_redo_is_still_offered_after_undoing_the_only_step(self):
+        """An empty tree still has a history.
+
+        Building the empty state without one is why Redo greyed out after
+        undoing the *first* step: there was nothing to rebuild, so the flags
+        that drive the buttons were never carried across.
+        """
+        model = view()
+        model.add_box(20, 20, 20)
+        model.undo()
+
+        assert model.state.is_empty
+        assert model.can_redo
+        assert not model.can_undo
+
+    def test_redoing_from_empty_brings_the_shape_back(self):
+        model = view()
+        model.add_box(20, 20, 20)
+        model.undo()
+        model.redo()
+
+        assert len(model.state.features) == 1
+        assert model.can_undo
+        assert not model.can_redo
+
+    def test_the_labels_survive_emptying_too(self):
+        """The buttons say what they will do, and an empty tree is no exception."""
+        model = view()
+        model.add_box(20, 20, 20)
+        model.undo()
+
+        assert model.state.redo_label
+
     def test_undoing_to_a_smaller_model_still_hands_over_geometry(self):
         model, seen = self.watched()
         model.add_box(20, 20, 20)

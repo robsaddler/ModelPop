@@ -362,7 +362,17 @@ class ModellingSession:
             )
 
         if not self._bus.document.active_features:
-            self._state = ModelState(document=self._bus.document)
+            # An empty tree still has a history. Building this state without
+            # one was why undoing the *first* step disabled Redo: there was
+            # nothing to rebuild, so the flags that drive the buttons were
+            # never carried across and defaulted to False.
+            self._state = ModelState(
+                document=self._bus.document,
+                can_undo=self._bus.history.can_undo,
+                can_redo=self._bus.history.can_redo,
+                undo_label=self._bus.history.undo_label or "",
+                redo_label=self._bus.history.redo_label or "",
+            )
             return success(self._state)
 
         built = self._compiler.build(self._bus.document)
