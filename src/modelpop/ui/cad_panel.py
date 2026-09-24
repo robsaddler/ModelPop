@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -43,9 +43,9 @@ from modelpop.presentation.modelling_view_model import ModellingViewModel
 from modelpop.ui.outline_dialog import Operation, OutlineDialog
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    pass
 
-__all__ = ["CadPanel", "TextDialog", "ThreadedRebuilder"]
+__all__ = ["CadPanel", "TextDialog"]
 
 _HINT_STYLE = "color: #9AA5B1; font-size: 11px;"
 _ASSISTANT_COLOUR = "#9FC5E8"
@@ -596,62 +596,3 @@ class CadPanel(QWidget):
 
         if not buildable and not self._view.is_busy:
             self._status.setText("The CAD kernel is unavailable, so the model cannot be rebuilt.")
-
-
-class ModellingWorker(QObject):
-    """Runs one rebuild on a thread and says when it is finished."""
-
-    done = Signal()
-
-    def __init__(self, work: Callable[[], None]) -> None:
-        super().__init__()
-        self._work = work
-
-    def run(self) -> None:
-        """Do the work, and report finishing even if it raised."""
-        try:
-            self._work()
-        finally:
-            self.done.emit()
-
-
-class ThreadedRebuilder:
-    """Keeps the window responsive while OCCT works.
-
-    A rebuild is a subprocess taking a second or two. Running it on the
-    interface thread freezes the window for exactly as long, which reads as a
-    crash.
-
-    Both the thread **and** the worker are held for as long as the work lasts.
-    Keeping only the thread is the obvious version and it silently does nothing:
-    the worker has no parent, so it is collected the moment this returns, and
-    the queued ``started`` connection dies with it. The thread then starts, runs
-    an empty event loop, and waits forever. No exception, no output, no clue.
-    This was written that way first and cost an hour.
-    """
-
-    def __init__(self, owner: QWidget) -> None:
-        """Hold threads and their workers for as long as they run."""
-        self._owner = owner
-        self._live: list[tuple[QThread, ModellingWorker]] = []
-
-    def __call__(self, work: Callable[[], None]) -> None:
-        """Start one rebuild on its own thread."""
-        thread = QThread(self._owner)
-        worker = ModellingWorker(work)
-        worker.moveToThread(thread)
-
-        thread.started.connect(worker.run)
-        worker.done.connect(thread.quit)
-        thread.finished.connect(lambda: self._forget(thread))
-
-        self._live.append((thread, worker))
-        thread.start()
-
-    def _forget(self, thread: QThread) -> None:
-        self._live = [pair for pair in self._live if pair[0] is not thread]
-
-    @property
-    def running(self) -> int:
-        """How many rebuilds are in flight. For tests, and for diagnostics."""
-        return len(self._live)

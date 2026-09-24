@@ -67,11 +67,34 @@ class Build123dKernel:
         """
         self._python = python or Path(sys.executable)
         self._workspace = workspace
+        # Both are settled once: starting an interpreter to import OCCT is
+        # two seconds, and neither answer changes while the app is running.
+        self._available: bool | None = None
+        self._described: str | None = None
 
     # ------------------------------------------------------------ availability
 
     def is_available(self) -> bool:
-        """Whether build123d can be imported by the worker interpreter."""
+        """Whether build123d can be imported by the worker interpreter.
+
+        **Answered once and remembered.** Asking costs an interpreter start and
+        a full OCCT import - measured at 1.9 seconds on this machine - and the
+        answer cannot change while the application is running.
+
+        Left uncached it was catastrophic rather than merely wasteful. The
+        interface asks it through ``can_build`` from several places on every
+        refresh, so a single click on *Sphere* spawned **eleven** of these plus
+        the one rebuild that did the work: twenty-three seconds, of which
+        twenty-one were spent importing the same library over and over. Worse,
+        they run on the interface thread, so the window could not repaint and
+        the model appeared to draw wrong until it got a turn.
+        """
+        if self._available is None:
+            self._available = self._probe()
+        return self._available
+
+    def _probe(self) -> bool:
+        """Actually ask, by starting an interpreter and importing."""
         try:
             completed = subprocess.run(
                 [str(self._python), "-c", "import build123d"],
@@ -83,8 +106,28 @@ class Build123dKernel:
             return False
         return completed.returncode == 0
 
+    def forget_availability(self) -> None:
+        """Ask again next time.
+
+        For a test that installs or removes the kernel underneath a live
+        object. Nothing in the application calls it: a kernel that appears
+        while the window is open is a restart, not a state change.
+        """
+        self._available = None
+
     def describe(self) -> str:
-        """Which kernel is in use, for diagnostics."""
+        """Which kernel is in use, for diagnostics.
+
+        Remembered for the same reason as ``is_available``: it starts an
+        interpreter and imports OCCT to read a version string.
+        """
+        if self._described is not None:
+            return self._described
+        self._described = self._ask_version()
+        return self._described
+
+    def _ask_version(self) -> str:
+        """Start an interpreter and read the version out of it."""
         try:
             completed = subprocess.run(
                 [

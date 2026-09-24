@@ -87,6 +87,26 @@ Tests that would fail without the change; `ruff` and `mypy --strict` clean; `imp
   rest, the five COLMAP stages together under 5%. Weight any progress bar by that, or it sits
   still for a minute in the middle and people kill a job that is working.
 
+## The interface thread
+
+**Nothing but interface work runs on it.** Every slow thing here is a subprocess or a socket - a
+CAD rebuild, a slice, a generation, a reconstruction, a job sent to a printer - and each would
+freeze the window for as long as it takes. They go through `BackgroundRunner`; there is no second
+way of doing it.
+
+Two corollaries, both learned by shipping them broken:
+
+- **Anything a view-model announces must cross back through a Qt signal** before it touches a widget
+  or VTK. A bound method runs on whichever thread did the work.
+- **Never probe something expensive from a `can_*` property.** The interface asks those on every
+  refresh. `Build123dKernel.is_available` started an interpreter and imported OCCT; one click on
+  *Sphere* spawned eleven of them, on the interface thread, for twenty-three seconds. Settle it once
+  and remember it.
+
+A comment saying "inline for now, this is fast enough" is how both of these survived: it was true in
+Phase 1 and nobody revisited it when slicing, generation and photogrammetry were built behind the
+same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather than describing it.
+
 ## Traps already paid for — do not rediscover these
 
 1. **Windows path length breaks `pip`.** Keep the project and its venv at a short path.

@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication, QWidget
 
-from modelpop.ui.cad_panel import ThreadedRebuilder
+from modelpop.ui.background import BackgroundRunner
 from modelpop.ui.gallery import _ThreadedRunner
 
 
@@ -44,7 +44,7 @@ def wait_for(predicate, seconds: float = 5.0) -> bool:
     return False
 
 
-@pytest.mark.parametrize("runner_type", [ThreadedRebuilder, _ThreadedRunner])
+@pytest.mark.parametrize("runner_type", [BackgroundRunner, _ThreadedRunner])
 def test_the_work_actually_runs(owner, runner_type):
     """The bug this catches: the thread starts and the work never happens."""
     done: list[int] = []
@@ -54,7 +54,7 @@ def test_the_work_actually_runs(owner, runner_type):
     assert wait_for(lambda: bool(done)), "the work never ran"
 
 
-@pytest.mark.parametrize("runner_type", [ThreadedRebuilder, _ThreadedRunner])
+@pytest.mark.parametrize("runner_type", [BackgroundRunner, _ThreadedRunner])
 def test_the_thread_is_released_afterwards(owner, runner_type):
     """A runner that never lets go leaks a thread per click."""
     runner = runner_type(owner)
@@ -63,7 +63,7 @@ def test_the_thread_is_released_afterwards(owner, runner_type):
     assert wait_for(lambda: runner.running == 0), "the thread was never released"
 
 
-@pytest.mark.parametrize("runner_type", [ThreadedRebuilder, _ThreadedRunner])
+@pytest.mark.parametrize("runner_type", [BackgroundRunner, _ThreadedRunner])
 def test_work_that_raises_still_releases_the_thread(owner, runner_type):
     """Otherwise one failure locks the interface for the rest of the session."""
 
@@ -76,7 +76,7 @@ def test_work_that_raises_still_releases_the_thread(owner, runner_type):
     assert wait_for(lambda: runner.running == 0), "a raising worker leaked its thread"
 
 
-@pytest.mark.parametrize("runner_type", [ThreadedRebuilder, _ThreadedRunner])
+@pytest.mark.parametrize("runner_type", [BackgroundRunner, _ThreadedRunner])
 def test_several_pieces_of_work_all_run(owner, runner_type):
     runner = runner_type(owner)
     done: list[int] = []
@@ -86,7 +86,7 @@ def test_several_pieces_of_work_all_run(owner, runner_type):
     assert wait_for(lambda: len(done) == 5), f"only {len(done)} of 5 ran"
 
 
-@pytest.mark.parametrize("runner_type", [ThreadedRebuilder, _ThreadedRunner])
+@pytest.mark.parametrize("runner_type", [BackgroundRunner, _ThreadedRunner])
 def test_the_work_does_not_run_on_the_interface_thread(owner, runner_type):
     """If it did, the window would freeze for as long as the work takes."""
     import threading

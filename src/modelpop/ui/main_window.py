@@ -49,7 +49,8 @@ if TYPE_CHECKING:
 from modelpop.presentation.dragging import movement_in
 from modelpop.presentation.measuring import MeasuringTool
 from modelpop.presentation.sectioning import SectionTool
-from modelpop.ui.cad_panel import CadPanel, ThreadedRebuilder
+from modelpop.ui.background import BackgroundRunner
+from modelpop.ui.cad_panel import CadPanel
 from modelpop.ui.dialogs import (
     EditDialog,
     GenerateDialog,
@@ -123,10 +124,14 @@ class MainWindow(QMainWindow):
                 still opens when the kernel failed to load.
         """
         super().__init__()
-        # Work runs inline for now: the operations in Phase 1 are fast enough
-        # that a worker thread would add risk without adding responsiveness.
-        # The seam exists, so swapping in the threaded runner is a one-line change.
-        self._view_model = WorkspaceViewModel(workspace)
+        # One runner, and *everything* slow goes through it. Slicing, generating
+        # a mesh, reconstructing from photographs and sending a job are all
+        # subprocesses or sockets taking seconds to minutes; every one of them
+        # used to run here, on the interface thread, because the seam was left
+        # inline in Phase 1 when nothing took long and the comment saying so was
+        # never revisited.
+        self._work = BackgroundRunner(self)
+        self._view_model = WorkspaceViewModel(workspace, self._work)
         self._printer = workspace.printer
         self._secrets = default_store()
         # A factory rather than an instance: the credentials can change in
@@ -145,7 +150,7 @@ class MainWindow(QMainWindow):
         session = modelling or ModellingSession()
         self._modelling = ModellingViewModel(
             session,
-            ThreadedRebuilder(self),
+            self._work,
             self._view_model.adopt,
             lambda words: edit_by_description(
                 session, words, AnthropicProvider(self._secrets), self._ai_settings
