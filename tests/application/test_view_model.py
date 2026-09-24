@@ -209,3 +209,130 @@ class TestSupportChoice:
         vm.open(Path("model.stl"))
         vm.slice(Path("out"))
         assert slicer.jobs[-1].supports is SupportType.NONE
+
+
+class TestChoosingBetweenShapes:
+    """The variants list, at the layer the interface actually binds to."""
+
+    def model(self, generator=None):
+        from modelpop.application.workspace import Workspace
+        from modelpop.presentation.workspace_view_model import WorkspaceViewModel
+
+        from .test_workspace import FakeIO, FakeOps
+
+        view = WorkspaceViewModel(Workspace(FakeIO(), FakeOps(), mesh_generator=generator))
+        seen: list = []
+        view.on_notification(seen.append)
+        return view, seen
+
+    def generator(self, fail_on=()):
+        from modelpop.application.mesh_generation_ports import GeneratedMesh
+        from modelpop.domain.result import failure, success
+
+        from .test_workspace import box
+
+        class Fake:
+            def is_available(self) -> bool:
+                return True
+
+            def describe(self) -> str:
+                return "a fake generator"
+
+            def from_text(self, prompt, options=None, on_progress=None):
+                raise AssertionError("not reached")
+
+            def from_image(self, image, options=None, on_progress=None):
+                seed = options.seed if options else 0
+                if seed in fail_on:
+                    return failure("no", "it ran out of memory")
+                return success(GeneratedMesh(mesh=box(10 + seed), model="trellis", seed=seed))
+
+        return Fake()
+
+    def picture(self, tmp_path):
+        image = tmp_path / "dragon.png"
+        image.write_bytes(b"png")
+        return image
+
+    def test_nothing_has_been_made_to_begin_with(self):
+        view, _ = self.model()
+        assert view.history.is_empty
+        assert not view.can_show_variants
+
+    def test_several_shapes_all_land_in_the_list(self, tmp_path):
+        view, _ = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 3)
+
+        assert len(view.history) == 3
+        assert view.can_show_variants
+
+    def test_the_first_one_is_what_you_are_looking_at(self, tmp_path):
+        """The list must agree with the viewport without needing a click."""
+        view, _ = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 3)
+
+        assert view.history.chosen is not None
+        assert view.history.chosen.label == "Shape 1"
+        assert view.state.has_model
+
+    def test_going_back_to_another_costs_nothing_and_changes_the_model(self, tmp_path):
+        """They are all still in memory, which is what makes comparing worthwhile."""
+        view, _ = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 3)
+        first = view.state.mesh
+
+        view.show_variant(2)
+
+        assert view.history.chosen is not None
+        assert view.history.chosen.label == "Shape 3"
+        assert view.state.mesh is not first
+
+    def test_the_provenance_follows_whichever_is_shown(self, tmp_path):
+        view, _ = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 2)
+        view.show_variant(1)
+
+        assert "Generated" in view.state.generation_note
+
+    def test_a_stale_click_is_ignored(self, tmp_path):
+        view, _ = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 2)
+        view.show_variant(99)
+
+        assert view.history.chosen is not None
+        assert view.history.chosen.label == "Shape 1"
+
+    def test_each_shape_keeps_the_seed_that_made_it(self, tmp_path):
+        """A shape you liked and cannot reproduce is worse than never seeing it."""
+        view, _ = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 3)
+
+        assert sorted(v.seed for v in view.history) == [1, 2, 3]
+
+    def test_a_partly_successful_run_says_how_many_worked(self, tmp_path):
+        view, seen = self.model(self.generator(fail_on=(2,)))
+        view.generate_variants(self.picture(tmp_path), 3)
+
+        assert len(view.history) == 2
+        assert "2 of the 3" in seen[-1].message
+
+    def test_a_fully_successful_run_does_not_apologise(self, tmp_path):
+        view, seen = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 3)
+
+        assert "of the" not in seen[-1].message
+
+    def test_a_run_where_none_worked_is_reported_as_a_failure(self, tmp_path):
+        view, seen = self.model(self.generator(fail_on=(1, 2, 3)))
+        view.generate_variants(self.picture(tmp_path), 3)
+
+        assert view.history.is_empty
+        assert seen[-1].is_error
+
+    def test_a_second_run_keeps_the_first_run_shapes(self, tmp_path):
+        """Going back to yesterday's idea is the other half of the feature."""
+        view, _ = self.model(self.generator())
+        view.generate_variants(self.picture(tmp_path), 2)
+        view.generate_variants(self.picture(tmp_path), 2)
+
+        assert len(view.history) == 4

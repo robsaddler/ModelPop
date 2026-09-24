@@ -34,6 +34,7 @@ from modelpop.application.mesh_generation_ports import (
     Detail,
     GenerationOptions,
 )
+from modelpop.application.workspace import MAX_VARIANTS
 from modelpop.domain.photo_scale import PhotoScale
 from modelpop.domain.printer import PrinterConnection
 from modelpop.domain.units import Length
@@ -641,6 +642,17 @@ class GenerateFromImageDialog(QDialog):
         self._seed.setSpecialValueText("pick one")
         form.addRow("Seed", self._seed)
 
+        self._how_many = QSpinBox()
+        self._how_many.setRange(1, MAX_VARIANTS)
+        self._how_many.setValue(1)
+        self._how_many.setSuffix(" shape(s)")
+        self._how_many.setToolTip(
+            "Asked twice, the generator answers twice differently. The first "
+            "answer is rarely the best one and the only way to tell is to see "
+            "the others - but each takes about a minute."
+        )
+        form.addRow("Make", self._how_many)
+
         size_row = QHBoxLayout()
         self._size = QDoubleSpinBox()
         self._size.setRange(1.0, 1000.0)
@@ -690,6 +702,15 @@ class GenerateFromImageDialog(QDialog):
             size=Length.mm(self._size.value()),
             size_was_measured=self._measured is not None,
         )
+
+    @property
+    def how_many(self) -> int:
+        """How many different shapes to ask for.
+
+        One by default. Several is the better answer and costs a minute each,
+        so it is offered rather than assumed.
+        """
+        return int(self._how_many.value())
 
     @property
     def measured(self) -> PhotoScale | None:

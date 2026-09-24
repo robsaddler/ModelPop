@@ -13,7 +13,7 @@ inline. Neither this module nor the test needs to know which.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,6 +23,7 @@ from modelpop.domain.printer import PrinterConnection, PrinterProfile, SupportTy
 from modelpop.domain.readiness import Severity
 from modelpop.domain.result import Result
 from modelpop.domain.units import Length
+from modelpop.presentation.variants import GenerationHistory, Variant
 
 if TYPE_CHECKING:
     from modelpop.application.cad_ports import DimensionTable
@@ -85,6 +86,7 @@ class WorkspaceViewModel:
         self._runner = runner
         self._ai_settings = AiSettings()
         self._connection = PrinterConnection()
+        self._history = GenerationHistory()
         self._state = WorkspaceState()
         self._busy = False
         self._state_listeners: list[Callable[[WorkspaceState], None]] = []
@@ -365,6 +367,98 @@ class WorkspaceViewModel:
             failed="Slicing failed",
             describe_success=self._describe_slice,
         )
+
+    # --------------------------------------------------------------- variants
+
+    @property
+    def history(self) -> GenerationHistory:
+        """Every shape made this session, newest first."""
+        return self._history
+
+    def generate_variants(
+        self,
+        image: Path,
+        count: int = 3,
+        options: GenerationOptions | None = None,
+        on_progress: Progress | None = None,
+    ) -> None:
+        """Ask one picture for several shapes, and keep them all.
+
+        The result is *not* adopted silently. Several candidates arrive, the
+        first is shown, and the rest wait in the list - which is the whole
+        point, because the first answer is rarely the best one and the only way
+        to tell is to look at the others.
+        """
+        if self._busy:
+            self._notify(Notification("Already working on something", Severity.WARNING))
+            return
+
+        self._set_busy(True)
+
+        def work() -> None:
+            try:
+                outcome = self._workspace.generate_variants(image, count, options, on_progress)
+            finally:
+                self._set_busy(False)
+
+            if not outcome.ok:
+                self._notify(
+                    Notification(
+                        "Could not make any shapes from that picture",
+                        Severity.BLOCKER,
+                        outcome.error,
+                        failed=True,
+                    )
+                )
+                return
+
+            made = outcome.unwrap()
+            self._history.add_all(
+                Variant(
+                    mesh=shape.mesh,
+                    provenance=shape.provenance,
+                    label=f"Shape {number}",
+                    seed=shape.seed,
+                    seconds=shape.seconds,
+                )
+                for number, shape in enumerate(made, start=1)
+            )
+            self.show_variant(0)
+
+            asked = max(1, count)
+            short = f" {len(made)} of the {asked} asked for worked." if len(made) < asked else ""
+            self._notify(
+                Notification(
+                    f"Made {len(made)} shape(s) from that picture.{short}",
+                    Severity.INFO,
+                    "Pick one from the list; the others are kept until you close the app.",
+                )
+            )
+
+        self._runner(work)
+
+    def show_variant(self, index: int) -> None:
+        """Put one of the shapes already made into the viewport.
+
+        Adopting rather than re-generating: they are all still in memory, so
+        going back to the first of three costs nothing. That is what makes
+        comparing them worth doing at all.
+        """
+        variant = self._history.choose(index)
+        if variant is None:
+            return
+        self._set_state(
+            replace(
+                self._workspace.adopt(variant.mesh),
+                generation_note=variant.provenance,
+            )
+        )
+        self._notify(Notification(variant.describe(), self._severity_of_state()))
+
+    @property
+    def can_show_variants(self) -> bool:
+        """Whether there is anything in the list to go back to."""
+        return not self._history.is_empty and not self._busy
 
     # ---------------------------------------------------------------- sending
 

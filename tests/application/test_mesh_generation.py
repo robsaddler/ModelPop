@@ -643,3 +643,138 @@ class TestWhereTheSizeCameFrom:
         assert not GenerationOptions().size_was_measured
         _, notes = _given_a_scale(self.cube(1.0), Length.mm(100))
         assert "no scale" in notes[0]
+
+
+class TestAskingForSeveralShapes:
+    """A generative model asked twice answers twice differently.
+
+    The first answer is rarely the best and there is no way to tell without
+    seeing the others, so a run can ask several times. What matters here is
+    that each gets its own reproducible seed, that a partial success is still
+    a success, and that the whole lot is kept so going back costs nothing.
+    """
+
+    def workspace(self, generator=None):
+        from modelpop.application.workspace import Workspace
+
+        from .test_workspace import FakeIO, FakeOps
+
+        return Workspace(FakeIO(), FakeOps(), mesh_generator=generator)
+
+    def counting_generator(self, fail_on=()):
+        """Records every seed it was asked for, and refuses the listed ones."""
+        from modelpop.domain.result import failure, success
+
+        from .test_workspace import box
+
+        class Counting:
+            def __init__(self):
+                self.seeds: list[int] = []
+
+            def is_available(self) -> bool:
+                return True
+
+            def describe(self) -> str:
+                return "a counting generator"
+
+            def from_text(self, prompt, options=None, on_progress=None):
+                raise AssertionError("not reached")
+
+            def from_image(self, image, options=None, on_progress=None):
+                seed = options.seed if options else 0
+                self.seeds.append(seed)
+                if seed in fail_on:
+                    return failure("that one did not work", "out of memory")
+                if on_progress is not None:
+                    on_progress(0.5, "halfway")
+                return success(GeneratedMesh(mesh=box(20), model="trellis", seed=seed))
+
+        return Counting()
+
+    def picture(self, tmp_path):
+        image = tmp_path / "dragon.png"
+        image.write_bytes(b"png")
+        return image
+
+    def test_it_asks_as_many_times_as_it_was_told_to(self, tmp_path):
+        generator = self.counting_generator()
+        made = self.workspace(generator).generate_variants(self.picture(tmp_path), 3)
+
+        assert made.ok
+        assert len(made.unwrap()) == 3
+        assert len(generator.seeds) == 3
+
+    def test_each_candidate_gets_its_own_seed(self, tmp_path):
+        """Left at zero every run picks its own, and none can be asked for again."""
+        generator = self.counting_generator()
+        self.workspace(generator).generate_variants(self.picture(tmp_path), 3)
+
+        assert len(set(generator.seeds)) == 3
+
+    def test_the_seeds_follow_on_from_one_that_was_asked_for(self, tmp_path):
+        """So "three more like that" can start where the last run left off."""
+        from modelpop.application.mesh_generation_ports import GenerationOptions
+
+        generator = self.counting_generator()
+        self.workspace(generator).generate_variants(
+            self.picture(tmp_path), 3, GenerationOptions(seed=100)
+        )
+
+        assert generator.seeds == [100, 101, 102]
+
+    def test_one_that_fails_does_not_throw_away_the_ones_that_worked(self, tmp_path):
+        """Two good candidates are a perfectly useful answer."""
+        generator = self.counting_generator(fail_on=(2,))
+        made = self.workspace(generator).generate_variants(self.picture(tmp_path), 3)
+
+        assert made.ok
+        assert len(made.unwrap()) == 2
+
+    def test_all_of_them_failing_is_a_failure_that_says_why(self, tmp_path):
+        generator = self.counting_generator(fail_on=(1, 2, 3))
+        made = self.workspace(generator).generate_variants(self.picture(tmp_path), 3)
+
+        assert not made.ok
+        assert "out of memory" in made.error
+
+    def test_without_a_generator_it_says_so(self, tmp_path):
+        made = self.workspace().generate_variants(self.picture(tmp_path), 3)
+
+        assert not made.ok
+        assert "unavailable" in made.error
+
+    def test_asking_for_none_still_asks_once(self, tmp_path):
+        """Nought variants is a mistake, not an instruction to do nothing."""
+        generator = self.counting_generator()
+        self.workspace(generator).generate_variants(self.picture(tmp_path), 0)
+
+        assert len(generator.seeds) == 1
+
+    def test_asking_for_a_hundred_is_capped(self, tmp_path):
+        """Each holds the graphics card for a minute or so."""
+        from modelpop.application.workspace import MAX_VARIANTS
+
+        generator = self.counting_generator()
+        self.workspace(generator).generate_variants(self.picture(tmp_path), 100)
+
+        assert len(generator.seeds) == MAX_VARIANTS
+
+    def test_progress_runs_once_from_nothing_to_everything(self, tmp_path):
+        """Not three times. Left alone the bar races to the end and restarts."""
+        seen: list[float] = []
+        self.workspace(self.counting_generator()).generate_variants(
+            self.picture(tmp_path), 3, None, lambda fraction, _: seen.append(fraction)
+        )
+
+        assert seen == sorted(seen)
+        assert all(0.0 <= fraction <= 1.0 for fraction in seen)
+        assert max(seen) < 1.0, "it should not claim to be finished part way"
+
+    def test_progress_says_which_shape_it_is_on(self, tmp_path):
+        said: list[str] = []
+        self.workspace(self.counting_generator()).generate_variants(
+            self.picture(tmp_path), 2, None, lambda _, message: said.append(message)
+        )
+
+        assert any("1 of 2" in line for line in said)
+        assert any("2 of 2" in line for line in said)

@@ -174,6 +174,20 @@ The note on the model then says it was *measured*, which means it can be checked
 A **seed** makes a run repeatable, which is the only way to iterate on a picture rather than gamble
 on it. It is not bit-identical — GPU arithmetic is not reproducible — but it gives the same shape.
 
+### Asking for several at once
+
+Set **Make** to more than one shape and the same picture is put to the generator several times. Asked
+twice it answers twice differently, and the first answer is rarely the best one — the only way to
+tell is to see the others. Each takes about a minute.
+
+They all appear in **Shapes made this session**, under the readiness panel. Click one and it goes
+into the viewport at full size, where you can orbit it — which tells you far more about whether it
+will print than a thumbnail would. Switching between them is instant; they are all still in memory.
+
+Each row carries its **seed**, so a shape you liked can be asked for again. That list is also your
+history: everything generated this session is in it, the newest at the top, up to ten. It is not
+saved when you close the app — what survives is what you saved on purpose.
+
 ### Rescuing the detail
 
 A generated model carries its fine detail in *colour*, and a slicer cannot see colour. Left alone it

@@ -61,6 +61,7 @@ from modelpop.ui.dialogs import (
 from modelpop.ui.monitor_dialog import MonitorDialog
 from modelpop.ui.reconstruct_dialog import ReconstructDialog
 from modelpop.ui.section_dialog import SectionDialog
+from modelpop.ui.variants_panel import VariantsPanel
 
 __all__ = ["MainWindow"]
 
@@ -202,6 +203,13 @@ class MainWindow(QMainWindow):
         self._detail_button.setVisible(False)
         self._detail_button.clicked.connect(self._rescue_detail)
         side.addWidget(self._detail_button)
+
+        # Hidden until something has been generated. An empty "shapes made this
+        # session" list is clutter on the panel people use most.
+        self._variants = VariantsPanel()
+        self._variants.setVisible(False)
+        self._variants.chosen.connect(self._view_model.show_variant)
+        side.addWidget(self._variants)
 
         self._repair_button = QPushButton("Repair")
         self._resize_button = QPushButton("Resize...")
@@ -596,6 +604,16 @@ class MainWindow(QMainWindow):
         if not dialog.exec():
             return
 
+        wanted = dialog.how_many
+        if wanted > 1:
+            self.statusBar().showMessage(
+                f"Making {wanted} different shapes from that picture. Each takes about a minute."
+            )
+            self._view_model.generate_variants(
+                chosen, wanted, dialog.options(), self._on_generation_progress
+            )
+            return
+
         self.statusBar().showMessage("Making a model from that picture...")
         self._view_model.generate_from_image(chosen, dialog.options(), self._on_generation_progress)
 
@@ -870,6 +888,7 @@ class MainWindow(QMainWindow):
         self._watch_action.setEnabled(sliced is not None and sliced.gcode_path is not None)
         self._send_action.setEnabled(self._view_model.can_send_to_printer)
         self._detail_button.setVisible(self._view_model.can_rescue_detail)
+        self._variants.show_history(self._view_model.history)
 
     def _on_cad_outcome(self, outcome: Outcome) -> None:
         """Report what a CAD command did.

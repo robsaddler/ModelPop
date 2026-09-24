@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modelpop.application.generation_ports import CadGenerationRun
+from modelpop.application.mesh_generation_ports import GenerationOptions
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.printer import PrinterConnection, PrinterProfile, SupportType
 from modelpop.domain.readiness import ReadinessReport, assess
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from modelpop.application.detail_ports import DetailRescue
     from modelpop.application.generation_ports import PartGenerator
     from modelpop.application.mesh_generation_ports import (
-        GenerationOptions,
+        GeneratedMesh,
         MeshGenerator,
         Progress,
     )
@@ -358,6 +359,64 @@ class Workspace:
                 textured_path=made.textured_path,
             )
         )
+
+    def generate_variants(
+        self,
+        image: Path,
+        count: int = 3,
+        options: GenerationOptions | None = None,
+        on_progress: Progress | None = None,
+    ) -> Result[tuple[GeneratedMesh, ...]]:
+        """Ask the same picture for several different shapes.
+
+        A generative model asked twice answers twice differently, and the first
+        answer is rarely the best one. There is no way to tell without seeing
+        the others, so this asks several times and hands them all back for the
+        user to choose between.
+
+        Each gets its **own seed**, deliberately. Left at zero every run would
+        pick its own and none of them could be asked for again - and a shape
+        somebody liked and cannot reproduce is worse than never having seen it.
+
+        **Partial success is success.** Three candidates where one failed is a
+        perfectly useful answer, and throwing away the two that worked because
+        the third did not would be absurd. Only "none of them worked" is a
+        failure, and it says which reason came back.
+        """
+        if self._mesh_generator is None:
+            return failure(
+                "Making a shape from a picture is unavailable",
+                "See docs/10-mesh-generation.md; it needs its own environment.",
+            )
+
+        wanted = max(1, min(int(count), MAX_VARIANTS))
+        settings = options or GenerationOptions()
+        made: list[GeneratedMesh] = []
+        refusals: list[str] = []
+
+        for index in range(wanted):
+            if on_progress is not None:
+                on_progress(index / wanted, f"Shape {index + 1} of {wanted}")
+
+            attempt = self._mesh_generator.from_image(
+                image,
+                replace(settings, seed=_seed_for(settings, index)),
+                # The generator's own progress is *within* one shape, so it is
+                # rescaled into this shape's share of the whole run. Left alone
+                # the bar would race to the end and start again, three times.
+                _within(on_progress, index, wanted),
+            )
+            if attempt.ok:
+                made.append(attempt.unwrap())
+            else:
+                refusals.append(attempt.error)
+
+        if not made:
+            return failure(
+                f"None of the {wanted} attempts produced a shape",
+                refusals[0] if refusals else "The generator said nothing.",
+            )
+        return success(tuple(made))
 
     def edit_part(
         self,
@@ -749,3 +808,31 @@ def _and_rescued(note: str, depth_mm: float) -> str:
     """
     said = f"Texture baked into the surface, {depth_mm:.2f} mm deep"
     return f"{note}. {said}" if note else said
+
+
+# Enough to choose between and few enough to wait for. Each is a full
+# generation holding the graphics card, so five is already several minutes.
+MAX_VARIANTS = 5
+
+
+def _seed_for(settings: GenerationOptions, index: int) -> int:
+    """A distinct, reproducible seed for each candidate.
+
+    Derived from whatever was asked for rather than random, so "give me three
+    more like that" can start from a stated seed and get the *next* three
+    rather than the same three.
+    """
+    base = settings.seed or 1
+    return base + index
+
+
+def _within(on_progress: Progress | None, index: int, total: int) -> Progress | None:
+    """One shape's own progress, squeezed into its share of the whole run."""
+    if on_progress is None:
+        return None
+
+    def report(fraction: float, message: str) -> None:
+        share = (index + max(0.0, min(1.0, fraction))) / total
+        on_progress(share, f"Shape {index + 1} of {total}: {message}")
+
+    return report

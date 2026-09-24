@@ -52,8 +52,8 @@ Phase 9  Virtual printing  ── DONE  playback, collisions, AMS versus multi-p
 
 Phase 5  Edit it properly   ── DONE  tree, profiles, patterns, sweep, loft, section, drag handles
 Phase 7  Photos → replica   ── DONE  scale from a reference, and multi-photo reconstruction
-Phase 8  Make it delightful ─ variants to come (detail rescue, colour splitting, printer
-                             comms, print monitoring DONE)
+Phase 8  Make it delightful ── DONE  detail rescue, colour splitting, printer comms,
+                             print monitoring, generation variants and history
 ```
 
 **Phases 4 and 6 arrived early, out of order.** Once the CAD kernel was in place, generating a
@@ -126,7 +126,7 @@ sheets, numeric failure feedback, best-of-N. The AI settings panel and `SecretSt
 dimension from numeric feedback, recovers from a syntax error, keeps the best attempt when nothing
 fully passes, and stops at a spend limit. Confirming it against a real model needs an API key.
 
-### Phase 5 — Edit it properly *(the stated goal is met; the polish is not)*
+### Phase 5 — Edit it properly *(done, bar a sketcher that is out of scope)*
 The in-app CAD editor. A feature tree that rebuilds from nothing on every change, driven entirely by
 typed commands on one bus, so a toolbar click, a model's request and a replay are the same path.
 
@@ -160,7 +160,7 @@ Every AI edit is a normal undoable command.
 through the same gates. Editing an *imported* mesh by description still needs Phase 5's feature
 model, and the app says so rather than failing obscurely.
 
-### Phase 7 — Photos → replica *(scale recovery done; reconstruction to come)*
+### Phase 7 — Photos → replica *(done)*
 Frame selection, segmentation, COLMAP + OpenMVS, scale recovery, plane removal, watertight close-up.
 
 **Built: scale from a reference in shot.** Drag a line along a ruler, a bank card or a coin in the
@@ -183,7 +183,7 @@ because six months later, whether a shape was measured or invented is the only q
 **Done when:** photos of an object against a reference produce a replica that measures correctly
 with calipers.
 
-### Phase 8 — Delight *(most of it shipped)*
+### Phase 8 — Delight *(done)*
 Texture→displacement detail rescue. Hollowing with drain holes. Multi-colour part splitting for the
 AMS. Generation history and variants. Print monitoring.
 
@@ -199,7 +199,14 @@ the detail asked for. The part that really is unsolved is narrower than expected
 **guess** at height, so the depth is the user's to set and the app says as much rather than implying
 the number is a measurement.
 
-**Still to come:** generation variants.
+**And variants**, the last of it. A generative model asked twice answers twice differently, and the
+first answer is rarely the best - so one picture can be asked for several shapes, each with its own
+reproducible seed, and they are all kept. Clicking one puts it in the viewport at full size, which
+beats a grid of hundred-pixel thumbnails of grey meshes for deciding what will print.
+
+The history is the same list: a variant and an earlier generation are the same thing to somebody
+who wants one back. Held in memory only, capped at ten - what survives a restart is what was saved
+on purpose, and everything else costs one more generation rather than an afternoon.
 
 ## Working method
 
