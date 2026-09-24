@@ -35,3 +35,8 @@ result.json
 .vscode/
 Thumbs.db
 desktop.ini
+
+# OpenMVS writes a timestamped log into the *working directory* and says
+# nothing on stdout. Run one of its tools from the repo root and the logs
+# land here - which is how two of them reached a commit.
+*.log
