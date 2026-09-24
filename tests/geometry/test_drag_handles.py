@@ -21,6 +21,7 @@ import pytest
 
 from modelpop.rendering.drag_handles import (
     AXIS_COLOURS,
+    MOST_GROWTH,
     RING_LEAST,
     RING_MOST,
     DragHandles,
@@ -229,7 +230,8 @@ class TestTheHandlesThemselves:
     def test_stopping_takes_every_handle_out_of_the_scene(self, plotter):
         handles, _ = self.handles(plotter)
         names = [name for name in plotter.renderer.actors if name.startswith("drag-")]
-        assert len(names) == 6
+        assert len(names) == len(handles._handles)
+        assert names
 
         handles.stop()
         left = [name for name in plotter.renderer.actors if name.startswith("drag-")]
@@ -658,3 +660,113 @@ class TestHandingADragOverToTheFeatureTree:
         assert np.asarray(scene._model_actor.user_matrix)[2, 3] == pytest.approx(5.0), (
             "the second drag carried the first one's movement with it"
         )
+
+
+class TestResizingByDraggingACorner:
+    """A grip on each corner, dragged out to grow and in to shrink.
+
+    Asked for after a run of dialogs: "why can't resize be drag too". It can,
+    and the arithmetic is the same closest-approach the arrows use - the corner
+    stays under the pointer as it goes.
+    """
+
+    def handles(self, plotter, bounds=(-20.0, 20.0, -20.0, 20.0, 0.0, 40.0)):
+        import pyvista as pv
+
+        actor = plotter.add_mesh(pv.Box(bounds=bounds))
+        return DragHandles(plotter, actor, bounds, lambda _: None), actor
+
+    def test_there_is_a_grip_on_every_corner(self, plotter):
+        handles, _ = self.handles(plotter)
+        assert len(handles._corners) == 8
+
+    def test_dragging_out_makes_it_bigger(self, plotter):
+        handles, _ = self.handles(plotter)
+        handles._held = handles._corners[0]
+        handles._started_at = 40.0
+
+        step = handles._step(handles._corners[0], 20.0)
+        assert step[0, 0] == pytest.approx(1.5)
+
+    def test_dragging_in_makes_it_smaller(self, plotter):
+        handles, _ = self.handles(plotter)
+        handles._held = handles._corners[0]
+        handles._started_at = 40.0
+
+        step = handles._step(handles._corners[0], -20.0)
+        assert step[0, 0] == pytest.approx(0.5)
+
+    def test_it_scales_all_three_axes_together(self, plotter):
+        """Uniform, because that is all a ScaleTo feature can record."""
+        handles, _ = self.handles(plotter)
+        handles._held = handles._corners[0]
+        handles._started_at = 40.0
+
+        step = handles._step(handles._corners[0], 20.0)
+        assert step[0, 0] == pytest.approx(step[1, 1])
+        assert step[1, 1] == pytest.approx(step[2, 2])
+
+    def test_it_grows_about_the_parts_own_centre(self, plotter):
+        """Because that is what the rebuild does - measured, not assumed.
+
+        A ScaleTo leaves the part's centre exactly where it was. Previewing
+        the growth about anything else would show it swelling in one place and
+        have it rebuild in another.
+        """
+        bounds = (40.0, 80.0, -20.0, 20.0, 0.0, 40.0)
+        handles, _ = self.handles(plotter, bounds)
+        handles._held = handles._corners[0]
+        handles._started_at = 40.0
+
+        step = handles._step(handles._corners[0], 40.0)
+        centre = np.array([60.0, 0.0, 20.0, 1.0])
+        assert (step @ centre)[:3] == pytest.approx(centre[:3])
+
+    def test_dragging_the_corner_through_the_centre_does_not_invert_it(self, plotter):
+        """Past zero the part would turn inside out, then grow again mirrored."""
+        handles, _ = self.handles(plotter)
+        handles._held = handles._corners[0]
+        handles._started_at = 40.0
+
+        step = handles._step(handles._corners[0], -400.0)
+        assert step[0, 0] > 0.0
+
+    def test_an_absurd_drag_is_clamped(self, plotter):
+        handles, _ = self.handles(plotter)
+        handles._held = handles._corners[0]
+        handles._started_at = 1.0
+
+        step = handles._step(handles._corners[0], 100000.0)
+        assert step[0, 0] <= MOST_GROWTH
+
+    def test_a_corner_drag_moves_the_handles_with_the_part(self, plotter):
+        handles, actor = self.handles(plotter)
+        handles._held = handles._corners[0]
+        handles._started_at = 40.0
+        handles._apply(handles._step(handles._corners[0], 20.0))
+
+        for handle in handles._handles:
+            assert np.asarray(handle.user_matrix) == pytest.approx(np.asarray(actor.user_matrix))
+
+    def test_the_grips_sit_on_the_corners_of_the_part(self, plotter):
+        bounds = (-20.0, 20.0, -20.0, 20.0, 0.0, 40.0)
+        handles, _ = self.handles(plotter, bounds)
+
+        corners = {tuple(round(v) for v in corner.GetCenter()) for corner in handles._corners}
+        assert (-20, -20, 0) in corners
+        assert (20, 20, 40) in corners
+
+    def test_a_corner_is_picked_before_a_ring_or_an_arrow(self, plotter):
+        """They sit on the part, inside everything else, so they are nearest."""
+        handles, _ = self.handles(plotter)
+        order = [group for _picker, group in _pick_order(handles)]
+        assert order[0] is handles._corners
+
+
+def _pick_order(handles):
+    """The groups the picker asks about, in order - read off the method itself."""
+    return (
+        (handles._corner_picker, handles._corners),
+        (handles._arrow_picker, handles._arrows),
+        (handles._ring_picker, handles._rings),
+    )

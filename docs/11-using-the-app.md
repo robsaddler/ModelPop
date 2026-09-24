@@ -194,7 +194,12 @@ placement is easier with the buttons.
 
 ### Resizing it
 
-Right-click an object → **Resize it...**. **Half**, **-10%**, **+10%** and **Double** are
+**Drag a corner.** With the handles on (right-click → **Put handles on it**, or Ctrl+D) every
+corner of the object carries a grip. Pull one outwards to grow it, push it in to shrink it; the
+corner stays under the pointer, and the object keeps its proportions and its place → it grows
+about its own centre rather than running off across the plate.
+
+For when the number is the point, right-click → **Resize it...**. **Half**, **-10%**, **+10%** and **Double** are
 proportions of the size it is *now*, which is how resizing by hand actually works; press one twice
 and it compounds. There is a box underneath for when the number is the point.
 

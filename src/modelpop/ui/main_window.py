@@ -537,8 +537,15 @@ class MainWindow(QMainWindow):
 
         self._drag_in_flight = True
         self._scene.pause_dragging()
-        for command in drag.commands:
-            self._modelling.apply_from_the_viewport(command)
+        if drag.is_a_resize:
+            # A proportion rather than a command: only the session knows how
+            # big the part is now, and the feature has to record an absolute
+            # size or it would compound every time anything earlier in the
+            # tree changed.
+            self._modelling.scale_selected_by(drag.resize)
+        else:
+            for command in drag.commands:
+                self._modelling.apply_from_the_viewport(command)
         self.statusBar().showMessage(drag.describe())
 
     # --------------------------------------------------------------- section

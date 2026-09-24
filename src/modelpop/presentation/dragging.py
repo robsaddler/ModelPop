@@ -39,6 +39,10 @@ __all__ = ["Drag", "movement_in"]
 LEAST_MOVE_MM = 0.05
 LEAST_TURN_DEGREES = 0.5
 
+# Below this a resize is a twitch rather than an instruction. Half a percent
+# is well under what anybody can see.
+LEAST_GROWTH_TO_RECORD = 0.005
+
 # How far off an axis a rotation may be and still count as being about it.
 # A drag on the widget's own rings is constrained to one axis, so anything
 # further out than this came from somewhere unexpected.
@@ -55,6 +59,15 @@ class Drag:
 
     move: Move | None = None
     turn: Rotate | None = None
+    resize: float = 1.0
+    """What the drag scaled the part by. 1.0 when it did not.
+
+    A proportion rather than a command, because the command has to be an
+    absolute size and only the caller knows how big the part is now. Keeping
+    the conversion out here is also what stops this module needing to know
+    what it is looking at.
+    """
+
     refused: str = ""
     """Why part of the drag could not be expressed, if any of it could not."""
 
@@ -69,15 +82,28 @@ class Drag:
         return tuple(c for c in (self.turn, self.move) if c is not None)
 
     @property
+    def is_a_resize(self) -> bool:
+        """Whether this drag changed the size.
+
+        A resize arrives alone: the corner grips do nothing but scale, and the
+        translation in their matrix is the scale's own compensation for
+        growing about the part's centre rather than about the origin.
+        """
+        return abs(self.resize - 1.0) >= LEAST_GROWTH_TO_RECORD
+
+    @property
     def did_anything(self) -> bool:
         """Whether this drag is worth recording at all."""
-        return bool(self.commands)
+        return bool(self.commands) or self.is_a_resize
 
     def describe(self) -> str:
         """A line for the status bar."""
         if not self.did_anything:
             return self.refused or "That drag did not move anything."
-        said = ", then ".join(c.describe() for c in self.commands)
+        if self.is_a_resize:
+            said = f"Resize to {self.resize * 100:.0f}% of its size"
+        else:
+            said = ", then ".join(c.describe() for c in self.commands)
         return f"{said}.{(' ' + self.refused) if self.refused else ''}"
 
 
@@ -92,9 +118,35 @@ def movement_in(matrix: NDArray[np.floating] | list[list[float]]) -> Drag:
     if grid.shape != (4, 4) or not np.all(np.isfinite(grid)):
         return Drag(refused="That drag could not be read.")
 
+    scale, uneven = _scale_in(grid)
+    if uneven:
+        return Drag(refused=uneven)
+
+    if abs(scale - 1.0) >= LEAST_GROWTH_TO_RECORD:
+        # A corner grip scales and does nothing else, and the translation it
+        # leaves behind is the scale growing about the part's centre rather
+        # than about the origin. Reading that column as a Move as well would
+        # shift the part by however far its centre is from zero.
+        return Drag(resize=scale)
+
     move = _translation_in(grid)
-    turn, refused = _rotation_in(grid)
+    turn, refused = _rotation_in(grid / scale if scale else grid)
     return Drag(move=move, turn=turn, refused=refused)
+
+
+def _scale_in(grid: NDArray[np.floating]) -> tuple[float, str]:
+    """How much the matrix grew the part, and why it could not be read.
+
+    Uniform only. The handles cannot scale one axis, so an uneven one is a
+    corrupt matrix rather than an instruction, and guessing at it would be
+    worse than saying so.
+    """
+    lengths = np.linalg.norm(grid[0:3, 0:3], axis=1)
+    if not np.all(np.isfinite(lengths)) or float(np.min(lengths)) <= 0.0:
+        return 1.0, "That drag could not be read."
+    if not np.allclose(lengths, lengths[0], rtol=1e-3):
+        return 1.0, "That drag stretched it unevenly, which cannot be recorded."
+    return float(lengths[0]), ""
 
 
 def _translation_in(grid: NDArray[np.floating]) -> Move | None:
@@ -109,13 +161,11 @@ def _rotation_in(grid: NDArray[np.floating]) -> tuple[Rotate | None, str]:
     """The turn, if there is one and the vocabulary can say it."""
     spin = grid[0:3, 0:3]
 
-    # A scale would come through here as a rotation matrix whose rows are not
-    # unit length. The handles cannot scale, so this is a corrupt matrix
-    # rather than an instruction, and guessing at it would be worse than
-    # saying so.
+    # Any uniform scale has already been divided out by the caller, so rows
+    # that are still not unit length mean a matrix nothing here produced.
     lengths = np.linalg.norm(spin, axis=1)
     if not np.allclose(lengths, 1.0, atol=1e-3):
-        return None, "That drag changed the size as well, which cannot be recorded."
+        return None, "That drag could not be read as a turn."
 
     # The angle comes from the trace; the axis from the antisymmetric part.
     cosine = float(np.clip((float(np.trace(spin)) - 1.0) / 2.0, -1.0, 1.0))

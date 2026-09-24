@@ -73,6 +73,17 @@ RING = 0.007
 RESTING_OPACITY = 0.18
 """How faint the handles go while they cannot be grabbed."""
 
+CORNER = 0.055
+"""How big a corner grip is, as a fraction of the part."""
+
+LEAST_GROWTH = 0.05
+MOST_GROWTH = 20.0
+"""How far one corner drag may take the size. Dragging the corner through the
+centre would otherwise pass through zero and turn the part inside out."""
+
+CORNER_COLOUR = "#D5DCE4"
+"""Neutral, because a corner grip belongs to no axis - it scales all three."""
+
 RING_OPACITY = 0.45
 """Rings sit back so the arrows read first. Moving is much the commoner intent,
 and three full-strength circles round a small part is what got the old handles
@@ -188,6 +199,8 @@ class DragHandles:
 
         self._arrows: list[Any] = []
         self._rings: list[Any] = []
+        self._corners: list[Any] = []
+        self._corner_out: list[NDArray[np.float64]] = []
         self._held: Any = None
         self._hovered: Any = None
         self._matrix = np.eye(4)
@@ -196,6 +209,7 @@ class DragHandles:
         self._active = True
         self._arrow_picker: Any = None
         self._ring_picker: Any = None
+        self._corner_picker: Any = None
 
         self.attach(actor, bounds)
         self._watch()
@@ -229,6 +243,8 @@ class DragHandles:
 
         self._arrows = []
         self._rings = []
+        self._corners = []
+        self._corner_out = []
         self._build(low, high)
 
         # The pickers hold actor references, so they are remade with them.
@@ -237,6 +253,7 @@ class DragHandles:
         # kind of thing that gets a gizmo called broken.
         self._arrow_picker = self._make_picker(self._arrows)
         self._ring_picker = self._make_picker(self._rings)
+        self._corner_picker = self._make_picker(self._corners)
 
         self._held = None
         self._hovered = None
@@ -259,6 +276,8 @@ class DragHandles:
             handle.prop.opacity = 1.0 if active else RESTING_OPACITY
         for handle in self._rings:
             handle.prop.opacity = RING_OPACITY if active else RESTING_OPACITY
+        for handle in self._corners:
+            handle.prop.opacity = 1.0 if active else RESTING_OPACITY
 
     @property
     def is_active(self) -> bool:
@@ -325,6 +344,35 @@ class DragHandles:
                 )
             )
 
+        # A cube on each corner of the part, to drag it bigger or smaller.
+        # On the corners because that is where everything else puts them, and
+        # because a corner is the one place a uniform scale is unambiguous -
+        # it moves along the diagonal, away from the centre, in every axis at
+        # once.
+        block = self._size * CORNER
+        for index, corner in enumerate(
+            [
+                np.array([x, y, z])
+                for x in (low[0], high[0])
+                for y in (low[1], high[1])
+                for z in (low[2], high[2])
+            ]
+        ):
+            out = corner - self._centre
+            length = float(np.linalg.norm(out))
+            if length < 1e-6:
+                continue
+            self._corners.append(
+                self._plotter.add_mesh(
+                    pv.Cube(center=tuple(corner), x_length=block, y_length=block, z_length=block),
+                    color=CORNER_COLOUR,
+                    lighting=False,
+                    name=f"drag-corner-{index}",
+                    render=False,
+                )
+            )
+            self._corner_out.append(out / length)
+
     def _make_picker(self, only: list[Any]) -> Any:
         """A picker that can see the given handles and nothing else.
 
@@ -345,7 +393,7 @@ class DragHandles:
 
     @property
     def _handles(self) -> list[Any]:
-        return [*self._arrows, *self._rings]
+        return [*self._arrows, *self._rings, *self._corners]
 
     # ----------------------------------------------------------- the plumbing
 
@@ -427,11 +475,14 @@ class DragHandles:
     def _handle_under(self, interactor: Any) -> Any:
         """Whichever handle the cursor is over, or ``None``.
 
-        Arrows are asked about first. Moving is much the commoner intent, and
-        where a ring crosses an arrow on screen the arrow is what was aimed at.
+        Asked in the order the handles sit: corners on the part itself, then
+        the arrows outside it, then the rings outside those. Where two overlap
+        on screen the nearer one is what was aimed at, and grabbing a ring when
+        you meant a corner is the kind of thing that gets a gizmo called broken.
         """
         x, y = interactor.GetEventPosition()
         for picker, group in (
+            (self._corner_picker, self._corners),
             (self._arrow_picker, self._arrows),
             (self._ring_picker, self._rings),
         ):
@@ -510,6 +561,13 @@ class DragHandles:
             index = self._arrows.index(handle)
             return along_axis(self._centre, _AXES[index], ray_from, ray_along)
 
+        if handle in self._corners:
+            # How far out along its own diagonal the cursor is. The ratio of
+            # that to where the drag started *is* the scale factor, which is
+            # what makes the corner stay under the pointer.
+            index = self._corners.index(handle)
+            return along_axis(self._centre, self._corner_out[index], ray_from, ray_along)
+
         index = self._rings.index(handle)
         normal = _AXES[index]
         hit = on_plane(self._pivot, normal, ray_from, ray_along)
@@ -527,8 +585,28 @@ class DragHandles:
             step[:3, 3] = _AXES[index] * moved
             return step
 
+        if handle in self._corners:
+            return _grow_about(self._centre, self._factor_from(moved))
+
         index = self._rings.index(handle)
         return _turn_about(self._pivot, _AXES[index], moved)
+
+    def _factor_from(self, moved: float) -> float:
+        """A corner drag, as the proportion it scales the part by.
+
+        ``moved`` is the change in distance from the centre along the corner's
+        diagonal, so the factor is that change against where the drag started.
+        Clamped, because dragging the corner *through* the centre would other-
+        wise turn the part inside out at a factor of zero and then negative.
+        """
+        if self._started_at is None or abs(self._started_at) < 1e-6:
+            return 1.0
+        factor = (self._started_at + moved) / self._started_at
+        return float(np.clip(factor, LEAST_GROWTH, MOST_GROWTH))
+
+    def _reading_is_a_scale(self) -> bool:
+        """Whether the handle being held resizes rather than moves or turns."""
+        return self._held is not None and self._held in self._corners
 
     def _apply(self, step: NDArray[np.float64]) -> None:
         """Move the part, and move the handles with it.
@@ -561,6 +639,10 @@ class DragHandles:
         handle.prop.opacity = 1.0
 
     def _unhighlight(self, handle: Any) -> None:
+        if handle in self._corners:
+            handle.prop.color = CORNER_COLOUR
+            handle.prop.opacity = 1.0 if self._active else RESTING_OPACITY
+            return
         index = (self._arrows + self._rings).index(handle) % 3
         handle.prop.color = AXIS_COLOURS[index]
         if not self._active:
@@ -587,6 +669,20 @@ def _ring(centre: NDArray[np.float64], index: int, radius: float, thickness: flo
     line.lines = np.hstack([[len(closed)], np.arange(len(closed))])
     tube: pv.PolyData = line.tube(radius=thickness, n_sides=12)
     return tube
+
+
+def _grow_about(centre: NDArray[np.float64], factor: float) -> NDArray[np.float64]:
+    """A uniform scale about a point, as a 4x4.
+
+    About the part's own centre, because that is what a ``ScaleTo`` feature
+    does when it rebuilds - measured, not assumed. Scaling the preview about
+    anything else would show the part growing in one place and have it rebuild
+    somewhere else.
+    """
+    matrix = np.eye(4) * factor
+    matrix[3, 3] = 1.0
+    matrix[:3, 3] = centre - factor * centre
+    return matrix
 
 
 def _turn_about(

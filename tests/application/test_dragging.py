@@ -104,14 +104,65 @@ class TestReadingATurn:
 
 
 class TestRefusingWhatItCannotSay:
-    def test_a_matrix_that_scales_is_refused(self):
-        """The handles cannot scale, so this is corrupt rather than an instruction."""
+    def test_a_matrix_that_scales_is_read_as_a_resize(self):
+        """The corner grips scale, so this is an instruction rather than corruption."""
         grid = np.eye(4)
         grid[0:3, 0:3] *= 2.0
         drag = movement_in(grid)
 
+        assert drag.is_a_resize
+        assert drag.resize == pytest.approx(2.0)
+        assert drag.refused == ""
+
+    def test_a_resize_arrives_alone(self):
+        """Its translation is the scale growing about the part's own centre.
+
+        Reading that column as a Move as well would shift the part by however
+        far its centre happens to be from the origin - on a part at x=60,
+        doubling it would also fling it 60 mm sideways.
+        """
+        centre = np.array([60.0, 0.0, 40.0])
+        grid = np.eye(4) * 2.0
+        grid[3, 3] = 1.0
+        grid[:3, 3] = centre - 2.0 * centre
+        drag = movement_in(grid)
+
+        assert drag.resize == pytest.approx(2.0)
+        assert drag.move is None
         assert drag.turn is None
-        assert "size" in drag.refused
+
+    def test_shrinking_reads_as_less_than_one(self):
+        grid = np.eye(4) * 0.5
+        grid[3, 3] = 1.0
+        assert movement_in(grid).resize == pytest.approx(0.5)
+
+    def test_a_twitch_of_a_resize_is_not_recorded(self):
+        grid = np.eye(4) * 1.001
+        grid[3, 3] = 1.0
+        assert not movement_in(grid).is_a_resize
+
+    def test_an_uneven_stretch_is_refused(self):
+        """Nothing here can scale one axis, so this is corrupt after all."""
+        grid = np.eye(4)
+        grid[0, 0] = 2.0
+        drag = movement_in(grid)
+
+        assert not drag.is_a_resize
+        assert "unevenly" in drag.refused
+
+    def test_a_resize_says_so_in_words(self):
+        grid = np.eye(4) * 1.5
+        grid[3, 3] = 1.0
+        assert "150%" in movement_in(grid).describe()
+
+    def test_a_move_still_reads_as_a_move(self):
+        """The scale extraction must not disturb the ordinary case."""
+        grid = np.eye(4)
+        grid[:3, 3] = (5.0, 0.0, 0.0)
+        drag = movement_in(grid)
+
+        assert not drag.is_a_resize
+        assert drag.move is not None
 
     def test_a_matrix_of_the_wrong_shape_is_refused(self):
         assert movement_in(np.eye(3)).refused
