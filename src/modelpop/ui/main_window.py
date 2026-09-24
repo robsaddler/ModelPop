@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -80,6 +80,30 @@ _SEVERITY_COLOURS = {
 }
 
 
+class _WindowSignals(QObject):
+    """Carries the view-models' announcements back to the interface thread.
+
+    The same thing ``CadPanel`` does, and for a reason this window learned the
+    hard way rather than by symmetry.
+
+    A CAD rebuild runs on a worker thread. It finishes by handing its mesh to
+    the workspace view-model, which announces to *this* window - so every
+    listener below was running on that worker. They touch Qt widgets and, worse,
+    the VTK render window, whose OpenGL context belongs to the interface thread
+    and nowhere else.
+
+    The result was not a clean error. Geometry came back drawn wrong, and the
+    next orbit deadlocked the whole application with every thread waiting on
+    something another thread held. Measured on a hung process: fifty-seven
+    threads, all in Wait, seven seconds of processor time between them.
+    """
+
+    state_changed = Signal(object)
+    notified = Signal(object)
+    cad_outcome = Signal(object)
+    busy_changed = Signal(bool)
+
+
 class MainWindow(QMainWindow):
     """Open a model, see it, and learn whether it will print."""
 
@@ -130,6 +154,10 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("ModelPop")
         self.resize(1400, 900)
+
+        # Built before anything is connected: every announcement from a
+        # worker thread crosses back through these.
+        self._signals = _WindowSignals()
 
         self._viewport = QtInteractor(self)
         self._scene = ViewportScene(self._viewport, self._printer)
@@ -505,10 +533,19 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self._measuring.describe())
 
     def _connect(self) -> None:
-        self._modelling.on_outcome(self._on_cad_outcome)
-        self._view_model.on_state_changed(self._on_state_changed)
-        self._view_model.on_notification(self._on_notification)
-        self._view_model.on_busy_changed(self._on_busy_changed)
+        # Through signals, never directly. A direct callback runs on whichever
+        # thread announced it, and a rebuild announces from a worker - see
+        # _WindowSignals. Qt queues these onto the interface thread because
+        # that is where this object lives.
+        self._signals.cad_outcome.connect(self._on_cad_outcome)
+        self._signals.state_changed.connect(self._on_state_changed)
+        self._signals.notified.connect(self._on_notification)
+        self._signals.busy_changed.connect(self._on_busy_changed)
+
+        self._modelling.on_outcome(self._signals.cad_outcome.emit)
+        self._view_model.on_state_changed(self._signals.state_changed.emit)
+        self._view_model.on_notification(self._signals.notified.emit)
+        self._view_model.on_busy_changed(self._signals.busy_changed.emit)
 
         self._generate_button.clicked.connect(self._generate)
         self._edit_button.clicked.connect(self._edit_by_description)

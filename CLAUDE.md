@@ -105,7 +105,12 @@ Tests that would fail without the change; `ruff` and `mypy --strict` clean; `imp
    output, no log line — the button simply does nothing. Keep the worker alive, not just the thread.
 7. **View-models announce from whichever thread did the work.** Touching a widget from a worker
    thread is undefined; in practice the interface silently stops updating. Marshal back with a
-   signal.
+   signal. **`MainWindow` was wired straight to bound methods and this trap was rediscovered the
+   expensive way**: a CAD rebuild finished on its worker, handed the mesh to the workspace
+   view-model, and the window's listeners touched VTK from there. Geometry drew wrong and the next
+   orbit deadlocked the process - 57 threads all in Wait, 7 s of CPU between them. Every callback a
+   view-model is given must be `signal.emit`, never a method; `tests/geometry/test_thread_affinity.py`
+   now asserts it. No unit test could catch it, because they all use the inline runner.
 8. **VTK does not fail on a GPU-less runner, it takes the process down** with an access violation.
    Hence the `renders` marker, deselected in CI.
 9. **Off-screen `Plotter.screenshot()` hands back the previous buffer** after a change that does not
