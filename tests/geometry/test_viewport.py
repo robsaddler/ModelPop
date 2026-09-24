@@ -480,6 +480,28 @@ class TestDragHandles:
         ViewportScene(plotter).forget_drag()
 
     @pytest.mark.renders
+    def test_the_handles_reach_outside_the_model(self, plotter_on_screen):
+        """A handle buried inside the shape is one nobody can click.
+
+        PyVista's default scale of 0.15 put every arrow *within* the model -
+        measured: the +Z arrow centred at z=6 on a sphere spanning -20 to +20.
+        They rendered, they highlighted on hover, and a click aimed at one
+        landed on the model in front of it. The report was "nothing happens".
+        """
+        scene = ViewportScene(plotter_on_screen)
+        cube = unit_cube(40).dropped_to_bed()
+        scene.show_mesh(cube)
+        assert scene.start_dragging(lambda _: None)
+
+        widest = max(cube.bounds.width.millimetres, cube.bounds.depth.millimetres) / 2
+        for arrow in scene._drag_widget._arrows:
+            reach = max(abs(value) for value in arrow.GetBounds())
+            assert reach > widest, (
+                f"a handle reaching {reach:.1f} mm is inside a model "
+                f"{widest:.1f} mm from centre - it cannot be clicked"
+            )
+
+    @pytest.mark.renders
     def test_the_handles_attach_and_survive_a_new_model(self, plotter_on_screen):
         """A rebuild replaces the actor the handles are bolted to."""
         scene = ViewportScene(plotter_on_screen)

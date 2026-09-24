@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILD_PLATE_COLOUR",
+    "HANDLE_SCALE",
+    "HANDLE_THICKNESS",
     "INTERIOR_COLOUR",
     "MEASURE_COLOUR",
     "MODEL_COLOUR",
@@ -54,6 +56,19 @@ MEASURE_COLOUR = "#F2C14E"
 # Big enough to see against a model, small enough not to hide the feature
 # being measured. In millimetres, because everything here is.
 MEASURE_POINT_MM = 0.8
+# How far the drag handles reach, as a fraction of the model's diagonal.
+# PyVista's default is 0.15, which on a 40 mm sphere puts every arrow
+# *inside* the model - measured: the +Z arrow centred at z=6 on a shape
+# spanning -20 to +20. They were there and they were unclickable, because
+# a click that looks like it is on an arrow lands on the model in front of
+# it. At 0.5 they reach half as far again as the model, which is clear of
+# anything and still on screen when the camera is framed.
+HANDLE_SCALE = 0.5
+
+# Thicker than the default 0.02 for the same reason: a handle you have to
+# hit precisely is one people conclude is broken.
+HANDLE_THICKNESS = 0.04
+
 # The colour of a cut surface. Warm against the model's blue, so the inside
 # of a sectioned part is unmistakably the inside.
 INTERIOR_COLOUR = "#C9A227"
@@ -259,6 +274,8 @@ class ViewportScene:
             self._drag_widget = self._plotter.add_affine_transform_widget(
                 self._model_actor,
                 release_callback=on_release,
+                scale=HANDLE_SCALE,
+                line_radius=HANDLE_THICKNESS,
                 axes_colors=("#F2765A", "#6FCF97", "#6FA8DC"),
             )
         except (AttributeError, TypeError, RuntimeError):
