@@ -179,3 +179,46 @@ class TestSayingWhatItWillChange:
         view.select("")
         view.select("body-1")
         assert cad._fillet_button.isEnabled()
+
+
+class TestAModelWithNoStepsBehindIt:
+    """What the tree shows for something that arrived whole.
+
+    A model made from a photograph, opened from a file or reconstructed has no
+    feature tree, so this panel is empty - and an empty panel with no
+    explanation reads as broken. Reported as exactly that: "How it was built is
+    also empty!"
+    """
+
+    def test_it_says_where_the_model_came_from(self, app):
+        cad, _view = panel()
+        cad.explain_instead("Made from a photograph.\n\nNothing to list.")
+
+        assert cad._tree.count() == 1
+        assert "photograph" in cad._tree.item(0).text()
+
+    def test_the_explanation_cannot_be_selected(self, app):
+        cad, _view = panel()
+        cad.explain_instead("Arrived whole.")
+        assert cad._tree.item(0).flags() == Qt.ItemFlag.NoItemFlags
+
+    def test_a_real_tree_replaces_the_explanation(self, app):
+        cad, view = panel()
+        cad.explain_instead("Arrived whole.")
+        view.add_box(10, 10, 10)
+
+        assert cad._tree.count() == 1
+        assert "Arrived whole" not in cad._tree.item(0).text()
+
+    def test_it_comes_back_when_the_tree_empties_again(self, app):
+        cad, view = panel()
+        cad.explain_instead("Arrived whole.")
+        view.add_box(10, 10, 10)
+        view.undo()
+
+        assert "Arrived whole" in cad._tree.item(0).text()
+
+    def test_nothing_is_shown_when_there_is_nothing_to_explain(self, app):
+        cad, _view = panel()
+        cad.explain_instead("")
+        assert cad._tree.count() == 0

@@ -203,6 +203,8 @@ class CadPanel(QWidget):
         """Build the panel around a view-model."""
         super().__init__(parent)
         self._view = view_model
+        # Shown in place of the tree when a model has no steps behind it.
+        self._instead = ""
 
         # The view-model announces from whichever thread did the work, and a
         # rebuild runs on a worker. Touching a widget from there is undefined
@@ -454,6 +456,7 @@ class CadPanel(QWidget):
 
         self._tree = QListWidget()
         self._tree.setAlternatingRowColors(True)
+        self._tree.setWordWrap(True)
         rows.addWidget(self._tree)
 
         history_row = QHBoxLayout()
@@ -576,6 +579,20 @@ class CadPanel(QWidget):
 
     # ---------------------------------------------------------------- display
 
+    def explain_instead(self, text: str) -> None:
+        """What to say when there is no feature tree to show.
+
+        A model that arrived whole - opened, generated from a picture,
+        reconstructed from photographs - has no steps behind it, so this panel
+        is empty and looks broken. Reported as exactly that. Saying why, and
+        saying what *can* be done with it, is the difference between an empty
+        list and an answer.
+        """
+        if text == self._instead:
+            return
+        self._instead = text
+        self._show(self._view.state)
+
     def _show(self, state: ModelState) -> None:
         self._tree.clear()
         grouped = state.features_by_object
@@ -604,6 +621,12 @@ class CadPanel(QWidget):
                 if line.suppressed or not line.understood:
                     item.setForeground(QColor(_SUPPRESSED_COLOUR))
                 self._tree.addItem(item)
+
+        if not grouped and self._instead:
+            note = QListWidgetItem(self._instead)
+            note.setFlags(Qt.ItemFlag.NoItemFlags)
+            note.setForeground(QColor(_SUPPRESSED_COLOUR))
+            self._tree.addItem(note)
 
         self._show_what_was_undone(state)
 

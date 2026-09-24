@@ -630,6 +630,7 @@ class MainWindow(QMainWindow):
         you point at the thing and say what you want.
         """
         self._scene_menu = QMenu(self)
+        self._scene_menu.setToolTipsVisible(True)
 
         self._move_here_action = self._scene_menu.addAction("&Move and turn it...")
         self._move_here_action.triggered.connect(self._open_place_panel)
@@ -638,10 +639,20 @@ class MainWindow(QMainWindow):
         self._handles_action.triggered.connect(lambda: self._drag_action.setChecked(True))
 
         self._resize_here_action = self._scene_menu.addAction("&Resize it...")
-        self._resize_here_action.triggered.connect(self._open_resize_panel)
+        self._resize_here_action.triggered.connect(self._resize_whatever_is_there)
 
         self._drop_action = self._scene_menu.addAction("&Drop it on the bed")
-        self._drop_action.triggered.connect(self._drop_selected)
+        self._drop_action.triggered.connect(self._drop_whatever_is_there)
+
+        self._scene_menu.addSeparator()
+
+        self._repair_here_action = self._scene_menu.addAction("Re&pair it")
+        self._repair_here_action.triggered.connect(self._view_model.repair)
+
+        self._simplify_here_action = self._scene_menu.addAction("&Simplify it")
+        self._simplify_here_action.triggered.connect(
+            lambda: self._view_model.simplify(DEFAULT_TRIANGLE_BUDGET)
+        )
 
         self._scene_menu.addSeparator()
 
@@ -657,20 +668,50 @@ class MainWindow(QMainWindow):
         self.addAction(self._delete_action)
 
     def _refresh_scene_menu(self) -> None:
-        """Offer only what there is something to do it to."""
+        """Offer only what there is something to do it to.
+
+        There are two kinds of thing on the plate and they can do different
+        things. A part with a feature tree can be moved, turned, copied and
+        deleted, because every one of those is a step the tree can record. A
+        mesh that arrived whole - opened from a file, made from a photograph,
+        reconstructed - has no tree to put steps in; it can still be dropped on
+        the bed, resized, repaired and simplified, because those rewrite the
+        mesh itself.
+
+        The menu used to ask only the first question, so a model made from a
+        photograph came up with every item greyed and no way to do anything
+        with it at all.
+        """
         if not hasattr(self, "_scene_menu"):
             return
-        something = bool(self._modelling.selected_body)
+
+        a_part = self._modelling.selected_body is not None
+        a_mesh = not a_part and self._view_model.state.has_model
+
+        # Said, not merely greyed. An item that is off for a reason nobody can
+        # see is the same complaint as an empty panel.
+        why = (
+            "This model arrived whole, so there is no feature tree to record "
+            "the step in. Start a shape in the CAD tools to build something "
+            "that can be moved, copied and undone step by step."
+            if a_mesh
+            else "Select an object first."
+        )
         for action in (
             self._move_here_action,
             self._handles_action,
-            self._resize_here_action,
-            self._drop_action,
             self._duplicate_action,
             self._rename_action,
             self._delete_action,
         ):
-            action.setEnabled(something)
+            action.setEnabled(a_part)
+            action.setToolTip("" if a_part else why)
+
+        for action in (self._resize_here_action, self._drop_action):
+            action.setEnabled(a_part or a_mesh)
+
+        self._repair_here_action.setEnabled(a_mesh and self._view_model.can_repair)
+        self._simplify_here_action.setEnabled(a_mesh)
 
     def _open_resize_panel(self) -> None:
         """Open the panel that scales the selected object.
@@ -686,6 +727,20 @@ class MainWindow(QMainWindow):
         self._resize_panel.show()
         self._resize_panel.raise_()
         self._resize_panel.activateWindow()
+
+    def _drop_whatever_is_there(self) -> None:
+        """Settle whatever is on the plate onto it, part or mesh."""
+        if self._modelling.selected_body is not None:
+            self._drop_selected()
+        elif self._view_model.state.has_model:
+            self._view_model.prepare_for_bed()
+
+    def _resize_whatever_is_there(self) -> None:
+        """Resize a part through its own panel, a mesh through the older one."""
+        if self._modelling.selected_body is not None:
+            self._open_resize_panel()
+        elif self._view_model.state.has_model:
+            self._resize()
 
     def _drop_selected(self) -> None:
         """Settle the selected object onto the plate."""
@@ -1142,7 +1197,9 @@ class MainWindow(QMainWindow):
                 item.setToolTip(f"{finding.rule}: {finding.message}")
                 self._findings.addItem(item)
 
+        self._cad_panel.explain_instead(_where_it_came_from(state))
         self._how_button.setVisible(state.last_generation is not None)
+        self._refresh_scene_menu()
         self._refresh_buttons()
 
     def _refresh_buttons(self) -> None:
@@ -1244,3 +1301,25 @@ class MainWindow(QMainWindow):
             # Named, because "nothing is happening" and "OCCT has been running
             # for twenty seconds" look identical otherwise.
             self.statusBar().showMessage(f"{doing}...")
+
+
+def _where_it_came_from(state: WorkspaceState) -> str:
+    """What to show instead of a feature tree, for a model that has none.
+
+    A mesh that arrived whole has no steps behind it, so the tree is empty -
+    which reads as broken rather than as "there is nothing to show". This says
+    where it came from and what can still be done to it.
+    """
+    if not state.has_model:
+        return ""
+
+    came_from = state.generation_note or (
+        f"Opened from {state.source_path.name}." if state.source_path else "Arrived whole."
+    )
+    return (
+        f"{came_from}\n\n"
+        "It has no steps behind it, so there is nothing to list here. "
+        "Right-click it in the viewport to drop it on the bed, resize it, "
+        "repair it or simplify it.\n\n"
+        "Start a shape above to build something that does have a tree."
+    )
