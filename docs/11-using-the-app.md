@@ -147,9 +147,13 @@ all useful rather than one where every position is a hair's breadth from the mid
 
 ## Getting the view back
 
-**View → Look into the printer** (Home) puts the camera square on to the machine with the
-whole build volume in frame, as if standing in front of it looking in. It is the one to reach for
-after panning and zooming somewhere unhelpful.
+**View → Look into the printer** (Home) puts the whole build volume back in frame, seen from
+where somebody standing at the machine would see it. It is the one to reach for after panning and
+zooming somewhere unhelpful.
+
+It is deliberately not dead square on. Straight ahead puts the build plate exactly edge-on, so the
+surface everything stands on is an invisible line; a few degrees above and a few round to the left
+and the plate reads as a surface and the volume has depth.
 
 The other views → Isometric, Top, Front, Right (Ctrl+1 to Ctrl+4) → only *turn* the
 camera and leave it where it was, which is what you want when you are lining a part up and not what

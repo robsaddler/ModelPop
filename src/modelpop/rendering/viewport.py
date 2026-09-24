@@ -65,6 +65,13 @@ UNSELECTED_COLOUR = "#55677A"
 # A little air around the build volume when the view is reset, so its edges are
 # not flush against the window.
 VIEW_MARGIN = 1.06
+
+# How far round and how far up the resting view stands, in degrees. Dead square
+# on puts the build plate exactly edge-on - the surface everything sits on
+# becomes an invisible line - so it steps a little to the left and lifts a
+# little. Small enough to still read as a front view.
+STANDING_TO_THE_LEFT = 22.0
+LOOKING_DOWN_BY = 17.0
 # The colour of a cut surface. Warm against the model's blue, so the inside
 # of a sectioned part is unmistakably the inside.
 INTERIOR_COLOUR = "#C9A227"
@@ -378,20 +385,32 @@ class ViewportScene:
         if action is not None:
             action()
 
-    def look_into_the_printer(self, name: str = "front") -> None:
+    def look_into_the_printer(self, name: str = "") -> None:
         """Point the camera at the whole build volume and frame it.
 
         The named views only turn the camera; they leave it wherever panning
         and zooming had put it, so "front" on a scene that has been dragged
         off to one side is still off to one side. This is the one that puts
-        everything back: square on to the printer, the whole envelope in
-        frame, as if standing in front of the machine looking in.
+        everything back: the whole envelope in frame, from where somebody
+        standing at the machine would see it.
+
+        Not dead square on. Straight ahead puts the plate exactly edge-on, so
+        the one surface everything stands on is an invisible line and there is
+        no sense of depth at all. A few degrees above and a few to the side
+        and the plate reads as a surface - which is what "looking in" means.
 
         Framed on the *printer* rather than on what is in it. A part parked
         outside the build volume would otherwise drag the view out with it,
         and where the build volume is is exactly what this is for.
+
+        Args:
+            name: a square-on view to use instead - ``front``, ``top``,
+                ``right`` or ``iso``. The default is the angled one.
         """
-        self.set_view(name)
+        if name:
+            self.set_view(name)
+        else:
+            self._stand_in_front_of_it()
         width = self._printer.build_width.millimetres
         depth = self._printer.build_depth.millimetres
         height = self._printer.build_height.millimetres
@@ -407,6 +426,36 @@ class ViewportScene:
             bounds=(-width / 2, width / 2, -depth / 2, depth / 2, 0.0, height)
         )
         self._fill_the_view_with(corners)
+
+    def _stand_in_front_of_it(self) -> None:
+        """Put the camera where somebody at the machine would be.
+
+        Slightly above, so the plate is a surface rather than a line, and
+        slightly round to one side, so the box has depth. Small angles on
+        purpose: this is a front view with enough tilt to read, not a
+        three-quarter view.
+        """
+        height = self._printer.build_height.millimetres
+        depth = self._printer.build_depth.millimetres
+        width = self._printer.build_width.millimetres
+
+        across = np.radians(STANDING_TO_THE_LEFT)
+        above = np.radians(LOOKING_DOWN_BY)
+        # Out of the front face, then round to the left and up a little.
+        direction = np.array(
+            [
+                -np.sin(across) * np.cos(above),
+                -np.cos(across) * np.cos(above),
+                np.sin(above),
+            ]
+        )
+
+        focus = np.array([0.0, 0.0, height / 2])
+        away = float(max(width, depth, height)) * 3.0
+        camera = self._plotter.camera
+        camera.focal_point = tuple(focus)
+        camera.position = tuple(focus + direction * away)
+        camera.up = (0.0, 0.0, 1.0)
 
     def _fill_the_view_with(self, corners: NDArray[np.float64]) -> None:
         """Zoom so the given box fills the window, seen from where we are.

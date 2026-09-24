@@ -751,18 +751,51 @@ class TestLookingIntoThePrinter:
         plotter.camera.zoom(6.0)
         return scene
 
-    def test_it_ends_up_square_on_to_the_machine(self, plotter):
+    def test_it_stands_in_front_of_the_machine(self, plotter):
         scene = self.lost(plotter)
         scene.look_into_the_printer()
 
-        position = np.array(plotter.camera.position)
-        focal = np.array(plotter.camera.focal_point)
-        looking = position - focal
-        # Straight down the Y axis, with Z up: standing in front, looking in.
+        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
+        assert looking[1] < 0, "the camera is not in front of the printer"
+        assert np.asarray(plotter.camera.up) == pytest.approx([0.0, 0.0, 1.0], abs=1e-6)
+
+    def test_it_is_tilted_enough_to_see_the_plate(self, plotter):
+        """Dead square on puts the build plate exactly edge-on.
+
+        The one surface everything stands on becomes an invisible line, and
+        there is no sense of depth at all. A few degrees is all it takes.
+        """
+        scene = self.lost(plotter)
+        scene.look_into_the_printer()
+
+        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
+        looking = looking / np.linalg.norm(looking)
+        above = np.degrees(np.arcsin(looking[2]))
+
+        assert above > 5.0, f"only {above:.0f} degrees up - the plate is still edge-on"
+        assert above < 40.0, f"{above:.0f} degrees up is a bird's eye view, not looking in"
+
+    def test_it_steps_a_little_to_the_left(self, plotter):
+        """So the volume has depth rather than reading as a flat rectangle."""
+        scene = self.lost(plotter)
+        scene.look_into_the_printer()
+
+        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
+        flat = looking[:2] / np.linalg.norm(looking[:2])
+        aside = np.degrees(np.arcsin(abs(flat[0])))
+
+        assert looking[0] < 0, "it stepped to the right, not the left"
+        assert aside > 5.0, f"only {aside:.0f} degrees round - still square on"
+        assert aside < 40.0, f"{aside:.0f} degrees round is a corner view, not a front one"
+
+    def test_a_named_view_is_still_exactly_that_view(self, plotter):
+        """The tilt is for the resting view, not for anything asked for by name."""
+        scene = self.lost(plotter)
+        scene.look_into_the_printer("front")
+
+        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
         assert looking[0] == pytest.approx(0.0, abs=1e-6)
         assert looking[2] == pytest.approx(0.0, abs=1e-6)
-        assert looking[1] < 0
-        assert np.asarray(plotter.camera.up) == pytest.approx([0.0, 0.0, 1.0], abs=1e-6)
 
     def test_it_centres_on_the_build_volume(self, plotter):
         scene = self.lost(plotter)
@@ -781,7 +814,7 @@ class TestLookingIntoThePrinter:
         half_height = scene._printer.build_height.millimetres / 2
         scale = plotter.camera.parallel_scale
         assert scale >= half_height, f"the volume is taller than the view ({scale:.0f})"
-        assert scale < half_height * 1.35, f"it is framed far looser than asked ({scale:.0f})"
+        assert scale < half_height * 1.6, f"it is framed far looser than asked ({scale:.0f})"
 
     def test_it_fills_the_frame_rather_than_fitting_a_sphere(self, plotter):
         """VTK's own reset fits the bounding sphere, which is far too loose.
@@ -798,7 +831,7 @@ class TestLookingIntoThePrinter:
         )
         sphere = plotter.camera.parallel_scale
 
-        assert fitted < sphere * 0.8, (
+        assert fitted < sphere * 0.9, (
             f"framed at {fitted:.0f}, barely tighter than the sphere fit {sphere:.0f}"
         )
 
