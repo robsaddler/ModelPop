@@ -16,18 +16,22 @@ in a state that builds - which is the invariant that makes undo trustworthy.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modelpop.application.cad_ports import Part
-from modelpop.domain.cad_commands import Move, command_from
+from modelpop.application.cad_ports import Part, SolidMeasurements
+from modelpop.domain.cad_commands import Move, PlaceMesh, Rotate, ScaleTo, command_from
 from modelpop.domain.commands import FIRST_BODY, CommandBus, Document, DocumentHistory, Origin
 from modelpop.domain.mesh import Mesh
-from modelpop.domain.result import Result, failure, success
+from modelpop.domain.result import Failure, Result, failure, success
 
 if TYPE_CHECKING:
-    from modelpop.application.cad_ports import FeatureCompiler, SolidMeasurements
+    from collections.abc import Sequence
+
+    from modelpop.application.cad_ports import FeatureCompiler
     from modelpop.application.ports import MeshIO
     from modelpop.application.project_ports import ProjectStore
     from modelpop.domain.commands import Command, Feature
@@ -307,6 +311,61 @@ class ModellingSession:
             self._selected = ""
         return self._rebuild()
 
+    def place(self, mesh: Mesh, note: str, body: str) -> Result[ModelState]:
+        """Put a mesh that arrived whole into the scene as an object.
+
+        The mesh is written to a file of its own first, and the tree records
+        where. The document holds no geometry (ADR-0001), and a rebuild has to
+        be able to start from nothing - so "the mesh that happened to be in
+        memory at the time" is not something it can refer to.
+
+        Kept beside the others, so opening a file, making a model from a
+        picture and drawing a box all end up as the same kind of thing on the
+        plate.
+        """
+        if mesh.is_empty:
+            return failure("There is no geometry to place")
+        if self._io is None:
+            return failure("Meshes cannot be written", "no mesh reader was provided")
+
+        kept = _scene_cache() / f"{body}-{mesh.content_hash[:12]}.stl"
+        written = self._io.save(mesh, kept)
+        if isinstance(written, Failure):
+            return failure("That model could not be kept", written.detail or str(kept))
+
+        return self.apply(PlaceMesh(str(kept), note), Origin.USER, body)
+
+    def replace_mesh(self, body: str, mesh: Mesh, note: str) -> Result[ModelState]:
+        """Swap an object's geometry for a reworked version of it.
+
+        For repairing and simplifying: those rewrite the triangles rather than
+        adding a step, and the result has to land on the object that was
+        reworked rather than arriving as a second copy of it beside the first.
+
+        The object's whole history is replaced, because a move recorded against
+        the old triangles means nothing against the new ones - the mesh being
+        handed in has already been through them.
+        """
+        document = self._bus.document
+        if body not in document.body_ids:
+            return failure("There is no such object", body)
+        if self._io is None:
+            return failure("Meshes cannot be written", "no mesh reader was provided")
+
+        kept = _scene_cache() / f"{body}-{mesh.content_hash[:12]}.stl"
+        written = self._io.save(mesh, kept)
+        if isinstance(written, Failure):
+            return failure("That model could not be kept", written.detail or str(kept))
+
+        label = document.label_for(body)
+        placed = PlaceMesh(str(kept), label).to_feature(Origin.USER, body)
+        kept_features = tuple(f for f in document.features if f.body != body)
+        self._bus.set_document(
+            replace(document, features=(*kept_features, placed)), note or f"Rework {label}"
+        )
+        self._selected = body
+        return self._rebuild()
+
     def duplicate(self, body: str, into: str) -> Result[ModelState]:
         """Copy an object, offset a little so the copy can be seen.
 
@@ -524,15 +583,22 @@ class ModellingSession:
     # ------------------------------------------------------------- internal
 
     def _rebuild(self) -> Result[ModelState]:
-        """Replay the whole tree and adopt the result."""
-        if self._compiler is None:
-            self._state = _state_from(self._bus, self._state)
-            return failure(
-                "The CAD kernel is unavailable",
-                "build123d could not be loaded. Reinstall the application's dependencies.",
-            )
+        """Replay the whole scene and adopt the result.
 
-        if not self._bus.document.active_features:
+        Two kinds of object, built two ways. A part made of primitives is
+        compiled and run through OCCT; a model that arrived whole is loaded
+        from its file and has its moves, turns and resizes replayed over it
+        with arithmetic. Both end up as bodies in the same scene, selected the
+        same way and moved by the same commands - which is the whole point, and
+        what was missing when a model from a photograph could not be touched.
+
+        The mesh ones never reach the kernel, which is why they are quick:
+        40 ms to load 82,000 triangles against two seconds for a rebuild.
+        """
+        document = self._bus.document
+        mesh_bodies = [b for b in document.body_ids if _is_a_mesh_body(document, b)]
+
+        if not document.active_features:
             # An empty tree still has a history. Building this state without
             # one was why undoing the *first* step disabled Redo: there was
             # nothing to rebuild, so the flags that drive the buttons were
@@ -548,27 +614,60 @@ class ModellingSession:
             )
             return success(self._state)
 
-        built = self._compiler.build(self._bus.document)
-        if not built.ok:
-            return built  # type: ignore[return-value]
-
-        result = built.unwrap()
-        bodies = tuple(
-            SceneBody(
-                id=one.body,
-                label=self._bus.document.label_for(one.body),
-                mesh=one.mesh,
-                measurements=one.measurements,
+        if self._compiler is None and not mesh_bodies:
+            # Asked after the empty case, because an empty scene needs no
+            # kernel to be empty - and deleting the last object otherwise
+            # reported the kernel missing instead of doing the delete.
+            self._state = _state_from(self._bus, self._state)
+            return failure(
+                "The CAD kernel is unavailable",
+                "build123d could not be loaded. Reinstall the application's dependencies.",
             )
-            for one in result.bodies
-        )
+
+        made: dict[str, SceneBody] = {}
+        spent = 0.0
+        measured: SolidMeasurements | None = None
+
+        for body in mesh_bodies:
+            whole_one = self._load_a_mesh_body(document, body)
+            if not whole_one.ok:
+                return whole_one  # type: ignore[return-value]
+            made[body] = whole_one.unwrap()
+
+        built_by_hand = [b for b in document.body_ids if b not in made]
+        if built_by_hand:
+            if self._compiler is None:
+                return failure(
+                    "The CAD kernel is unavailable",
+                    "build123d could not be loaded, so the built parts in this "
+                    "scene cannot be rebuilt.",
+                )
+            built = self._compiler.build(_only(document, built_by_hand))
+            if not built.ok:
+                return built  # type: ignore[return-value]
+            result = built.unwrap()
+            spent = result.duration_seconds
+            measured = result.measurements
+            for one in result.bodies:
+                made[one.body] = SceneBody(
+                    id=one.body,
+                    label=document.label_for(one.body),
+                    mesh=one.mesh,
+                    measurements=one.measurements,
+                )
+
+        # In the order they were started, whichever way they were made.
+        bodies = tuple(made[b] for b in document.body_ids if b in made)
+        if not bodies:
+            return failure("There is nothing to build", "The scene has no objects yet.")
+
         # Everything on the plate as one mesh. Concatenated, not fused: two
         # objects that touch are still two objects.
-        whole = Mesh.all_of([b.mesh for b in bodies]) if bodies else result.mesh
+        whole = Mesh.all_of([b.mesh for b in bodies])
         self._state = ModelState(
-            document=self._bus.document,
+            document=document,
             mesh=whole,
-            measurements=result.measurements,
+            measurements=measured or bodies[0].measurements,
             bodies=bodies,
             selected=self._settle_selection(bodies),
             can_undo=self._bus.history.can_undo,
@@ -576,9 +675,117 @@ class ModellingSession:
             undo_label=self._bus.history.undo_label or "",
             redo_label=self._bus.history.redo_label or "",
             undone=self._bus.history.undone_labels,
-            rebuild_seconds=result.duration_seconds,
+            rebuild_seconds=spent,
         )
         return success(self._state)
+
+    def _load_a_mesh_body(self, document: Document, body: str) -> Result[SceneBody]:
+        """Build one object that arrived whole, without touching the kernel."""
+        features = document.features_for(body)
+        placed = command_from(features[0])
+        if not isinstance(placed, PlaceMesh):
+            return failure("That object has no geometry", body)
+        if self._io is None:
+            return failure("Meshes cannot be read", "no mesh reader was provided")
+
+        loaded = self._io.load(Path(placed.source))
+        if not loaded.ok:
+            return failure(
+                f"{placed.describe()} could not be read",
+                f"{placed.source} is missing or unreadable.",
+            )
+
+        mesh = loaded.unwrap()
+        for feature in features[1:]:
+            mesh, refused = _replay_on_a_mesh(mesh, command_from(feature))
+            if refused:
+                return failure(
+                    f"{refused} cannot be done to {document.label_for(body)}", MESH_LIMIT
+                )
+
+        return success(
+            SceneBody(
+                id=body,
+                label=document.label_for(body),
+                mesh=mesh,
+                measurements=_measure_a_mesh(mesh),
+            )
+        )
+
+
+MESH_LIMIT = (
+    "A model that arrived whole has no shape to work from - only triangles. It "
+    "can be moved, turned, resized, copied and deleted; rounding, hollowing and "
+    "the rest need a part built from shapes."
+)
+
+
+def _scene_cache() -> Path:
+    """Where meshes that arrived whole are kept.
+
+    Beside the temporary files rather than in the project, because a scene is
+    not saved yet. Named per process so two copies of the application cannot
+    tread on each other.
+    """
+    here = Path(tempfile.gettempdir()) / f"modelpop-scene-{os.getpid()}"
+    here.mkdir(parents=True, exist_ok=True)
+    return here
+
+
+def _is_a_mesh_body(document: Document, body: str) -> bool:
+    """Whether this object arrived whole rather than being built from shapes."""
+    features = document.features_for(body)
+    return bool(features) and features[0].name == "place-mesh"
+
+
+def _only(document: Document, bodies: Sequence[str]) -> Document:
+    """The document with just these objects in it.
+
+    So the compiler is handed the built parts alone: it knows nothing about a
+    mesh that arrived whole, and there is nothing for it to do with one.
+    """
+    wanted = set(bodies)
+    return replace(document, features=tuple(f for f in document.features if f.body in wanted))
+
+
+def _replay_on_a_mesh(mesh: Mesh, command: Command | None) -> tuple[Mesh, str]:
+    """Apply one recorded step to a mesh, or say it cannot be.
+
+    Only the steps that are pure arithmetic on points. Everything else needs
+    the shape a mesh does not have, and refusing by name is far better than
+    silently leaving it out - the tree would then describe something the
+    geometry is not.
+    """
+    match command:
+        case Move():
+            return mesh.translated(command.dx, command.dy, command.dz), ""
+        case Rotate():
+            return mesh.turned(command.degrees, command.axis), ""
+        case ScaleTo():
+            return mesh.scaled_to_height(command.height), ""
+        case None:
+            return mesh, ""
+        case _:
+            return mesh, command.describe()
+
+
+def _measure_a_mesh(mesh: Mesh) -> SolidMeasurements:
+    """What a mesh measures, in the shape the rest of the app expects.
+
+    The topology counts a solid would carry are left at zero rather than
+    guessed at: a mesh has no faces or edges in the sense a kernel means, and
+    inventing numbers would make the readiness checks answer questions they
+    were never asked.
+    """
+    box = mesh.bounds
+    return SolidMeasurements(
+        volume_mm3=mesh.volume,
+        width=box.width,
+        depth=box.depth,
+        height=box.height,
+        vertex_count=mesh.vertex_count,
+        is_valid=not mesh.is_empty,
+    )
 
 
 def _state_from(bus: CommandBus, previous: ModelState) -> ModelState:
@@ -586,15 +793,23 @@ def _state_from(bus: CommandBus, previous: ModelState) -> ModelState:
 
     Used after a refused change: the document is back to what it was, and the
     geometry that is on screen is still correct for it.
+
+    The *objects* come across as well as the combined mesh. Leaving them out
+    emptied the scene on any refusal - the toolbar greyed, the handles came
+    off, and the model the user was looking at stopped being selectable -
+    which is a spectacular way to report "that operation did nothing".
     """
     return ModelState(
         document=bus.document,
         mesh=previous.mesh,
         measurements=previous.measurements,
+        bodies=previous.bodies,
+        selected=previous.selected,
         can_undo=bus.history.can_undo,
         can_redo=bus.history.can_redo,
         undo_label=bus.history.undo_label or "",
         redo_label=bus.history.redo_label or "",
+        undone=bus.history.undone_labels,
     )
 
 

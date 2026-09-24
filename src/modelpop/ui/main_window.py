@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -62,6 +62,7 @@ from modelpop.ui.dialogs import (
     RunLogDialog,
     SettingsDialog,
 )
+from modelpop.ui.earlier_dialog import EarlierModelsDialog
 from modelpop.ui.monitor_dialog import MonitorDialog
 from modelpop.ui.place_dialog import PlaceDialog
 from modelpop.ui.reconstruct_dialog import ReconstructDialog
@@ -161,7 +162,7 @@ class MainWindow(QMainWindow):
         self._modelling = ModellingViewModel(
             session,
             self._work,
-            self._view_model.adopt,
+            self._adopt_from_the_scene,
             lambda words: edit_by_description(
                 session, words, AnthropicProvider(self._secrets), self._ai_settings
             ),
@@ -185,6 +186,14 @@ class MainWindow(QMainWindow):
         self._pressed_at: QPoint | None = None
         # True between letting go of a handle and the rebuild landing.
         self._drag_in_flight = False
+        # The scene owns the geometry; the workspace holds a copy of it for
+        # readiness, slicing and export. This is the hash of the copy the scene
+        # last handed over, so a mesh appearing in the workspace that the scene
+        # did not produce is recognisable as something arriving from outside.
+        self._scene_hash = ""
+        # True while a *new* model is on its way in - opened, generated,
+        # reconstructed - as opposed to the one that is there being reworked.
+        self._bringing_in_a_new_model = False
         self._findings = QListWidget()
         self._summary = QLabel("Open a model to begin.")
         self._summary.setWordWrap(True)
@@ -260,7 +269,7 @@ class MainWindow(QMainWindow):
         # session" list is clutter on the panel people use most.
         self._variants = VariantsPanel()
         self._variants.setVisible(False)
-        self._variants.chosen.connect(self._view_model.show_variant)
+        self._variants.chosen.connect(self._show_a_variant)
         side.addWidget(self._variants)
 
         self._repair_button = QPushButton("Repair")
@@ -315,6 +324,14 @@ class MainWindow(QMainWindow):
         self._from_photos_action = QAction("Measure one from se&veral photographs...", self)
         self._from_photos_action.triggered.connect(self._from_photos)
         file_menu.addAction(self._from_photos_action)
+
+        earlier_action = QAction("Open one made &earlier...", self)
+        earlier_action.setToolTip(
+            "Models this application made before and never saved are still on "
+            "the disk. Open one rather than generating it again."
+        )
+        earlier_action.triggered.connect(self._open_an_earlier_model)
+        file_menu.addAction(earlier_action)
 
         find_action = QAction("&Find a model to start from...", self)
         find_action.setShortcut("Ctrl+F")
@@ -853,6 +870,7 @@ class MainWindow(QMainWindow):
             self, "Open a model", "", "3D models (*.stl *.obj *.3mf *.ply *.glb *.off)"
         )
         if path:
+            self._bringing_in_a_new_model = True
             self._view_model.open(Path(path))
 
     def _choose_save_path(self) -> None:
@@ -896,8 +914,21 @@ class MainWindow(QMainWindow):
         chosen = QFileDialog.getExistingDirectory(self, "Where should the model be saved?")
         return Path(chosen) if chosen else None
 
+    def _open_an_earlier_model(self) -> None:
+        """Offer back a model made earlier that was never saved.
+
+        Generating from a picture takes about a minute and lands in a
+        temporary file. Regenerating something that is still on the disk is a
+        minute nobody should have to spend twice.
+        """
+        dialog = EarlierModelsDialog(self)
+        if dialog.exec() and dialog.chosen is not None:
+            self._bringing_in_a_new_model = True
+            self._view_model.open(dialog.chosen.path)
+
     def _opened_from_gallery(self, download: Download) -> None:
         """Open a model that arrived from a repository, keeping its credit."""
+        self._bringing_in_a_new_model = True
         self._view_model.open(download.path)
         self.statusBar().showMessage(f"From {download.attribution}", 15000)
 
@@ -940,6 +971,7 @@ class MainWindow(QMainWindow):
             return
 
         self.statusBar().showMessage("Making a model from that picture...")
+        self._bringing_in_a_new_model = True
         self._view_model.generate_from_image(chosen, dialog.options(), self._on_generation_progress)
 
     def _from_photos(self) -> None:
@@ -968,6 +1000,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Measuring a model from {len(dialog.photos)} photographs. This takes minutes."
         )
+        self._bringing_in_a_new_model = True
         self._view_model.reconstruct_from_photos(
             dialog.photos, dialog.options, self._on_generation_progress
         )
@@ -1197,6 +1230,9 @@ class MainWindow(QMainWindow):
                 item.setToolTip(f"{finding.rule}: {finding.message}")
                 self._findings.addItem(item)
 
+        # Queued rather than called: this is a state handler, and starting a
+        # rebuild from inside one re-enters the announcement it is handling.
+        QTimer.singleShot(0, lambda: self._take_whatever_arrived_into_the_scene(state))
         self._cad_panel.explain_instead(_where_it_came_from(state))
         self._how_button.setVisible(state.last_generation is not None)
         self._refresh_scene_menu()
@@ -1224,6 +1260,43 @@ class MainWindow(QMainWindow):
         self._scene.look_into_the_printer()
         self._viewport.render()
         self.statusBar().showMessage("Looking into the printer.", 4000)
+
+    def _show_a_variant(self, index: int) -> None:
+        """Put a different shape from the same run on the plate."""
+        self._bringing_in_a_new_model = True
+        self._view_model.show_variant(index)
+
+    def _adopt_from_the_scene(self, mesh: object) -> None:
+        """Hand the scene's geometry to the workspace, and remember doing it.
+
+        Remembering is what lets a mesh arriving from outside be told apart
+        from the scene's own output, which is otherwise the same event.
+        """
+        self._scene_hash = getattr(mesh, "content_hash", "") if mesh is not None else ""
+        self._view_model.adopt(mesh)  # type: ignore[arg-type]
+
+    def _take_whatever_arrived_into_the_scene(self, state: WorkspaceState) -> None:
+        """Make a model that arrived whole into an object on the plate.
+
+        Opened from a file, made from a picture, reconstructed from
+        photographs: each used to leave the application holding a mesh and
+        nothing else - visible, and impossible to select, move or do anything
+        with. Each is now an object like any other.
+
+        A mesh that the scene itself produced is skipped, or this would loop.
+        """
+        mesh = state.mesh
+        if mesh is None or mesh.is_empty or self._modelling.is_busy:
+            return
+        if mesh.content_hash == self._scene_hash:
+            return
+
+        if self._bringing_in_a_new_model or not self._modelling.bodies:
+            self._bringing_in_a_new_model = False
+            self._modelling.place_mesh(mesh, _where_it_came_from_briefly(state))
+        elif self._modelling.is_a_whole_mesh:
+            # Repaired or simplified: the same object, reworked.
+            self._modelling.rework_selected(mesh, "Rework the model")
 
     def _draw_scene(self, *, has_problems: bool = False, fallback: object = None) -> None:
         """Put the scene on screen, one actor per object.
@@ -1323,3 +1396,12 @@ def _where_it_came_from(state: WorkspaceState) -> str:
         "repair it or simplify it.\n\n"
         "Start a shape above to build something that does have a tree."
     )
+
+
+def _where_it_came_from_briefly(state: WorkspaceState) -> str:
+    """What to call an object that arrived whole, in a few words."""
+    if state.generation_note:
+        return state.generation_note.split(".")[0][:60]
+    if state.source_path is not None:
+        return state.source_path.stem[:60]
+    return "The model"

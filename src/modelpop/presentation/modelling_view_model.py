@@ -43,6 +43,8 @@ from modelpop.domain.cad_commands import (
     TextOnSurface,
 )
 from modelpop.domain.commands import Origin
+from modelpop.domain.mesh import Mesh
+from modelpop.domain.placement import needs_a_sensible_size
 from modelpop.domain.result import Failure, Result
 from modelpop.domain.units import Length
 
@@ -117,6 +119,9 @@ class ModellingViewModel:
         self._on_geometry = on_geometry
         self._describe = describe_change
         self._busy = False
+        # The machine this is being made for, so an arriving model can be
+        # judged against something real rather than a number in the code.
+        self._envelope_mm = 256.0
         # What is being done right now, for the window to show while it is
         # happening. A rebuild is an OCCT subprocess and takes seconds; a
         # status bar that says nothing for that long reads as a hang.
@@ -250,6 +255,59 @@ class ModellingViewModel:
             self._announce(Outcome("Nothing is selected.", refused=True))
             return
         self._run(f"Rename to {label}", lambda: self._session.rename(body, label))
+
+    def place_mesh(self, mesh: Mesh, note: str) -> None:
+        """Put a model that arrived whole into the scene as an object.
+
+        Opened from a file, made from a picture, reconstructed from
+        photographs - all of them end up here, and all of them end up as a
+        thing on the plate that can be picked up, moved, turned, resized,
+        copied and deleted like any other. Before this they were geometry the
+        application was holding and nothing more: visible, and untouchable.
+        """
+        if mesh.is_empty:
+            return
+
+        # A model from a picture or a set of photographs carries no scale at
+        # all - one millimetre across is the ordinary case - and dropped onto a
+        # 256 mm plate it is invisible and unmeasurable. Only the implausible
+        # extremes are touched; a part deliberately 5 mm across is left alone.
+        wanted = needs_a_sensible_size(mesh.bounds, self._envelope_mm)
+        if wanted:
+            mesh = mesh.scaled_to_height(
+                Length.mm(
+                    wanted
+                    * mesh.bounds.height.millimetres
+                    / max(mesh.bounds.largest_dimension.millimetres, 1e-9)
+                )
+            )
+            note = f"{note} (sized to fit, set the real size when you know it)" if note else note
+
+        # Reserved before the work starts, so the rebuild knows which object
+        # it is filling in.
+        body = self._session.start_a_new_body()
+        self._run(note or "Place the model", lambda: self._session.place(mesh, note, body))
+
+    def rework_selected(self, mesh: Mesh, note: str) -> None:
+        """Swap the selected object's geometry for a reworked version.
+
+        Repairing and simplifying rewrite triangles rather than adding a step,
+        so the result belongs to the object that was reworked - not beside it
+        as a second copy.
+        """
+        body = self.selected
+        if not body or mesh.is_empty:
+            return
+        self._run(note, lambda: self._session.replace_mesh(body, mesh, note))
+
+    @property
+    def is_a_whole_mesh(self) -> bool:
+        """Whether the selected object arrived whole rather than being built."""
+        body = self.selected
+        if not body:
+            return False
+        features = self.state.document.features_for(body)
+        return bool(features) and features[0].name == "place-mesh"
 
     def scale_selected_by(self, factor: float) -> None:
         """Make the selected object a proportion of the size it is now.

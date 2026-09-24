@@ -12,7 +12,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from modelpop.domain.mesh import BoundingBox
-from modelpop.domain.placement import centre_over_bed, nudge, settle_onto_bed
+from modelpop.domain.placement import (
+    PRINTABLE_AT_LEAST_MM,
+    SENSIBLE_SIZE_MM,
+    centre_over_bed,
+    needs_a_sensible_size,
+    nudge,
+    settle_onto_bed,
+)
 
 
 def box(
@@ -100,3 +107,33 @@ class TestNudging:
     def test_an_axis_it_does_not_know_is_taken_as_upright(self):
         """Matching what ``Rotate`` already does, rather than raising."""
         assert nudge("sideways", 1.0).dz == 1.0
+
+
+class TestJudgingAnArrivingModel:
+    """A mesh from a picture carries no units, so its size means nothing."""
+
+    def test_a_model_a_millimetre_across_needs_a_size(self):
+        tiny = box(min_x=-0.5, max_x=0.5, min_y=-0.5, max_y=0.5, min_z=0.0, max_z=1.0)
+        assert needs_a_sensible_size(tiny, 256.0) == SENSIBLE_SIZE_MM
+
+    def test_a_model_bigger_than_the_machine_needs_one_too(self):
+        assert needs_a_sensible_size(box(min_x=-500.0, max_x=500.0), 256.0)
+
+    def test_an_ordinary_part_is_left_alone(self):
+        assert needs_a_sensible_size(box(), 256.0) == 0.0
+
+    def test_a_small_but_printable_part_is_left_alone(self):
+        """3 mm is a deliberate little part, not a model with no scale."""
+        small = box(min_x=-1.5, max_x=1.5, min_y=-1.5, max_y=1.5, min_z=0.0, max_z=3.0)
+        assert needs_a_sensible_size(small, 256.0) == 0.0
+
+    def test_a_model_exactly_filling_the_machine_is_left_alone(self):
+        assert needs_a_sensible_size(box(min_x=-128.0, max_x=128.0), 256.0) == 0.0
+
+    def test_an_empty_box_asks_for_nothing(self):
+        nothing = box(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        assert needs_a_sensible_size(nothing, 256.0) == 0.0
+
+    def test_the_size_it_asks_for_fits_any_plate(self):
+        assert SENSIBLE_SIZE_MM < 256.0
+        assert SENSIBLE_SIZE_MM > PRINTABLE_AT_LEAST_MM

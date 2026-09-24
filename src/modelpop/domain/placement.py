@@ -17,7 +17,24 @@ from __future__ import annotations
 from modelpop.domain.cad_commands import Move
 from modelpop.domain.mesh import BoundingBox
 
-__all__ = ["centre_over_bed", "nudge", "settle_onto_bed"]
+__all__ = [
+    "PRINTABLE_AT_LEAST_MM",
+    "SENSIBLE_SIZE_MM",
+    "centre_over_bed",
+    "needs_a_sensible_size",
+    "nudge",
+    "settle_onto_bed",
+]
+
+# Below this a model is not a small part, it is a model with no scale at all -
+# a mesh from a picture or a photogrammetry run arrives in arbitrary units and
+# is routinely a single millimetre across.
+PRINTABLE_AT_LEAST_MM = 2.0
+
+# What to make one instead: big enough to see and to print, small enough to sit
+# on any plate. The user is expected to set the real size; this is only so the
+# thing is visible and workable when it arrives.
+SENSIBLE_SIZE_MM = 60.0
 
 
 def settle_onto_bed(box: BoundingBox) -> Move:
@@ -54,3 +71,25 @@ def nudge(axis: str, distance_mm: float) -> Move:
     if letter == "Y":
         return Move(dy=distance_mm)
     return Move(dz=distance_mm)
+
+
+def needs_a_sensible_size(box: BoundingBox, envelope_mm: float) -> float:
+    """What to scale a model to on arrival, or zero to leave it alone.
+
+    A mesh that came from a picture or a set of photographs carries no scale:
+    the units are whatever the generator happened to use, and a whole model one
+    millimetre across is the normal case rather than a strange one. Dropped
+    onto a 256 mm plate it is invisible, and every measurement taken off it is
+    meaningless.
+
+    Only the two implausible cases are touched - far too small to print, or
+    larger than the machine could ever hold. Anything in between is left
+    exactly as it arrived, because a part that is deliberately 5 mm is a part
+    nobody should have resized behind their back.
+    """
+    largest = box.largest_dimension.millimetres
+    if largest <= 0:
+        return 0.0
+    if largest < PRINTABLE_AT_LEAST_MM or largest > envelope_mm:
+        return SENSIBLE_SIZE_MM
+    return 0.0

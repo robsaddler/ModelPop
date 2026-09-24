@@ -128,8 +128,15 @@ class Document:
         features = self.features_for(body)
         if not features:
             return body
-        # Named after whatever started it, which is what a maker would call
-        # it: the sphere, the box. Better than "Body 2".
+        # A model that arrived whole says where it came from - "Made from a
+        # picture" - which is what its owner would call it. Read straight off
+        # the recorded parameters rather than by rebuilding the command, so
+        # the domain's own layering stays intact.
+        note = str(features[0].parameters.get("note", "")).strip()
+        if note:
+            return note
+        # Otherwise named after whatever started it, which is what a maker
+        # would call it: the sphere, the box. Better than "Body 2".
         first = features[0].name.replace("create-", "").replace("-", " ")
         return first.capitalize()
 

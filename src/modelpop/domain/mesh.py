@@ -245,6 +245,42 @@ class Mesh:
         """Move the mesh by an offset expressed in the mesh's own unit."""
         return Mesh(self.vertices + np.array([dx, dy, dz]), self.faces, self.unit)
 
+    def turned(self, degrees: float, axis: str = "Z") -> Mesh:
+        """Rotate about an axis through the origin.
+
+        About the origin rather than the mesh's own centre, so it matches what
+        a ``Rotate`` feature does to a built part - the two must agree or the
+        same command would mean different things depending on what it was
+        applied to.
+        """
+        if self.is_empty or not degrees:
+            return self
+        angle = np.radians(float(degrees))
+        cosine, sine = float(np.cos(angle)), float(np.sin(angle))
+        letter = str(axis).upper()[:1]
+        if letter == "X":
+            spin = np.array([[1, 0, 0], [0, cosine, -sine], [0, sine, cosine]])
+        elif letter == "Y":
+            spin = np.array([[cosine, 0, sine], [0, 1, 0], [-sine, 0, cosine]])
+        else:
+            spin = np.array([[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]])
+        return Mesh(self.vertices @ spin.T, self.faces, self.unit)
+
+    def scaled_to_height(self, height: Length) -> Mesh:
+        """Scale uniformly so the mesh stands a stated height.
+
+        By height, and about the mesh's own centre, because that is what a
+        ``ScaleTo`` feature does - measured against the kernel, not assumed.
+        """
+        if self.is_empty:
+            return self
+        tall = self.bounds.height.millimetres
+        if tall <= 0:
+            return self
+        factor = height.millimetres / tall
+        centre = np.array(self.bounds.centre)
+        return Mesh((self.vertices - centre) * factor + centre, self.faces, self.unit)
+
     def centred_on_origin(self) -> Mesh:
         """Move the bounding-box centre to the origin."""
         if self.is_empty:
