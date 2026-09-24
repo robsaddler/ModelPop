@@ -71,7 +71,10 @@ packages = ["src/modelpop"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers --strict-config"
+# -rs prints the reason for every skip. Without it a run says "9 skipped"
+# and nothing else, which is how five integration tests quietly stopped
+# running against the real tools while the suite still reported green.
+addopts = "-q --strict-markers --strict-config -rs"
 markers = [
     "integration: touches a real external dependency (slicer, network, GPU). Excluded from the fast loop.",
     "eval: scored AI eval; costs credits. Opt-in only.",
