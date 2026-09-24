@@ -146,11 +146,25 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    ratio first. Getting it wrong sends the click hundreds of pixels away and every widget under
    test looks broken while working perfectly - it cost most of a debugging session on the drag
    handles, which turned out never to have been faulty.
-12. **The affine drag widget works; its arrows start at the part's centre.** Half of each arrow is
-   inside the geometry, and PyVista reports nothing until the mouse is released. Hover-highlight,
-   press, drag and release were all verified by hand through the real window. Before changing that
-   widget, reproduce with correct coordinates (trap 11) - the picker and `always_visible` are not
-   the problem.
+12. **PyVista's `AffineWidget3D` is gone, and is not to come back.** Its plumbing works - hover,
+   press, drag, release all verified by hand - but three things in its own source make it unusable:
+   `_get_world_coord_trans` is documented as "not physically accurate" and "ignores zoom" and
+   scales by `actor_length * 2`; its handle actors get a transform once at construction and never
+   follow the part; and `always_visible` draws them with a -20000 polygon offset, which smears
+   them over the model. `modelpop.rendering.drag_handles` replaces it with ray-to-axis closest
+   approach and ray-plane intersection, which track the cursor exactly at any zoom.
+13. **A gizmo must pivot where the command pivots.** `Rotate` compiles to build123d's `Rot`, which
+   turns the part about the **world origin** - not its centre. Previewing a rotation about anything
+   else shows one thing, rebuilds another, and emits a spurious `Move` next to every `Rotate`.
+14. **The test suite runs Qt under `QT_QPA_PLATFORM=offscreen`** (set in `tests/conftest.py`). An
+   *embedded* VTK render window gets no surface there and reports a size of `(0, 0)`, so every
+   world-to-screen conversion collapses to zero. Tests that drive a `QtInteractor` with real mouse
+   events must skip unless a real platform is in use: `QT_QPA_PLATFORM=windows pytest -m renders`.
+   Driving synthetic input at a real window also prints `Windows fatal exception: code 0x8001010d`
+   (`RPC_E_CANTCALLOUT_ININPUTSYNCCALL`) - noise, not a crash.
+15. **`pytest -m renders` exits 127 after every test passes.** VTK teardown takes the process down
+   once the run is over. Confirmed pre-existing and independent of any one test file, so judge that
+   run by its reported results, not its exit code.
 
 ## Style
 
