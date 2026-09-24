@@ -73,6 +73,10 @@ __all__ = ["MainWindow"]
 # an attempt to rotate the model.
 CLICK_SLOP_PIXELS = 4
 
+# Above this, a rebuild's duration is put in the status bar. Below it the
+# number is noise; above it, it is the thing the user wants to know.
+SAY_HOW_LONG_ABOVE_SECONDS = 1.0
+
 # Readable on a dark panel. The default reds and greens are not: a blocker
 # rendered in #C0392B on #2B3038 is almost invisible, which defeats the point
 # of having a readiness panel at all.
@@ -174,6 +178,8 @@ class MainWindow(QMainWindow):
         self._section_panel: SectionDialog | None = None
         self._place_panel: PlaceDialog | None = None
         self._pressed_at: QPoint | None = None
+        # True between letting go of a handle and the rebuild landing.
+        self._drag_in_flight = False
         self._findings = QListWidget()
         self._summary = QLabel("Open a model to begin.")
         self._summary.setWordWrap(True)
@@ -484,18 +490,31 @@ class MainWindow(QMainWindow):
     def _dragged(self, matrix: object) -> None:
         """Turn a released drag into commands on the bus.
 
-        The actor's own transform is dropped first. The rebuilt model already
-        stands where it was dragged to, so leaving the transform on as well
-        would move the part twice as far as the user asked.
+        The part is left where it was dragged to until the rebuild arrives.
+        That rebuild is a subprocess and takes seconds, and snapping the part
+        back to where it started for the whole of that was reported - fairly -
+        as the drag being thrown away: you let go, and it jumps back.
+
+        The handles come off for the same interval. A second drag started
+        against a part whose move is still in flight would begin from a
+        transform the feature tree is about to account for, and end up moving
+        it twice. They go back on, over the new geometry, in
+        ``_on_state_changed``.
+
+        Nothing here undoes the transform, because the actor is replaced
+        wholesale by the rebuild and ``show_mesh`` clears the new one.
         """
         drag = movement_in(matrix)  # type: ignore[arg-type]
-        self._scene.forget_drag()
 
         if not drag.did_anything:
+            # Nothing was recorded, so nothing will come back to replace it.
+            self._scene.forget_drag()
             self._viewport.render()
             self.statusBar().showMessage(drag.describe())
             return
 
+        self._drag_in_flight = True
+        self._scene.stop_dragging(keep_where_it_was_dragged=True)
         for command in drag.commands:
             self._modelling.apply_from_the_viewport(command)
         self.statusBar().showMessage(drag.describe())
@@ -931,9 +950,11 @@ class MainWindow(QMainWindow):
 
         # The handles were attached to the actor that has just been
         # replaced, so they have to go back on the new one or they hover
-        # over a model they no longer move.
+        # over a model they no longer move. They were also taken off while a
+        # drag was being turned into features, so this is what puts them back.
+        self._drag_in_flight = False
         if self._drag_action.isChecked():
-            self._scene.start_dragging(self._dragged)
+            self._scene.start_dragging(self._dragged, self._dragging)
 
         self.setWindowTitle(f"ModelPop - {state.title}")
         self.statusBar().showMessage(state.describe())
@@ -980,7 +1001,22 @@ class MainWindow(QMainWindow):
         modal would overstate it.
         """
         message = f"{outcome.message}. {outcome.detail}" if outcome.detail else outcome.message
+        # How long the rebuild actually took. Without it a slow one is a
+        # complaint nobody can act on; with it, it is a number.
+        spent = self._modelling.state.rebuild_seconds
+        if not outcome.refused and spent >= SAY_HOW_LONG_ABOVE_SECONDS:
+            message = f"{message} ({spent:.1f}s)"
         self.statusBar().showMessage(message, 10000)
+
+        if outcome.refused and self._drag_in_flight:
+            # A refused command changes nothing, so no new geometry is coming
+            # to replace the actor the drag moved. Put it back, or the part is
+            # left standing somewhere the model does not agree with.
+            self._drag_in_flight = False
+            self._scene.forget_drag()
+            if self._drag_action.isChecked():
+                self._scene.start_dragging(self._dragged, self._dragging)
+            self._viewport.render()
         # The CAD tools can create a model without the workspace changing, so
         # the menu has to be refreshed from here too.
         self._save_project_action.setEnabled(self._modelling.can_save)
@@ -994,3 +1030,8 @@ class MainWindow(QMainWindow):
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.setCursor(Qt.CursorShape.WaitCursor if busy else Qt.CursorShape.ArrowCursor)
+        doing = self._modelling.doing
+        if busy and doing:
+            # Named, because "nothing is happening" and "OCCT has been running
+            # for twenty seconds" look identical otherwise.
+            self.statusBar().showMessage(f"{doing}...")

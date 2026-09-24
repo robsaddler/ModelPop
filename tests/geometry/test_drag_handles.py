@@ -561,3 +561,100 @@ def _drag_the_z_arrow(app, viewport, zoom, pixels, on_release=None) -> Dragged:
     camera_after = tuple(viewport.camera.position)
     handles.stop()
     return Dragged(drift, abs(moved), camera_before, camera_after)
+
+
+class TestHandingADragOverToTheFeatureTree:
+    """What happens between letting go and the rebuild arriving.
+
+    Reported as: "when you release, the view repaints where it came from" and
+    then a second drag landing where the *first* one had put it.
+
+    Both are this interval. A rebuild is an OCCT subprocess and takes a couple
+    of seconds; the actor's transform used to be thrown away the instant the
+    button came up, so for the whole of that the part sat back where it had
+    started. And the handles kept accumulating across drags, so a second drag
+    begun before the first had landed started from a transform the feature
+    tree was already about to account for.
+    """
+
+    def scene(self, plotter):
+        from modelpop.domain.printer import PrinterProfile
+        from modelpop.rendering import ViewportScene
+
+        from .strategies import unit_cube
+
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_mesh(unit_cube(40))
+        return scene
+
+    def test_letting_go_can_leave_the_part_where_it_was_dragged(self, plotter):
+        """The snap-back, as a test."""
+        scene = self.scene(plotter)
+        scene.start_dragging(lambda _: None)
+        scene._drag_widget._apply(scene._drag_widget._step(scene._drag_widget._arrows[2], 12.0))
+
+        scene.stop_dragging(keep_where_it_was_dragged=True)
+
+        assert np.asarray(scene._model_actor.user_matrix)[2, 3] == pytest.approx(12.0), (
+            "the part sprang back to where it started before its move had been recorded"
+        )
+
+    def test_by_default_letting_go_still_puts_it_back(self, plotter):
+        """Because a drag that recorded nothing has nothing coming to replace it."""
+        scene = self.scene(plotter)
+        scene.start_dragging(lambda _: None)
+        scene._drag_widget._apply(scene._drag_widget._step(scene._drag_widget._arrows[2], 12.0))
+
+        scene.stop_dragging()
+
+        assert np.asarray(scene._model_actor.user_matrix) == pytest.approx(np.eye(4))
+
+    def test_new_geometry_arrives_with_no_transform_on_it(self, plotter):
+        """The other half: the rebuilt part already stands where it was put.
+
+        PyVista reuses the actor registered under a name, so a transform left
+        on it would be applied on top of geometry that has already moved - and
+        the part would travel twice as far as it was dragged.
+        """
+        from .strategies import unit_cube
+
+        scene = self.scene(plotter)
+        scene.start_dragging(lambda _: None)
+        scene._drag_widget._apply(scene._drag_widget._step(scene._drag_widget._arrows[2], 12.0))
+        scene.stop_dragging(keep_where_it_was_dragged=True)
+
+        scene.show_mesh(unit_cube(40))
+
+        assert np.asarray(scene._model_actor.user_matrix) == pytest.approx(np.eye(4))
+
+    def test_putting_the_part_back_also_resets_the_handles(self, plotter):
+        """Otherwise the next drag starts from the last one's total.
+
+        The handles carry the same matrix as the part and accumulate it across
+        drags. Resetting only the part leaves them out of step, and the next
+        drag adds to a movement the feature tree has already recorded.
+        """
+        scene = self.scene(plotter)
+        scene.start_dragging(lambda _: None)
+        handles = scene._drag_widget
+        handles._apply(handles._step(handles._arrows[2], 12.0))
+
+        scene.forget_drag()
+
+        assert np.asarray(handles._matrix) == pytest.approx(np.eye(4))
+        for handle in handles._handles:
+            assert np.asarray(handle.user_matrix) == pytest.approx(np.eye(4))
+
+    def test_a_second_drag_after_a_reset_starts_from_nothing(self, plotter):
+        """The compounding bug, stated as the number it produces."""
+        scene = self.scene(plotter)
+        scene.start_dragging(lambda _: None)
+        handles = scene._drag_widget
+
+        handles._apply(handles._step(handles._arrows[2], 12.0))
+        scene.forget_drag()
+        handles._apply(handles._step(handles._arrows[2], 5.0))
+
+        assert np.asarray(scene._model_actor.user_matrix)[2, 3] == pytest.approx(5.0), (
+            "the second drag carried the first one's movement with it"
+        )

@@ -649,3 +649,62 @@ class TestEmptyingTheModel:
 
         assert not view.state.has_model
         assert view.state.mesh is None
+
+
+class TestSayingWhatIsHappening:
+    """A rebuild is seconds of subprocess; silence for that long reads as a hang."""
+
+    def test_it_names_what_is_being_built_while_it_builds(self):
+        seen: list[str] = []
+        model = view()
+        model.on_busy(lambda busy: seen.append(model.doing if busy else ""))
+        model.add_box(10, 10, 10)
+
+        assert seen[0], "nothing was named while the rebuild was running"
+        assert "box" in seen[0].lower()
+
+    def test_it_says_nothing_when_nothing_is_running(self):
+        model = view()
+        assert model.doing == ""
+        model.add_box(10, 10, 10)
+        assert model.doing == "", "it is still claiming to be busy after finishing"
+
+    def test_it_stops_naming_it_even_when_the_command_is_refused(self):
+        model = view(refuse_containing="fillet")
+        model.add_box(10, 10, 10)
+        model.fillet(99)
+
+        assert model.doing == ""
+
+
+class TestNotRunningTwoRebuildsAtOnce:
+    """Why a drag has to be handed over before another can start.
+
+    A second command arriving while a rebuild is in flight is refused, not
+    queued. That is the right call - queueing clicks lets somebody stack ten
+    subprocesses and wait through all ten - but it means anything that can be
+    triggered twice quickly has to prevent the second one itself. The drag
+    handles come off while a drag is being turned into features for exactly
+    this reason: a released drag that got refused was silently thrown away,
+    and the part sprang back to where the previous one had put it.
+    """
+
+    def test_a_command_arriving_mid_rebuild_is_refused_rather_than_queued(self):
+        from modelpop.application.modelling import ModellingSession
+        from modelpop.presentation.modelling_view_model import ModellingViewModel
+
+        held: list = []
+        model = ModellingViewModel(ModellingSession(FakeCompiler()), runner=held.append)
+        outcomes: list[Outcome] = []
+        model.on_outcome(outcomes.append)
+
+        model.add_box(10, 10, 10)  # started, and parked in `held`
+        assert model.is_busy
+
+        model.add_sphere(5)
+        assert any(o.refused and "rebuilding" in o.message.lower() for o in outcomes), (
+            f"the second command was not refused: {[o.message for o in outcomes]}"
+        )
+
+        held[0]()  # let the first one finish
+        assert not model.is_busy

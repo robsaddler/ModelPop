@@ -112,6 +112,10 @@ class ModellingViewModel:
         self._on_geometry = on_geometry
         self._describe = describe_change
         self._busy = False
+        # What is being done right now, for the window to show while it is
+        # happening. A rebuild is an OCCT subprocess and takes seconds; a
+        # status bar that says nothing for that long reads as a hang.
+        self._doing = ""
         self._state_listeners: list[Callable[[ModelState], None]] = []
         self._outcome_listeners: list[Callable[[Outcome], None]] = []
         self._busy_listeners: list[Callable[[bool], None]] = []
@@ -127,6 +131,17 @@ class ModellingViewModel:
     def is_busy(self) -> bool:
         """Whether a rebuild is running."""
         return self._busy
+
+    @property
+    def doing(self) -> str:
+        """What is being rebuilt, in the words the feature tree would use.
+
+        Empty when nothing is running. The window shows this rather than
+        leaving the status bar on the last message, because an OCCT rebuild
+        takes seconds and silence for that long is indistinguishable from a
+        hang - which is what it was reported as.
+        """
+        return self._doing
 
     @property
     def can_describe_a_change(self) -> bool:
@@ -562,12 +577,14 @@ class ModellingViewModel:
             self._announce(Outcome("Still rebuilding; that click was ignored.", refused=True))
             return
 
+        self._doing = label
         self._set_busy(True)
 
         def finish() -> None:
             try:
                 self._report(label, work())
             finally:
+                self._doing = ""
                 self._set_busy(False)
                 self._announce_state()
 

@@ -207,6 +207,12 @@ class ViewportScene:
             name="model",
             show_edges=False,
         )
+        # PyVista reuses the actor registered under this name, so a transform
+        # left on it by a drag would still be there - and the rebuilt geometry
+        # already stands where it was dragged to, so the part would move twice
+        # as far as it was asked to.
+        with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+            self._model_actor.user_matrix = np.eye(4)
         self._show_the_inside(self._model_actor)
         self._locator = None  # invalidated: it belongs to the old geometry
 
@@ -299,20 +305,28 @@ class ViewportScene:
             return False
         return True
 
-    def stop_dragging(self) -> None:
-        """Take the handles off, and undo whatever they did to the actor.
+    def stop_dragging(self, *, keep_where_it_was_dragged: bool = False) -> None:
+        """Take the handles off, and by default put the actor back.
 
         Resetting the actor's own transform matters. The drag is recorded as
-        commands in the feature tree, and the rebuilt model already stands
+        commands in the feature tree, and the rebuilt model will already stand
         where it was dragged to; leaving the actor's transform in place as well
         would apply the move twice.
+
+        ``keep_where_it_was_dragged`` is for the moment between letting go and
+        the rebuild arriving. A rebuild is seconds of subprocess, and snapping
+        the part back to where it started for the whole of that reads as the
+        drag having been thrown away - which is exactly what it was reported
+        as. The transform stays until new geometry replaces the actor, and
+        ``show_mesh`` makes sure the new one starts clean.
         """
         widget = self._drag_widget
         self._drag_widget = None
         if widget is not None:
             with contextlib.suppress(AttributeError, RuntimeError):
                 widget.stop()
-        self.forget_drag()
+        if not keep_where_it_was_dragged:
+            self.forget_drag()
 
     def forget_drag(self) -> None:
         """Put the actor's own transform back to nothing.
@@ -321,6 +335,12 @@ class ViewportScene:
         transform and the rebuilt geometry both carry the same movement and the
         part jumps twice as far as it was dragged.
         """
+        if self._drag_widget is not None:
+            # The handles carry the same transform, and they accumulate it
+            # across drags. Left alone, the next drag starts from the last
+            # one's total and moves the part twice as far as it was asked to.
+            with contextlib.suppress(AttributeError, RuntimeError):
+                self._drag_widget.reset()
         if self._model_actor is None:
             return
         with contextlib.suppress(AttributeError, RuntimeError, ValueError):

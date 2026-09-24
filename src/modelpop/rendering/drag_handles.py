@@ -303,6 +303,18 @@ class DragHandles:
         ):
             self._observers.append(interactor.AddObserver(event, handler, 10.0))
 
+    def reset(self) -> None:
+        """Forget the transform built up so far, and put the handles back.
+
+        Called when the part is put back where it started. Without it the next
+        drag begins from the last one's total: the handles jump the moment
+        they are touched and the part moves twice as far as it was asked to.
+        """
+        self._matrix = np.eye(4)
+        for handle in self._handles:
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                handle.user_matrix = np.eye(4)
+
     def stop(self) -> None:
         """Take the handles off and stop listening."""
         interactor = self._plotter.iren.interactor
