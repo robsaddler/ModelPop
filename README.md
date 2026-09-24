@@ -33,13 +33,20 @@ Bambu retired its own first-generation AI tools in September 2026 for exactly th
 | **Watch it print** | Scrub through the print, coloured by the slicer's own feature names, with the nozzle where it will be. |
 | **Weigh the AMS against it** | One plate with filament swaps, or one plate per colour. Measured from the slicer's own purge volumes and times, not modelled. |
 | **Make one from a picture** | A photo or a drawing into a printable mesh, on your own GPU. 36 seconds for a draft on a 4090. |
+| **Ask for several** | The same picture, several different shapes, each with its own reproducible seed. The first answer is rarely the best one. |
+| **Measure one from photographs** | Walk round a real object; COLMAP and OpenMVS solve the cameras and measure the surface. 24 photos to a 640k-triangle model in about 90 seconds. |
+| **Rescue the detail** | Bake a generated model's colour texture into its surface, so the detail survives being sliced instead of printing as a smooth blob. |
+| **Cut it open** | A section plane through the viewport - the only way to check a hollow by looking. |
+| **Drag it about** | Arrows to move, rings to turn. A drag becomes the same undoable commands the toolbar emits. |
+| **Split it into colours** | Body and raised lettering as separate files, one per filament. |
+| **Send it to the printer** | Over your own network, no Bambu account. Two separate off-by-default switches, because a print is the one thing here that cannot be undone. |
+| **Watch it print** | Poll the printer: what it is printing, how far through, how hot. Backs off when it stops answering and gives up rather than nagging. |
 
 ### Not yet built
 
-Multi-photo photogrammetry. Sketches and gizmos. Multi-colour part splitting - the AMS comparison
-works on any multi-colour slice you bring it, but ModelPop cannot yet split a model into colours
-itself. Text straight to a mesh: the generator is image-to-3D and refuses rather than making you
-something you did not ask for. See `docs/00-plan.md`.
+A sketcher with constraints - the profile dialog is the useful nine tenths of one and is honest
+about being it. Text straight to a mesh: the generator is image-to-3D and refuses rather than making
+you something you did not ask for. See `docs/00-plan.md`.
 
 ## Running it
 
@@ -60,8 +67,15 @@ Bambu Studio.
 
 Searching for models needs a free key from MyMiniFactory or Thingiverse, also in **File →
 Settings**. Making a model from a picture needs a CUDA graphics card and a one-off download - see
-[`docs/10-mesh-generation.md`](docs/10-mesh-generation.md). Each of these is optional, and each says
-specifically which piece is missing rather than failing at the click.
+[`docs/10-mesh-generation.md`](docs/10-mesh-generation.md). Measuring one from several photographs
+needs COLMAP and OpenMVS - see [`docs/12-photogrammetry.md`](docs/12-photogrammetry.md). Sending a
+job needs the printer's address and access code.
+
+Each of these is optional, and each says specifically which piece is missing rather than failing at
+the click. **[`docs/13-first-run.md`](docs/13-first-run.md) is the place to start**: what to set up,
+in what order, and how to check each piece works.
+
+[`docs/11-using-the-app.md`](docs/11-using-the-app.md) is the user guide.
 
 ## Developing
 

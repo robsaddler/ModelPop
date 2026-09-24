@@ -250,6 +250,7 @@ domain skills as you go so the knowledge compounds instead of evaporating betwee
 | `research/spike-photogrammetry.md` | COLMAP + OpenMVS end to end, and where the time goes |
 | `12-photogrammetry.md` | Taking the photographs, and what comes back |
 | `11-using-the-app.md` | How to use it, task by task |
+| `13-first-run.md` | What to set up, in what order, and how to check each piece |
 | `research/spike-s7-python-stack.md` | **Why the stack is Python** — measured, not argued |
 | `research/findings.md` | The 2026 landscape digest with citations |
 | `research/spike-s7-python-stack.md` | **Why the stack is Python** - measured, not argued |
