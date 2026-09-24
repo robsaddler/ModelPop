@@ -60,8 +60,13 @@ available. `pymeshfix` in particular is the best automatic watertight repair the
 | Mesh generation | **TRELLIS.2** primary, **TripoSG** fallback — both MIT (ADR-0004) |
 | Part-aware generation | PartCrafter (MIT) |
 | Segmentation | SAM 3 |
-| Reconstruction | COLMAP + OpenMVS via `subprocess`; `pycolmap` |
+| Reconstruction | **COLMAP 4.2.0** (new BSD) + **OpenMVS 2.4.0** (AGPL-3.0) via `subprocess` — both installed and verified |
 | Scale from marker | **OpenCV** ArUco/ChArUco |
+
+**Neither reconstruction tool is in winget.** Both ship official Windows binaries on their own
+GitHub releases and are installed by unzipping, which is why they sit in `C:\Tools` rather than
+under `Program Files`. AGPL on OpenMVS is fine here on both counts: this application is open
+source, and it drives the binary as a separate process rather than linking it.
 
 **Still excluded:** the **Hunyuan3D** family. Its licence excludes the UK *territorially*, which the
 open-source relaxation does not affect.

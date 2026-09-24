@@ -65,9 +65,20 @@ Tests that would fail without the change; `ruff` and `mypy --strict` clean; `imp
 - P2S build volume **256 × 256 × 256 mm**; default process `0.20mm Standard @BBL P2S`; support
   defaults `support_type: tree(auto)`, `support_threshold_angle: 30`, `enable_support: 0`.
 - **build123d fillets all 12 edges of a cube in 7 ms**; booleans exact (spike S7).
-- **VTK picking: 0.0045 ms** with a cached `vtkCellLocator`; 983k triangles at 28–36 FPS —
-  but that was on the **Intel iGPU**, not the RTX 4090. Force the discrete GPU and re-measure.
+- **VTK picking: 0.0045 ms** with a cached `vtkCellLocator`. The viewport runs on the **Intel iGPU**
+  and cannot be moved off it from inside the app — and does not need to be: re-measured in a real
+  window at **70–96 FPS on 393k triangles and 50 FPS on 1.57M**, well past the display budget.
+  Settled; see `docs/research/spike-viewport-gpu.md`.
 - RTX 4090 Laptop has **16 GB VRAM**. One large generative model at a time.
+- **COLMAP 4.2.0 (CUDA) at `C:\Tools\COLMAP\bin\colmap.exe`** and **OpenMVS 2.4.0 at
+  `C:\Tools\OpenMVS`** — installed 2026-09-24 for Phase 7. Neither is in winget; both are
+  unzipped GitHub release builds. COLMAP's GPU SIFT is verified working on the 4090 (8 images in
+  0.18 s). Licences: COLMAP new BSD, OpenMVS AGPL-3.0 — both fine, and both run as subprocesses.
+- **COLMAP 4.2 renamed its options.** It is `--FeatureExtraction.use_gpu`, not
+  `--SiftExtraction.use_gpu` as every tutorial online still says; the old name is rejected outright.
+- **OpenMVS writes no stdout.** Like the Bambu CLI, it logs to a timestamped `.log` file in the
+  working directory and exits **1** even for `--help`. Read the log, not the pipe, and do not
+  trust the exit code.
 
 ## Traps already paid for — do not rediscover these
 
