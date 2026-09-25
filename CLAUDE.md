@@ -202,6 +202,23 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    so every group measures zero. True depth can, and is wrong: a ring is a thin band at under half
    opacity, and when one passes in front of a solid grip the grip is still what was aimed at.
 
+21. **Ray casting was never accelerated, and nothing said so.** `trimesh` uses Intel Embree when
+   `embreex` is installed and its own numpy intersector when it is not - every ray against every
+   triangle. Nothing imports `embreex`, nothing declared it, every import resolved, and the wall
+   thickness check quietly cost **81 seconds** for its 2,000 rays on the 1.1 million triangle
+   dragon against **1.3** with it. `rtree` was in the dependency list commented "trimesh needs it
+   for ray casting", which is true and was read as "ray casting is handled" - it only culls
+   candidates *for the slow engine*. Exactly the shape of trap 15, found the same way: by timing
+   the thing the user complained about rather than reasoning about it.
+22. **The same mesh was measured for readiness twice on every open.** Opening a file assesses it,
+   then the scene adopts the same geometry as a body and hands it straight back, which assesses it
+   again. Invisible on a box; on the dragon it doubled a 2.6 s measurement, and before Embree it
+   doubled an 81 s one - which is the whole of "opening that simple dragon takes over a minute".
+   `Workspace._assess` now keeps the last report against the mesh's content hash (0.02 s to
+   compute, 2.6 s saved). Safe only because `inspect` is a pure function of the geometry and the
+   printer profile is set once at construction: if a profile ever becomes changeable, clear the
+   cache with it.
+
 ## Style
 
 Type hints everywhere, `mypy --strict`. `ruff` for lint and format. Dataclasses (frozen where they are

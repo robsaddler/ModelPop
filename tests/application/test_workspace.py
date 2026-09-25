@@ -53,6 +53,13 @@ def box(size: float = 20.0) -> Mesh:
     return Mesh(vertices, faces)
 
 
+def _stitched(mesh: Mesh) -> Mesh:
+    """The same shape with one vertex welded, standing in for a real repair."""
+    vertices = mesh.vertices.copy()
+    vertices[-1] = vertices[0]
+    return Mesh(vertices, mesh.faces)
+
+
 # --------------------------------------------------------------------- fakes
 
 
@@ -87,8 +94,10 @@ class FakeOps:
     watertight: bool = True
     overhangs: float = 0.0
     repair_error: str = ""
+    inspected: list[Mesh] = field(default_factory=list)
 
     def inspect(self, mesh: Mesh, *, measure_walls: bool = True) -> MeshFacts:
+        self.inspected.append(mesh)
         return MeshFacts(
             mesh=mesh,
             is_watertight=self.watertight,
@@ -97,10 +106,23 @@ class FakeOps:
         )
 
     def repair(self, mesh: Mesh) -> Result[Mesh]:
+        """Hand back *different* geometry, because a real repair does.
+
+        This used to return the very mesh it was given while flipping its own
+        answer to "watertight" - a double that changed the facts about a shape
+        without changing the shape. Nothing real behaves that way: stitching
+        the dragon's boundaries took it from 1,132,190 triangles to 1,132,182,
+        and a repair that alters nothing leaves the readiness report alone too.
+
+        It matters now because the workspace measures a shape once and keeps
+        the answer against its content hash. A fake that lies about this would
+        have the test insisting on a re-measurement that the application has no
+        way to know it needs.
+        """
         if self.repair_error:
             return failure(self.repair_error)
         self.watertight = True
-        return success(mesh)
+        return success(_stitched(mesh))
 
     def normalise(self, mesh: Mesh) -> Mesh:
         return mesh
@@ -655,3 +677,57 @@ class TestMeasuringFromPhotographs:
 
         assert not outcome.ok
         assert "overlap" in outcome.error
+
+
+class TestMeasuringTheSameThingTwice:
+    """Readiness is measured once per shape, not once per time it is handed over.
+
+    Opening a file measures it, and then the scene takes the same geometry as a
+    body and hands it straight back, which measured it again: the same
+    triangles, the same answer, twice.
+
+    On a box that is invisible. On the 1.1 million triangle dragon it was the
+    whole of the wait - the measurement is dominated by ray-casting for wall
+    thickness, and the second run is pure waiting. Measured on that model:
+    2.6 seconds each, against 0.02 to work out they are the same shape.
+    """
+
+    def test_the_same_geometry_is_only_measured_once(self):
+        ops = FakeOps()
+        workspace = Workspace(FakeIO(), ops, FakeSlicer(), PrinterProfile.p2s())
+
+        opened = workspace.open(Path("dragon.stl")).unwrap()
+        assert len(ops.inspected) == 1
+
+        workspace.adopt(opened.mesh)
+        assert len(ops.inspected) == 1, "handing the same mesh back measured it all over again"
+
+    def test_the_answer_is_the_same_one(self):
+        ops = FakeOps()
+        workspace = Workspace(FakeIO(), ops, FakeSlicer(), PrinterProfile.p2s())
+
+        opened = workspace.open(Path("dragon.stl")).unwrap()
+        again = workspace.adopt(opened.mesh)
+
+        assert again.readiness == opened.readiness
+
+    def test_different_geometry_is_measured_properly(self):
+        """The cache is keyed on the shape's own identity, so a change misses."""
+        ops = FakeOps()
+        workspace = Workspace(FakeIO(), ops, FakeSlicer(), PrinterProfile.p2s())
+
+        workspace.open(Path("dragon.stl")).unwrap()
+        workspace.adopt(box(30.0))
+
+        assert len(ops.inspected) == 2, "a different shape was never measured"
+
+    def test_a_shape_that_comes_back_is_measured_again(self):
+        """Nothing is remembered beyond the last shape, so this must not stale."""
+        ops = FakeOps()
+        workspace = Workspace(FakeIO(), ops, FakeSlicer(), PrinterProfile.p2s())
+
+        first = workspace.open(Path("dragon.stl")).unwrap()
+        workspace.adopt(box(30.0))
+        workspace.adopt(first.mesh)
+
+        assert len(ops.inspected) == 3

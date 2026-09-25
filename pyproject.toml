@@ -16,7 +16,12 @@ dependencies = [
     "manifold3d>=3.0",
     "networkx>=3.3",      # trimesh needs it for hole filling and graph ops
     "scipy>=1.14",        # trimesh needs it for sampling and spatial queries
-    "rtree>=1.3",         # trimesh needs it for ray casting (wall thickness)
+    "rtree>=1.3",         # culls ray candidates for trimesh's own intersector
+    "embreex>=4.4",       # Intel Embree, and the *engine* trimesh casts rays
+                          # with. Without it trimesh falls back to a numpy
+                          # intersector and the wall-thickness check on a
+                          # million triangles takes 81 seconds instead of 1.3.
+                          # Apache-2.0.
     "fast-simplification>=0.1",  # quadric decimation backend for trimesh
     "lxml>=5.3",          # trimesh needs it to write 3MF
     "scikit-image>=0.24", # trimesh needs it for marching cubes, which is

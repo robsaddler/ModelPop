@@ -175,6 +175,10 @@ class Workspace:
         self._gateway = printer_gateway
         self._detail = detail
         self._reconstructor = reconstructor
+        # The last measurement, against the geometry it was taken from. See
+        # _assess: the same mesh is measured twice on every open, and on a
+        # large model that is the whole of the wait.
+        self._measured: tuple[str, ReadinessReport] | None = None
 
     @property
     def can_generate(self) -> bool:
@@ -755,8 +759,32 @@ class Workspace:
     # --------------------------------------------------------------- internal
 
     def _assess(self, mesh: Mesh) -> ReadinessReport:
-        """Measure the mesh once and run every rule against the result."""
-        return assess(self._ops.inspect(mesh), self._printer)
+        """Measure the mesh once and run every rule against the result.
+
+        Once being the operative word. Opening a file measures it here, and
+        then the scene takes the same geometry as a body and hands it straight
+        back, which measures it again - the same triangles, the same answer,
+        twice. Nobody notices on a box. On a 1.1 million triangle model the
+        measurement is dominated by ray-casting for wall thickness, and the
+        second one is pure waiting.
+
+        Keyed on the content hash, which is what makes this safe: it is the
+        geometry's own identity, so a mesh that differs anywhere at all misses
+        and is measured properly. Computing it costs 0.02 s on that model
+        against 2.6 s for the measurement it saves.
+
+        The only other thing a report depends on is the printer, and that is
+        set once when this is built and never reassigned - so the shape really
+        is the whole of the key. If a profile ever becomes changeable, this
+        has to be cleared with it.
+        """
+        digest = mesh.content_hash
+        if self._measured is not None and self._measured[0] == digest:
+            return self._measured[1]
+
+        report = assess(self._ops.inspect(mesh), self._printer)
+        self._measured = (digest, report)
+        return report
 
     def _with_mesh(self, state: WorkspaceState, mesh: Mesh) -> WorkspaceState:
         """Replace the geometry and re-assess, discarding any stale slice."""

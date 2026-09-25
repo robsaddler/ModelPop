@@ -51,6 +51,27 @@ class TestTheMeshLibraries:
 
         assert len(rebuilt.faces) > 0, "marching cubes produced nothing"
 
+    def test_ray_casting_is_accelerated(self):
+        """Not whether it works - it always does. Whether it is the fast one.
+
+        Without Embree, trimesh falls back to its own numpy intersector, which
+        tests every ray against every triangle. Ray casting is how wall
+        thickness is measured, and that runs on every open. Measured on the
+        1.1 million triangle dragon: **81 seconds** for the 2,000 rays it
+        needs, against **1.3** with Embree - and the open ran it twice, so a
+        model this machine should swallow whole took over two minutes.
+
+        Nothing failed, nothing logged, and every import resolved. The same
+        shape as the scikit-image trap above, which is why it is asserted here
+        rather than trusted.
+        """
+        import trimesh.ray
+
+        assert trimesh.ray.has_embree, (
+            "embreex is not installed, so wall thickness falls back to the "
+            "brute-force intersector - a minute per large model, silently"
+        )
+
     def test_repairing_something_actually_broken_works(self):
         holed = Mesh(unit_cube(10).vertices, unit_cube(10).faces[2:])
         assert TrimeshOps().repair(holed).ok

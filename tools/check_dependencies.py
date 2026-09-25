@@ -121,6 +121,26 @@ def check_booleans() -> str:
     return "booleans work"
 
 
+def check_ray_casting() -> str:
+    """Which engine trimesh casts rays with, which is a 63x difference.
+
+    Not whether ray casting *works* - it always does. Without Embree, trimesh
+    falls back to its own numpy intersector, which tests every ray against
+    every triangle: measured at 81 seconds for the 2,000 rays the wall-
+    thickness check needs on a 1.1 million triangle model, against 1.3 with
+    it. Opening that model ran the check twice and took over two minutes,
+    and nothing anywhere said why.
+    """
+    import trimesh.ray
+
+    if not trimesh.ray.has_embree:
+        return (
+            "the slow ray engine is in use: embreex is not installed, so the "
+            "wall-thickness check will take a minute on a large model"
+        )
+    return "ray casting is accelerated (Embree)"
+
+
 def check_readiness() -> str:
     """Overhang and wall checks, which reach for ray casting and spatial trees."""
     from modelpop.domain.printer import PrinterProfile
@@ -224,6 +244,7 @@ CHECKS: tuple[tuple[str, Callable[[], str]], ...] = (
     ("repair", check_repair),
     ("simplify", check_simplify),
     ("booleans", check_booleans),
+    ("ray casting", check_ray_casting),
     ("readiness", check_readiness),
     ("detail rescue", check_detail_rescue),
     ("CAD kernel", check_the_cad_kernel),
@@ -250,7 +271,10 @@ def main() -> int:
         else:
             if said.startswith("ABSENT"):
                 absent.append(f"{name}: {said}")
-            elif said.startswith(("cannot", "the kernel is there but")) or "failed" in said:
+            elif (
+                said.startswith(("cannot", "the kernel is there but", "the slow"))
+                or "failed" in said
+            ):
                 broken.append(f"{name}: {said}")
         print(f"  {name:18s} {said.splitlines()[0]}")
 
