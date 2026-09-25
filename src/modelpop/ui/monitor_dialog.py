@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -50,21 +50,36 @@ class _Asking(QThread):
     loop forever with no error anywhere.
     """
 
-    answered = Signal()
-
     def __init__(self, monitor: PrinterMonitor, parent: QWidget | None = None) -> None:
         """Wire the thread to the monitor it will poll."""
         super().__init__(parent)
         self._monitor = monitor
 
     def run(self) -> None:
-        """Ask once."""
+        """Ask once.
+
+        The answer is not carried back from here: the monitor announces it
+        itself, and the dialog has already arranged for that to arrive through
+        a signal. A second route would only draw everything twice.
+        """
         self._monitor.poll()
-        self.answered.emit()
 
 
 class MonitorDialog(QDialog):
-    """What the printer is doing, refreshed while it does it."""
+    """What the printer is doing, refreshed while it does it.
+
+    **Every reading crosses back through ``reading`` before it touches a
+    widget.** ``PrinterMonitor.poll`` runs on the worker and announces inline
+    from there, so a listener registered as a bound method is a widget being
+    driven from the wrong thread. This window did exactly that and took the
+    application down mid-print - and only mid-print, because idle polls leave
+    the progress bar hidden and a hidden bar asks for no repaint. Once the
+    print was running, every poll called ``setValue`` on a visible bar from a
+    thread with no business doing it.
+    """
+
+    reading = Signal(object)
+    """One ``Watch``, carried from whichever thread produced it."""
 
     def __init__(
         self,
@@ -116,7 +131,10 @@ class MonitorDialog(QDialog):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._ask)
 
-        self._monitor.on_change(self._show)
+        # Through the signal, never as a bound method. This is the rule in
+        # CLAUDE.md trap 7 and this window is the third place to break it.
+        self.reading.connect(self._show)
+        self._monitor.on_change(self.reading.emit)
         self._ask()
 
     # ------------------------------------------------------------------ input
@@ -127,18 +145,8 @@ class MonitorDialog(QDialog):
             return
 
         self._asking = _Asking(self._monitor, self)
-        self._asking.answered.connect(self._answered, Qt.ConnectionType.QueuedConnection)
         self._asking.finished.connect(self._done_asking)
         self._asking.start()
-
-    def _answered(self) -> None:
-        """Take the reading on the interface thread and set the next alarm.
-
-        The monitor announces from the worker, and touching a widget from
-        there is undefined - in practice the panel silently stops updating.
-        This signal is what brings it back across.
-        """
-        self._show(self._monitor.watch)
 
     def _done_asking(self) -> None:
         self._asking = None

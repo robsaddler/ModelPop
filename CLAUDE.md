@@ -123,7 +123,7 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
 6. **A `QThread` worker with no Python reference is garbage collected**, the queued `started`
    connection dies with it, and the thread runs an empty event loop forever. No exception, no
    output, no log line — the button simply does nothing. Keep the worker alive, not just the thread.
-7. **View-models announce from whichever thread did the work.** Touching a widget from a worker
+7. **View-models announce from whichever thread did the work, and so does `PrinterMonitor`.** Touching a widget from a worker
    thread is undefined; in practice the interface silently stops updating. Marshal back with a
    signal. **`MainWindow` was wired straight to bound methods and this trap was rediscovered the
    expensive way**: a CAD rebuild finished on its worker, handed the mesh to the workspace
@@ -131,6 +131,13 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    orbit deadlocked the process - 57 threads all in Wait, 7 s of CPU between them. Every callback a
    view-model is given must be `signal.emit`, never a method; `tests/geometry/test_thread_affinity.py`
    now asserts it. No unit test could catch it, because they all use the inline runner.
+   **This has bitten three times, each in a new file**: the main window, then the gallery, then
+   `MonitorDialog`, which registered `self._show` with the monitor and **crashed the application
+   mid-print** by calling `QProgressBar.setValue` from the polling thread. Only mid-print - an idle
+   poll leaves the bar hidden and a hidden bar asks for no repaint. The runtime test covers the main
+   window only, which is how the third one got through;
+   `tests/architecture/test_announcements_cross_back.py` now reads the source of the whole `ui`
+   package and fails on any `on_*` registration whose argument is not `something.emit`.
 8. **VTK does not fail on a GPU-less runner, it takes the process down** with an access violation.
    Hence the `renders` marker, deselected in CI.
 9. **Off-screen `Plotter.screenshot()` hands back the previous buffer** after a change that does not
