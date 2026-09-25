@@ -184,6 +184,24 @@ over it.
 
 ---
 
+## Starting over
+
+**Clear the plate** takes everything off and leaves an empty printer. It is in three places, all
+saying the same words: **File -> Clear the plate** (Ctrl+N), the right-click menu in the viewport,
+and the button under the feature tree in the CAD tools.
+
+It asks first, and that is not ceremony. Clearing starts a new command bus, so the feature tree and
+every step of undo go with the geometry - it is the one thing in the application that cannot be
+stepped back from. *Keep it* is the default button. Save the project first if you want the model
+back.
+
+On an already empty plate it says so rather than asking a question with only one sensible answer.
+
+The view goes back to looking into the printer afterwards, so an empty plate is framed the way the
+application opens rather than wherever the last model left the camera.
+
+---
+
 ## Connecting the printer
 
 **File -> Settings** opens on the **Printer** tab. Three fields, all from the printer itself:

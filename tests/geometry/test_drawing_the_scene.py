@@ -230,3 +230,106 @@ class TestWhatAClickPutsInHand:
             assert window._modelling.selected == "body-1"
         finally:
             window.close()
+
+
+class TestClearingThePlate:
+    """Taking everything off, and being able to find how.
+
+    "I need a clear option to reset the printer to empty - removes all models
+    from the canvas."
+
+    The mechanism already worked. What did not was finding it: the only way in
+    was a button called **Start again**, at the bottom of a group inside a tab,
+    which is neither where anybody would look nor what they would call it. It
+    is now *Clear the plate* on the File menu under the standard New shortcut,
+    on the right-click menu, and on that button - all three the same words.
+
+    Marked ``renders``: building the window builds a VTK viewport.
+    """
+
+    def window(self, app):
+        from modelpop.application.modelling import ModellingSession
+        from modelpop.application.workspace import Workspace
+        from modelpop.mesh import TrimeshIO, TrimeshOps
+        from modelpop.ui.main_window import MainWindow
+
+        return MainWindow(
+            Workspace(TrimeshIO(), TrimeshOps()), None, ModellingSession(mesh_io=TrimeshIO())
+        )
+
+    def with_a_model(self, window):
+        import time
+
+        import numpy as np
+        import trimesh
+        from PySide6.QtWidgets import QApplication
+
+        from modelpop.domain.mesh import Mesh
+
+        shape = trimesh.creation.box(extents=(30.0, 20.0, 20.0))
+        window._view_model.adopt(
+            Mesh(np.asarray(shape.vertices), np.asarray(shape.faces, np.int32))
+        )
+        until = time.monotonic() + 8.0
+        while time.monotonic() < until and not window._modelling.bodies:
+            QApplication.processEvents()
+            time.sleep(0.01)
+        for _ in range(60):
+            QApplication.processEvents()
+        return window
+
+    @pytest.mark.renders
+    def test_it_is_on_the_file_menu_under_the_new_shortcut(self, app):
+        from PySide6.QtGui import QKeySequence
+
+        window = self.window(app)
+        try:
+            assert window._clear_action.text().replace("&", "") == "Clear the plate"
+            assert window._clear_action.shortcut() == QKeySequence(QKeySequence.StandardKey.New)
+        finally:
+            window.close()
+
+    @pytest.mark.renders
+    def test_it_is_on_the_right_click_menu_too(self, app):
+        window = self.window(app)
+        try:
+            assert window._clear_here_action.text().replace("&", "") == "Clear the plate"
+        finally:
+            window.close()
+
+    @pytest.mark.renders
+    def test_an_empty_plate_is_not_worth_a_question(self, app):
+        """Asked twice a session about a plate that is already empty is noise."""
+        window = self.window(app)
+        try:
+            window._clear_the_plate()  # would block on a dialog if one were shown
+
+            assert "already empty" in window.statusBar().currentMessage()
+        finally:
+            window.close()
+
+    @pytest.mark.renders
+    def test_it_knows_when_there_is_something_to_clear(self, app):
+        window = self.with_a_model(self.window(app))
+        try:
+            assert window._anything_on_the_plate()
+        finally:
+            window.close()
+
+    @pytest.mark.renders
+    def test_clearing_empties_the_scene_and_the_workspace_together(self, app):
+        """Half-cleared is worse than not cleared: the readiness panel would go
+        on describing a model that is no longer on screen."""
+        window = self.with_a_model(self.window(app))
+        try:
+            window._modelling.clear()
+            for _ in range(80):
+                from PySide6.QtWidgets import QApplication
+
+                QApplication.processEvents()
+
+            assert window._modelling.bodies == ()
+            assert not window._view_model.state.has_model
+            assert not window._anything_on_the_plate()
+        finally:
+            window.close()

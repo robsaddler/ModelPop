@@ -507,7 +507,14 @@ class CadPanel(QWidget):
 
         history_row.addStretch(1)
 
-        new_model = QPushButton("Start again")
+        # Named for what it does to the plate rather than for how it feels.
+        # "Start again" was reported as impossible to find when what was wanted
+        # was "remove all models from the canvas", which is the same button.
+        new_model = QPushButton("Clear the plate")
+        new_model.setToolTip(
+            "Take everything off the plate and start with nothing. "
+            "Also on the File menu and the right-click menu."
+        )
         new_model.clicked.connect(self._view.clear)
         history_row.addWidget(new_model)
         rows.addLayout(history_row)

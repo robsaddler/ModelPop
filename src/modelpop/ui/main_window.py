@@ -469,6 +469,13 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
+        self._clear_action = QAction("&Clear the plate", self)
+        self._clear_action.setShortcut(QKeySequence.StandardKey.New)
+        self._clear_action.setToolTip("Take everything off the plate and start with nothing.")
+        self._clear_action.triggered.connect(self._clear_the_plate)
+        file_menu.addAction(self._clear_action)
+        file_menu.addSeparator()
+
         open_action = QAction("&Open...", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._choose_file)
@@ -924,6 +931,11 @@ class MainWindow(QMainWindow):
         self._thicken_here_action = self._scene_menu.addAction("&Thicken thin walls")
         self._thicken_here_action.triggered.connect(self._view_model.thicken)
 
+        self._scene_menu.addSeparator()
+        self._clear_here_action = self._scene_menu.addAction("&Clear the plate")
+        self._clear_here_action.triggered.connect(self._clear_the_plate)
+        self._scene_menu.addSeparator()
+
         self._lay_down_action = self._scene_menu.addAction("&Lay it down to print")
         self._lay_down_action.setToolTip(
             "Turn it to the way up that overhangs least, among the ways it can actually "
@@ -1103,6 +1115,54 @@ class MainWindow(QMainWindow):
             return 1.0
         wide = window.GetSize()[0]
         return wide / logical if wide else 1.0
+
+    def _clear_the_plate(self) -> None:
+        """Take everything off the plate, after asking.
+
+        Asked because it cannot be taken back: clearing starts a new command
+        bus, so the feature tree and every step of undo go with the geometry.
+        Everything else in this application can be stepped back from, which is
+        exactly why the one thing that cannot should say so.
+
+        The plain answer is the default button, and nothing is thrown away
+        when there is nothing on the plate - the question is not worth asking
+        twice a session for a plate that is already empty.
+        """
+        if not self._anything_on_the_plate():
+            self.statusBar().showMessage("The plate is already empty.", 4000)
+            return
+
+        ask = QMessageBox(self)
+        ask.setWindowTitle("Clear the plate")
+        ask.setIcon(QMessageBox.Icon.Question)
+        ask.setText("Take everything off the plate?")
+        ask.setInformativeText(
+            "The model and every step that built it are discarded, and this "
+            "cannot be undone. Save the project first if you want it back."
+        )
+        clear = ask.addButton("Clear the plate", QMessageBox.ButtonRole.DestructiveRole)
+        keep = ask.addButton("Keep it", QMessageBox.ButtonRole.RejectRole)
+        ask.setDefaultButton(keep)
+        ask.exec()
+        if ask.clickedButton() is not clear:
+            return
+
+        self._drag_action.setChecked(False)
+        self._pull_action.setChecked(False)
+        self._bringing_in_a_new_model = True
+        self._scene_hash = ""
+        self._drawn = None
+        # Clearing the tree hands the workspace a mesh of None through
+        # _adopt_from_the_scene, so the readiness panel, the title and the
+        # slice all go with it. One call, not two.
+        self._modelling.clear()
+        self._scene.look_into_the_printer()
+        self._viewport.render()
+        self.statusBar().showMessage("The plate is empty.", 5000)
+
+    def _anything_on_the_plate(self) -> bool:
+        """Whether there is anything to take off it."""
+        return bool(self._modelling.bodies) or self._view_model.state.has_model
 
     def _select_at(self, x: float, y: float) -> None:
         """Pick up whatever was clicked. A miss changes nothing.
