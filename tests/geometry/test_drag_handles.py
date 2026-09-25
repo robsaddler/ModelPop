@@ -819,3 +819,180 @@ class TestTurningSnaps:
         handles = self.handles(plotter)
         step = handles._step(handles._arrows[2], 3.2)
         assert step[2, 3] == pytest.approx(3.2)
+
+
+# Zoomed out this far the whole gizmo spans a fraction of the window, the way
+# it does with a part standing on a 256 mm plate.
+GIZMO_WELL_AWAY = 0.3
+
+
+class TestAimingAtTheRightHandle:
+    """Which handle a press grabs, through a live picker and projection.
+
+    This is where the gizmo was broken in the way that got it called buggy:
+    "I turn on drag handles, resize it, let go and it snaps back to the
+    original size. Same when I try to move it."
+
+    Each of the three pickers carries a tolerance, so a group with nothing
+    under the cursor still answers with whatever of its own lies nearest the
+    pick ray. Whichever group is asked first therefore wins every grab - and
+    the corner grips were asked first, so every grab was a resize. Aiming at
+    the +Z arrow and pulling it up the screen scaled the model by 6.5 instead
+    of lifting it; a grip read from a point the user never clicked can equally
+    come out as no change at all, and a drag that records nothing puts the part
+    straight back where it started.
+
+    Marked ``renders``: there is no picker and no projection without a real
+    window, and under the offscreen platform every coordinate collapses to
+    zero.
+    """
+
+    @pytest.fixture
+    def aimed(self):
+        import os
+
+        import pyvista as pv
+        from PySide6.QtWidgets import QApplication, QMainWindow
+        from pyvistaqt import QtInteractor
+
+        if os.environ.get("QT_QPA_PLATFORM", "offscreen") == "offscreen":
+            pytest.skip(
+                "needs a real window system: an embedded VTK render window gets "
+                "no surface, and therefore no size, under Qt's offscreen "
+                "platform - every coordinate collapses to zero. Run it with "
+                "QT_QPA_PLATFORM=windows pytest -m renders"
+            )
+
+        app = QApplication.instance() or QApplication([])
+        frame = QMainWindow()
+        viewport = QtInteractor(frame)
+        frame.setCentralWidget(viewport)
+        frame.resize(1000, 800)
+        frame.show()
+        _settle(app)
+
+        bounds = (-20.0, 20.0, -15.0, 15.0, 0.0, 40.0)
+        actor = viewport.add_mesh(pv.Box(bounds=bounds))
+        handles = DragHandles(viewport, actor, bounds, lambda _: None)
+        viewport.view_isometric()
+        viewport.reset_camera()
+        # Zoomed out until the gizmo is small on screen, which is the ordinary
+        # case and not an awkward one: a part is framed inside a 256 mm printer,
+        # not filling the window. It is also the only way this reproduces - a
+        # tolerance measured against the window is a large distance in a scene
+        # that far away, so every picker answers for every press and the part
+        # sees whichever group was asked first.
+        viewport.camera.zoom(GIZMO_WELL_AWAY)
+        viewport.render()
+        _settle(app)
+
+        yield _Aim(app, viewport, handles)
+
+        handles.stop()
+        frame.close()
+        _settle(app)
+
+    @pytest.mark.renders
+    def test_aiming_at_an_arrow_grabs_that_arrow(self, aimed):
+        """The regression, stated exactly. Every one of them, by identity."""
+        for index, arrow in enumerate(aimed.handles._arrows):
+            grabbed = aimed.at(arrow.GetCenter())
+            assert grabbed is arrow, (
+                f"aiming at the {'XYZ'[index]} arrow grabbed {aimed.name(grabbed)} - "
+                "a drag meant to move the part would resize it"
+            )
+
+    @pytest.mark.renders
+    def test_no_arrow_is_ever_answered_by_a_corner_grip(self, aimed):
+        """The same property from the other side, and the sharper one.
+
+        A move read as a resize is not a near miss: it scales the model by
+        whatever the diagonal happened to measure from a point nobody clicked.
+        """
+        for arrow in aimed.handles._arrows:
+            assert aimed.at(arrow.GetCenter()) not in aimed.handles._corners
+
+    @pytest.mark.renders
+    def test_aiming_at_a_ring_grabs_that_ring(self, aimed):
+        """Arrows win where both are under the cursor - turning must still work.
+
+        The arrows finish inside the rings on purpose, so a click out on a ring
+        is clear of all of them and there is nothing for the order to take away.
+        """
+        for index, ring in enumerate(aimed.handles._rings):
+            # Out at 45 degrees in the ring's own plane, where no arrow runs.
+            across, up = _AXIS_VECTORS[(index + 1) % 3], _AXIS_VECTORS[(index + 2) % 3]
+            radius = aimed.radius_of(ring, (index + 1) % 3)
+            corner = np.sqrt(0.5)
+            grabbed = aimed.at(radius * corner * across + radius * corner * up)
+            assert grabbed is ring, (
+                f"aiming at the {'XYZ'[index]} ring grabbed {aimed.name(grabbed)}"
+            )
+
+    @pytest.mark.renders
+    def test_the_corner_grips_are_still_reachable(self, aimed):
+        """Resizing has to survive the reordering that fixed moving.
+
+        Not all eight: a grip whose centre sits behind an arrow on screen is
+        genuinely occluded at this camera angle, and answering with the arrow
+        in front of it is right. The rest must answer for themselves.
+        """
+        grips = aimed.handles._corners
+        theirs = [grip for grip in grips if aimed.at(grip.GetCenter()) is grip]
+
+        assert len(theirs) >= len(grips) - 1, (
+            f"only {len(theirs)} of {len(grips)} corner grips could be grabbed at all"
+        )
+
+
+_AXIS_VECTORS = (
+    np.array([1.0, 0.0, 0.0]),
+    np.array([0.0, 1.0, 0.0]),
+    np.array([0.0, 0.0, 1.0]),
+)
+
+
+class _Aim(NamedTuple):
+    """A live window, and the means to ask what is under a world point."""
+
+    app: object
+    viewport: object
+    handles: DragHandles
+
+    def at(self, world) -> object:
+        """Whichever handle a press at this world point would grab."""
+        import vtk
+
+        coordinate = vtk.vtkCoordinate()
+        coordinate.SetCoordinateSystemToWorld()
+        coordinate.SetValue(*(float(value) for value in world))
+        x, y = coordinate.GetComputedDoubleDisplayValue(self.viewport.renderer)
+
+        width, height = self.viewport.render_window.GetSize()
+        assert 0 <= x <= width and 0 <= y <= height, (
+            f"({x:.0f}, {y:.0f}) is off a {width}x{height} window, so this measures nothing"
+        )
+        return self.handles._handle_under(_At((round(x), round(y))))
+
+    def radius_of(self, ring, axis: int) -> float:
+        """How far out a ring reaches, measured across its own plane."""
+        return max(abs(value) for value in ring.GetBounds()[axis * 2 : axis * 2 + 2])
+
+    def name(self, handle) -> str:
+        for what, group in (
+            ("arrow", self.handles._arrows),
+            ("corner grip", self.handles._corners),
+            ("ring", self.handles._rings),
+        ):
+            if handle in group:
+                return f"{what} {group.index(handle)}"
+        return "nothing"
+
+
+class _At(NamedTuple):
+    """Just enough of an interactor to say where the cursor is."""
+
+    position: tuple[int, int]
+
+    def GetEventPosition(self):  # noqa: N802 - VTK's spelling
+        return self.position

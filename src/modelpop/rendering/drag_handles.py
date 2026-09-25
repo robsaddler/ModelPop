@@ -101,11 +101,18 @@ RING_MARGIN = 1.22
 """How far outside the part the rings sit. The arrows finish inside them, so a
 click meant for an arrow can never land on a ring."""
 
-# A drag that starts within this many pixels of a handle counts as being on it.
-# Generous, because a thin arrow is hard to hit exactly and the alternative -
-# clicking and nothing happening - is the complaint this whole module exists to
-# answer.
-PICK_TOLERANCE = 0.01
+# How close to a handle a press has to land to count as being on it, **in
+# screen pixels**. Generous enough that a thin arrow is not a test of aim, and
+# the same however far away the part is - which is the point.
+#
+# VTK's own tolerance is a fraction of the render window's diagonal, so a fixed
+# one is a different number of pixels on every window and, worse, a different
+# distance in the scene at every zoom. Set to 0.01 it was about nineteen pixels
+# here: fine on a part filling the view, and a third of the whole gizmo once
+# the part was small enough to sit inside a 256 mm printer. At that size every
+# picker answered for every press and which handle you got was decided by the
+# order they were asked in, not by where you clicked.
+GRAB_PIXELS = 6.0
 
 _AXES: tuple[NDArray[np.float64], ...] = (
     np.array([1.0, 0.0, 0.0]),
@@ -391,7 +398,6 @@ class DragHandles:
         from vtkmodules.vtkRenderingCore import vtkCellPicker
 
         picker = vtkCellPicker()
-        picker.SetTolerance(PICK_TOLERANCE)
         picker.InitializePickList()
         for handle in only:
             picker.AddPickList(handle)
@@ -482,22 +488,54 @@ class DragHandles:
     def _handle_under(self, interactor: Any) -> Any:
         """Whichever handle the cursor is over, or ``None``.
 
-        Asked in the order the handles sit: corners on the part itself, then
-        the arrows outside it, then the rings outside those. Where two overlap
-        on screen the nearer one is what was aimed at, and grabbing a ring when
-        you meant a corner is the kind of thing that gets a gizmo called broken.
+        **Arrows first, then the corner grips, then the rings** - move beats
+        resize beats turn. The order is the whole of the logic, and it has to
+        be, because each picker carries a tolerance: a group with nothing under
+        the cursor still answers with whatever of its own lies nearest the pick
+        ray. So whichever group is asked first effectively wins every grab.
+
+        The corner grips were asked first, and so took every one. That is the
+        bug behind "I try to move it and it resizes", and behind the snap-back
+        that followed it: the grip was read from a point the user never
+        clicked, so the drag came out as either a nonsense scale or no change
+        at all - and a drag that records nothing puts the part straight back
+        where it started. Measured on a real window: a press on the +Z arrow's
+        own centre came back as corner grip one, and pulling it up the screen
+        scaled the model by 6.5 instead of lifting it.
+
+        Two other orderings were tried and are worse. Screen distance decides
+        nothing: a tolerance hit reports its position on the pick ray, which
+        projects back to exactly the cursor, so every group measures zero.
+        True depth is geometrically right and reads as broken - a ring is a
+        thin band at less than half opacity, and when one passes in front of a
+        solid corner grip the grip is still what the user aimed at.
         """
         x, y = interactor.GetEventPosition()
+        tolerance = self._grab_tolerance()
         for picker, group in (
-            (self._corner_picker, self._corners),
             (self._arrow_picker, self._arrows),
+            (self._corner_picker, self._corners),
             (self._ring_picker, self._rings),
         ):
+            picker.SetTolerance(tolerance)
             picker.Pick(float(x), float(y), 0.0, self._plotter.renderer)
             picked = picker.GetActor()
             if picked in group:
                 return picked
         return None
+
+    def _grab_tolerance(self) -> float:
+        """``GRAB_PIXELS`` expressed the way VTK wants it.
+
+        A fraction of the render window's diagonal, recomputed on every press
+        because the window is resizable and a stale figure is the wrong number
+        of pixels.
+        """
+        width, height = self._plotter.render_window.GetSize()
+        diagonal = float(np.hypot(width, height))
+        if diagonal < 1.0:
+            return 0.005
+        return GRAB_PIXELS / diagonal
 
     # ------------------------------------------------------------- the events
 

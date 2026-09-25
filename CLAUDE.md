@@ -187,6 +187,21 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    once the run is over. Confirmed pre-existing and independent of any one test file, so judge that
    run by its reported results, not its exit code.
 
+20. **A VTK picker's tolerance is a fraction of the window, not a number of pixels** - and a
+   picker restricted to a pick list *always* answers if anything of its own is within it, however
+   far from the cursor. Three pickers each set to 0.01 was about nineteen pixels here: fine on a
+   part filling the view, a third of the whole gizmo once the part was framed inside a 256 mm
+   printer. Every picker then answered every press, so which handle you got was decided by the
+   order they were asked in. The corner grips were asked first, so *every* grab was a resize:
+   pulling the +Z arrow up scaled the model by 6.5 instead of lifting it, and a grip read from a
+   point nobody clicked just as often recorded nothing at all - which puts the part straight back
+   where it started, and is what "I move it, let go, and it snaps back" was. Fixed twice over: the
+   tolerance is now derived from the render window so it is a true pixel radius, and the order is
+   arrows, then grips, then rings - move beats resize beats turn. Screen distance cannot break the
+   tie; a tolerance hit reports its position on the pick ray, which projects back onto the cursor,
+   so every group measures zero. True depth can, and is wrong: a ring is a thin band at under half
+   opacity, and when one passes in front of a solid grip the grip is still what was aimed at.
+
 ## Style
 
 Type hints everywhere, `mypy --strict`. `ruff` for lint and format. Dataclasses (frozen where they are
