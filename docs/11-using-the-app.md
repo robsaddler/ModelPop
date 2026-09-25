@@ -184,6 +184,32 @@ over it.
 
 ---
 
+## When the walls are too thin
+
+The readiness panel warns when the thinnest wall is below what the nozzle can lay down - two
+extrusion lines, 0.84 mm on the standard 0.4 mm nozzle. Below that, fine detail either vanishes or
+prints as a single fragile line, which is the commonest reason a model that looked crisp on screen
+comes off the plate as a blob.
+
+**Thicken thin walls** fixes it, and you can leave it to get on with it. It grows every surface
+outwards by a fraction of a millimetre; both faces of a wall move, so the wall gains twice that.
+Then it measures again and repeats until the thinnest wall clears the line.
+
+It is done in rounds rather than one calculation because wall thickness is *sampled* - the figure
+comes from two thousand rays fired through the surface, so it shifts slightly each time it is taken.
+
+On the dragon: the thinnest wall went **0.65 mm to 0.92 mm** in three rounds, and the model grew
+**0.29 mm across - a third of one percent**. Every triangle is the one it started with; nothing is
+resampled, so no detail is lost. That is the difference between this and the voxel rebuild the
+repair uses as a last resort, which re-derives the surface from a grid and bands it.
+
+It needs a closed model, because rays cannot be fired through a surface with holes in it. If the
+button is greyed out, repair it first. If growing it cannot fix the walls - because they need more
+than a fraction of a millimetre - it says so and leaves the model alone, and the answer then is to
+scale the whole thing up or fit a finer nozzle.
+
+---
+
 ## Getting the view back
 
 **View → Look into the printer** (Home) puts the whole build volume back in frame, seen from

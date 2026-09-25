@@ -313,6 +313,24 @@ class WorkspaceViewModel:
             doing="Repairing the model - a detailed one takes a minute or more",
         )
 
+    @property
+    def can_thicken(self) -> bool:
+        """Whether there are thin walls worth doing anything about."""
+        report = self._state.readiness
+        if report is None or self._busy:
+            return False
+        return any(f.fix_stage == "thickness" for f in report.findings)
+
+    def thicken(self) -> None:
+        """Grow the thin walls until the nozzle can lay them down."""
+        self._run(
+            lambda: self._workspace.thicken_until_printable(self._state),
+            done="Thickened the thin walls",
+            failed="Could not thicken the walls",
+            describe_success=_how_thick_now,
+            doing="Thickening the thin walls - measured by ray casting, so this takes a moment",
+        )
+
     def prepare_for_bed(self) -> None:
         """Clean up and place the model on the bed."""
         self._run(
@@ -644,3 +662,19 @@ class WorkspaceViewModel:
     def _notify(self, notification: Notification) -> None:
         for listener in self._notification_listeners:
             listener(notification)
+
+
+def _how_thick_now(state: WorkspaceState) -> str:
+    """What the walls measure now, which is the only thing worth reporting.
+
+    The number is the point. "Thickened the thin walls" could mean anything;
+    "the thinnest wall is now 0.89 mm" is checkable against the warning that
+    prompted it.
+    """
+    report = state.readiness
+    if report is None:
+        return "Thickened the thin walls."
+    still_thin = [f for f in report.findings if f.fix_stage == "thickness"]
+    if still_thin:
+        return f"Thickened the thin walls, but they are still thin. {still_thin[0].message}"
+    return "Thickened the thin walls - they are thick enough to print now."

@@ -78,6 +78,14 @@ class MeshOps(Protocol):
         """Merge duplicate vertices, drop degenerate faces and tiny islands."""
         ...
 
+    def thicken(self, mesh: Mesh, by: Length) -> Result[Mesh]:
+        """Grow every surface outwards, so a thin wall becomes a thicker one.
+
+        A wall gains twice the distance given, because both of its faces move.
+        Must refuse rather than return a mesh that stopped being a solid.
+        """
+        ...
+
     def decimate(self, mesh: Mesh, target_triangles: int) -> Result[Mesh]:
         """Reduce the triangle count while preserving the silhouette."""
         ...

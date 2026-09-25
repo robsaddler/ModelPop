@@ -6,6 +6,7 @@ Everything it calls is testable without a display.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -84,6 +85,11 @@ CLICK_SLOP_PIXELS = 4
 # How much room the side panel starts with, and the least it may be dragged to.
 # The CAD tools need a shade over 600 to show a row without cutting the end off
 # it; below the minimum the panel scrolls rather than losing anything.
+# How long an answer holds the status bar against the ambient descriptions that
+# follow it. Long enough to read a sentence, short enough that the bar goes back
+# to saying what is on the plate.
+ANSWER_STAYS_MS = 8000
+
 PANEL_WIDTH = 640
 PANEL_LEAST_WIDTH = 300
 
@@ -210,6 +216,14 @@ class MainWindow(QMainWindow):
         self._bringing_in_a_new_model = False
         # True between turning an object and putting it back on the plate.
         self._reseat_when_it_settles = False
+        # True while the scene is catching up with a change the workspace made,
+        # so its outcome does not paint over what the user was told.
+        self._rework_is_bookkeeping = False
+        # The last answer the user was given, and when. Ambient descriptions do
+        # not replace it while it is fresh, and it goes back up when the work it
+        # set off finishes. See _on_notification.
+        self._answer = ""
+        self._answered_at = 0.0
         # True while the lock checkboxes are being made exclusive, so their
         # own toggles do not run this again.
         self._settling_locks = False
@@ -292,12 +306,19 @@ class MainWindow(QMainWindow):
         side.addWidget(self._variants)
 
         self._repair_button = QPushButton("Repair")
+        self._thicken_button = QPushButton("Thicken thin walls")
+        self._thicken_button.setToolTip(
+            "Grow every surface out by a fraction of a millimetre, until the thinnest "
+            "wall is thick enough for the nozzle. Both faces of a wall move, so it "
+            "gains twice that - and the model itself barely changes."
+        )
         self._resize_button = QPushButton("Resize...")
         self._prepare_button = QPushButton("Place on bed")
         self._simplify_button = QPushButton(f"Simplify to {DEFAULT_TRIANGLE_BUDGET // 1000}k")
         self._slice_button = QPushButton("Slice")
         for button in (
             self._repair_button,
+            self._thicken_button,
             self._resize_button,
             self._prepare_button,
             self._simplify_button,
@@ -800,6 +821,9 @@ class MainWindow(QMainWindow):
         self._repair_here_action = self._scene_menu.addAction("Re&pair it")
         self._repair_here_action.triggered.connect(self._view_model.repair)
 
+        self._thicken_here_action = self._scene_menu.addAction("&Thicken thin walls")
+        self._thicken_here_action.triggered.connect(self._view_model.thicken)
+
         self._simplify_here_action = self._scene_menu.addAction("&Simplify it")
         self._simplify_here_action.triggered.connect(
             lambda: self._view_model.simplify(DEFAULT_TRIANGLE_BUDGET)
@@ -865,6 +889,7 @@ class MainWindow(QMainWindow):
             action.setEnabled(a_part)
 
         self._repair_here_action.setEnabled(a_mesh and self._view_model.can_repair)
+        self._thicken_here_action.setEnabled(a_mesh and self._view_model.can_thicken)
         self._simplify_here_action.setEnabled(a_mesh)
 
     def _open_resize_panel(self) -> None:
@@ -1023,6 +1048,7 @@ class MainWindow(QMainWindow):
         self._edit_button.clicked.connect(self._edit_by_description)
         self._how_button.clicked.connect(self._show_run_log)
         self._repair_button.clicked.connect(self._view_model.repair)
+        self._thicken_button.clicked.connect(self._view_model.thicken)
         self._resize_button.clicked.connect(self._resize)
         self._prepare_button.clicked.connect(self._view_model.prepare_for_bed)
         self._simplify_button.clicked.connect(
@@ -1381,7 +1407,13 @@ class MainWindow(QMainWindow):
             self._scene.start_dragging(self._dragged, self._dragging)
 
         self.setWindowTitle(f"ModelPop - {state.title}")
-        self.statusBar().showMessage(state.describe())
+        if not self._just_answered():
+            # A state description is ambient - what is on the plate, how big it
+            # is. An answer is a reply to something the user asked for, and it
+            # was being painted over a beat later by the scene catching up:
+            # "Thickened the thin walls - they are thick enough to print now"
+            # lasted until the rebuild landed and then became a triangle count.
+            self.statusBar().showMessage(state.describe())
 
         self._findings.clear()
         if report is None:
@@ -1409,6 +1441,9 @@ class MainWindow(QMainWindow):
         """Enable only what the current state actually allows."""
         state = self._view_model.state
         self._repair_button.setEnabled(self._view_model.can_repair)
+        # Only offered when there is actually a thin wall to fix, so the button
+        # is an answer to the warning above it rather than a thing to try.
+        self._thicken_button.setEnabled(self._view_model.can_thicken)
         self._resize_button.setEnabled(state.has_model)
         self._prepare_button.setEnabled(state.has_model)
         self._simplify_button.setEnabled(state.has_model)
@@ -1462,7 +1497,13 @@ class MainWindow(QMainWindow):
             self._bringing_in_a_new_model = False
             self._modelling.place_mesh(mesh, _where_it_came_from_briefly(state))
         elif self._modelling.is_a_whole_mesh:
-            # Repaired or simplified: the same object, reworked.
+            # Repaired, simplified or thickened: the same object, reworked. The
+            # scene is catching up with something the user already asked for and
+            # has already been told about, so its own outcome is bookkeeping -
+            # and must not paint over the answer. "Thickened the thin walls -
+            # they are thick enough to print now" was being replaced by "Rework
+            # the model" a beat later, which is the useful half lost.
+            self._rework_is_bookkeeping = True
             self._modelling.rework_selected(mesh, "Rework the model")
 
     def _draw_scene(self, *, has_problems: bool = False, fallback: object = None) -> None:
@@ -1542,6 +1583,14 @@ class MainWindow(QMainWindow):
         model is untouched and still correct, so interrupting the user with a
         modal would overstate it.
         """
+        if self._rework_is_bookkeeping and not outcome.refused:
+            # The scene catching up with a change the user has already been told
+            # about. Silent, so the answer stays on screen.
+            self._rework_is_bookkeeping = False
+            self._save_project_action.setEnabled(self._modelling.can_save)
+            return
+        self._rework_is_bookkeeping = False
+
         message = f"{outcome.message}. {outcome.detail}" if outcome.detail else outcome.message
         # How long it took is on the clock at the end of the status bar now,
         # for every operation. It used to be appended here and nowhere else,
@@ -1562,7 +1611,9 @@ class MainWindow(QMainWindow):
         self._save_project_action.setEnabled(self._modelling.can_save)
 
     def _on_notification(self, notification: Notification) -> None:
-        self.statusBar().showMessage(notification.message, 8000)
+        self.statusBar().showMessage(notification.message, ANSWER_STAYS_MS)
+        self._answer = notification.message
+        self._answered_at = time.monotonic()
         if notification.is_error:
             QMessageBox.warning(
                 self, "ModelPop", f"{notification.message}\n\n{notification.detail}"
@@ -1579,6 +1630,10 @@ class MainWindow(QMainWindow):
         """
         self._say_what_is_happening()
 
+    def _just_answered(self) -> bool:
+        """Whether the user was told something too recently to paint over."""
+        return (time.monotonic() - self._answered_at) * 1000.0 < ANSWER_STAYS_MS
+
     def _say_what_is_happening(self) -> None:
         """Put whatever is running in the status bar, or clear the cursor."""
         doing = self._modelling.doing or self._view_model.doing
@@ -1587,6 +1642,13 @@ class MainWindow(QMainWindow):
         # The combined state of both view-models, so one job finishing while
         # another still runs neither stops the clock nor restarts it.
         self._how_long.busy(busy, doing)
+        if not busy and self._just_answered():
+            # The work that followed the answer has finished, so the answer is
+            # the current truth again. Without this the bar is left holding
+            # "Rework the model..." - the scene's own bookkeeping, and the last
+            # thing anybody wants to read after asking for something else.
+            self.statusBar().showMessage(self._answer, ANSWER_STAYS_MS)
+            return
         if busy and doing:
             self.statusBar().showMessage(f"{doing}...")
             # Painted now, not when the event loop next gets a turn. This is

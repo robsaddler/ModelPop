@@ -109,6 +109,21 @@ def check_simplify() -> str:
     return f"decimation works ({mesh.triangle_count} -> {reduced.unwrap().triangle_count})"
 
 
+def check_thickening() -> str:
+    """Growing a surface outwards, which is how thin walls are fixed."""
+    from modelpop.domain.units import Length
+    from modelpop.mesh import TrimeshOps
+
+    ops = TrimeshOps()
+    grown = ops.thicken(a_cube(), Length.mm(0.25))
+    if not grown.ok:
+        return f"thickening failed: {grown.detail}"
+    got = grown.unwrap().bounds.height.millimetres
+    if abs(got - 10.5) > 0.05:
+        return f"thickening is wrong: a 10 mm cube grown 0.25 mm each side came out {got:.2f}"
+    return "thickening works"
+
+
 def check_booleans() -> str:
     """Manifold booleans, which cutting and merging parts depend on."""
     from modelpop.domain.mesh import Mesh
@@ -244,6 +259,7 @@ CHECKS: tuple[tuple[str, Callable[[], str]], ...] = (
     ("repair", check_repair),
     ("simplify", check_simplify),
     ("booleans", check_booleans),
+    ("thickening", check_thickening),
     ("ray casting", check_ray_casting),
     ("readiness", check_readiness),
     ("detail rescue", check_detail_rescue),
