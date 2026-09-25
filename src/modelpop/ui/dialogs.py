@@ -6,6 +6,7 @@ The logic they trigger is tested without any of this.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
@@ -36,7 +37,7 @@ from modelpop.application.mesh_generation_ports import (
 )
 from modelpop.application.workspace import MAX_VARIANTS
 from modelpop.domain.photo_scale import PhotoScale
-from modelpop.domain.printer import PrinterConnection
+from modelpop.domain.printer import PrinterConnection, PrinterProfile
 from modelpop.domain.units import Length
 from modelpop.printing import ACCESS_CODE_NAME, HOST_NAME, SERIAL_NAME
 from modelpop.repositories import (
@@ -87,6 +88,8 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         generation_status: str = "",
         graphics_status: str = "",
+        printers: Sequence[PrinterProfile] = (),
+        chosen_model: str = "",
     ) -> None:
         """Build the dialog around the current settings.
 
@@ -100,8 +103,13 @@ class SettingsDialog(QDialog):
             graphics_status: which card the viewport is drawing on. Passed in
                 for the same reason, and because only the live window has a
                 graphics context to ask.
+            printers: every printer model to offer, read from the slicer's own
+                installed profiles.
+            chosen_model: the model already picked, or empty for automatic.
         """
         super().__init__(parent)
+        self._printers = tuple(printers)
+        self._chosen_model = chosen_model
         self._secrets = secrets
         self._settings = settings
         self._generation_status = generation_status
@@ -199,6 +207,18 @@ class SettingsDialog(QDialog):
         group = QGroupBox("The printer")
         form = QFormLayout(group)
 
+        # Which model, because a printer does not report how big its bed is -
+        # there is no such field in anything it sends. The size comes from
+        # knowing the model, and the model comes from a code the printer
+        # announces or, failing that, from here.
+        self._model_box = QComboBox()
+        self._model_box.addItem("Recognise it automatically", "")
+        for profile in self._printers:
+            self._model_box.addItem(profile.model, profile.model)
+        chosen = self._model_box.findData(self._chosen_model)
+        self._model_box.setCurrentIndex(max(0, chosen))
+        form.addRow("Model", self._model_box)
+
         self._printer_fields: dict[str, QLineEdit] = {}
         for name, label, secret in (
             (HOST_NAME, "Address", False),
@@ -229,15 +249,26 @@ class SettingsDialog(QDialog):
         form.addRow(self._send_for_real)
 
         note = QLabel(
-            "All three are on the printer's own network screen. Leave the box "
-            "unticked and ModelPop describes what it would send without sending "
-            "it, which is how it behaves until you say otherwise. LAN mode only: "
-            "nothing goes through a Bambu account or a server on the internet."
+            "The address, serial and access code are on the printer's own network "
+            "screen. Leave the box unticked and ModelPop describes what it would "
+            "send without sending it, which is how it behaves until you say "
+            "otherwise. LAN mode only: nothing goes through a Bambu account or a "
+            "server on the internet. "
+            "Left on automatic, the model is taken from what the printer calls "
+            "itself when it answers, and the nozzle from what it says is fitted. "
+            "Pick one here to settle it yourself - which is also what stands when "
+            "the printer is switched off."
         )
         note.setWordWrap(True)
         note.setStyleSheet(_HINT_STYLE)
         form.addRow(note)
         return group
+
+    @property
+    def printer_model(self) -> str:
+        """The model the user picked, or empty for "work it out"."""
+        picked = self._model_box.currentData()
+        return str(picked) if picked else ""
 
     @property
     def printer_connection(self) -> PrinterConnection:

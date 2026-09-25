@@ -208,6 +208,38 @@ class Workspace:
         """The printer everything is assessed against."""
         return self._printer
 
+    def now_printing_with(self, printer: PrinterProfile) -> bool:
+        """Work to a different printer from here on.
+
+        Called when the machine turns out not to be the one assumed - a
+        different model, or more often a different nozzle, which is the one
+        thing about a printer that changes without anybody telling the
+        software. It moves what counts as a wall too thin to print from 0.84 mm
+        to 1.26 on a 0.6, so a readiness report taken against the old figure is
+        simply wrong.
+
+        Every remembered measurement goes with it, and that is not optional:
+        ``_assess`` keeps its answer against the shape alone, on the stated
+        grounds that the printer never changes. It does now, so the note in
+        that docstring is honoured here.
+
+        Holds no state of its own, so re-assessing what is open is the
+        caller's business - see ``assess_again``. Says whether anything
+        actually changed, because re-measuring a million triangles for a
+        printer that is the same printer would be a second or two of nothing.
+        """
+        if printer == self._printer:
+            return False
+        self._printer = printer
+        self._measured = None
+        return True
+
+    def assess_again(self, state: WorkspaceState) -> WorkspaceState:
+        """The same model, judged against the printer as it now stands."""
+        if state.mesh is None:
+            return state
+        return replace(state, readiness=self._assess(state.mesh))
+
     # ------------------------------------------------------------------- open
 
     def open(self, path: Path) -> Result[WorkspaceState]:

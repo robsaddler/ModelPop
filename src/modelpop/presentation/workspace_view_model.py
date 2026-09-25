@@ -304,6 +304,17 @@ class WorkspaceViewModel:
             doing=f"Opening {path.name}",
         )
 
+    def now_printing_with(self, printer: PrinterProfile) -> WorkspaceState | None:
+        """Work to a different printer, and re-assess what is open against it.
+
+        Returns the new state when there was something to re-assess, so the
+        window can show it, and ``None`` when nothing changed.
+        """
+        if not self._workspace.now_printing_with(printer) or self._state.mesh is None:
+            return None
+        self._set_state(self._workspace.assess_again(self._state))
+        return self._state
+
     def repair(self) -> None:
         """Make the model watertight."""
         self._run(

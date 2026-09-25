@@ -21,6 +21,7 @@ import pyvista as pv
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.units import Unit
+from modelpop.domain.which_printer import WhichPrinter
 from modelpop.presentation.sectioning import SectionPlane
 from modelpop.rendering.drag_handles import AXIS_COLOURS, DragHandles
 from modelpop.rendering.turning import Turning
@@ -157,6 +158,10 @@ class ViewportScene:
         """
         self._plotter = plotter
         self._printer = printer or PrinterProfile.p2s()
+        # What is known about the printer and how it is known - live, remembered
+        # or merely set. The label says which, because a nozzle size from three
+        # weeks ago shown as current is the one somebody would act on.
+        self._known = WhichPrinter(profile=self._printer)
         self._model_actor: Any = None
         self._locator: Any = None
         self._measure_actors: list[Any] = []
@@ -326,16 +331,28 @@ class ViewportScene:
         as scenery, and a new model appearing half inside it looks like a bug
         rather than a shape that has not been put on the bed yet.
         """
-        width, depth, height = self._printer.envelope
         self._plotter.add_text(
-            f"{self._printer.model}\n"
-            f"{width.format(places=0)} x {depth.format(places=0)} x "
-            f"{height.format(places=0)} build volume",
+            self._known.describe(),
             position="upper_left",
             font_size=11,
             color=ENVELOPE_COLOUR,
             name="printer-label",
         )
+
+    def now_printing_with(self, known: WhichPrinter) -> None:
+        """Be told what the printer turned out to be.
+
+        The label follows it, and so does the build volume - a different model
+        is a different bed, and drawing a 256 mm box around an A1 mini would be
+        a lie the whole application then works from.
+        """
+        changed_size = known.profile.envelope != self._printer.envelope
+        self._known = known
+        self._printer = known.profile
+        if changed_size:
+            self._draw_build_volume()
+            self.show_axes(self._axes_shown)
+        self._name_the_printer()
 
     def show_mesh(self, mesh: Mesh | None, *, has_problems: bool = False) -> None:
         """Replace whatever model is displayed.

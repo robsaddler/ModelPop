@@ -404,7 +404,25 @@ def read_status(report: dict[str, Any]) -> PrinterStatus:
         minutes_remaining=int(_number(report.get("mc_remaining_time"))),
         nozzle_celsius=_number(report.get("nozzle_temper")),
         bed_celsius=_number(report.get("bed_temper")),
+        nozzle_mm=_number(report.get("nozzle_diameter")),
+        model_id=_model_id(report),
     )
+
+
+def _model_id(report: dict[str, Any]) -> str:
+    """The printer's code for itself, if this report carries one.
+
+    Several keys are tried because Bambu has not put it in the same place in
+    every firmware, and a printer that does not say is an ordinary outcome -
+    the configured model answers for it. Only *recognised* codes matter
+    downstream, so a stray string here costs nothing: the catalogue simply
+    does not know it and the setting stands.
+    """
+    for key in ("printer_type", "dev_model_name", "model_id", "device_model"):
+        said = report.get(key)
+        if isinstance(said, str) and said.strip():
+            return said.strip()
+    return ""
 
 
 def _number(value: Any) -> float:

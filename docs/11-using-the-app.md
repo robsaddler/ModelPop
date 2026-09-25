@@ -184,6 +184,37 @@ over it.
 
 ---
 
+## Which printer it thinks you have
+
+The label at the top left of the viewport names the printer and its build volume, and says where
+those figures came from.
+
+**The nozzle comes from the printer**, because it is the one thing that changes without anybody
+telling the application - and it decides what counts as a wall too thin to print. Two extrusion
+lines: 0.84 mm on a 0.4 mm nozzle, 1.26 mm on a 0.6. The thin-wall warning and *Thicken thin walls*
+are both aimed at that figure, so a swapped nozzle nobody mentioned makes both of them wrong.
+
+**The build volume cannot come from the printer.** There is no such field in anything it sends. It
+comes from knowing which model it is, and the model is either recognised from a code the printer
+announces about itself (`N7` is a P2S, `BL-P001` an X1 Carbon) or set by you in
+**File → Settings → The printer → Model**. Left on *Recognise it automatically*, your choice is
+whatever the printer says; pick one and it stands whatever the printer says.
+
+The sizes themselves are read from **Bambu Studio's own installed profiles**, which is the same
+source the slicer works from, so a model Bambu ships next year needs no change here. Worth knowing:
+every P1 and X1 is **250 mm** tall, not 256 - easy to get wrong from memory, and wrong in the
+direction that passes a 254 mm model as printable.
+
+**When the printer is off, the last thing it said stands**, and the label says so: *"last seen 3
+days ago"*. A reading more than twelve hours old is shown as remembered rather than current, because
+a figure from last week presented as live is the one you would act on. With nothing ever heard from
+the printer it says *"not confirmed with the printer"* instead.
+
+Changing printer re-measures whatever is open against it - a different nozzle is a different verdict
+on the same model.
+
+---
+
 ## Which way up to print it
 
 **Lay it down to print**, on the right-click menu, turns the object to the way up that overhangs

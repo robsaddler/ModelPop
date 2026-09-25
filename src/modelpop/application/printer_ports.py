@@ -134,6 +134,19 @@ class PrinterStatus:
     bed_celsius: float = 0.0
     detail: str = ""
 
+    nozzle_mm: float = 0.0
+    """The nozzle actually fitted, in millimetres. 0.0 when it did not say.
+
+    Worth having because it is the one thing about the printer that changes
+    without anybody telling the application. It decides what counts as a wall
+    too thin to print - two extrusion lines, 0.84 mm on a 0.4 and 1.26 on a
+    0.6 - so the thin-wall warning and the thickening that answers it are both
+    aimed at the wrong number if this is assumed."""
+
+    model_id: str = ""
+    """The code the printer uses for itself: ``N7`` is a P2S. Empty when the
+    report did not carry one, which is when the configured model is used."""
+
     def describe(self) -> str:
         """A line for the status bar."""
         if self.state is PrinterState.UNREACHABLE:

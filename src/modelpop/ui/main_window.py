@@ -7,6 +7,7 @@ Everything it calls is testable without a display.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,17 +39,22 @@ from modelpop.application.modelling import ModellingSession
 from modelpop.application.workspace import DEFAULT_TRIANGLE_BUDGET, Workspace, WorkspaceState
 from modelpop.domain.printer import PrinterConnection
 from modelpop.domain.readiness import Severity
+from modelpop.domain.which_printer import WhichPrinter, nearest_nozzle
 from modelpop.generation import edit_by_description
 from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
+from modelpop.printing.bambu_profiles import KnownPrinters, profiles_beside
+from modelpop.printing.bambu_slicer import find_bambu_studio
 from modelpop.projects import EXTENSION as PROJECT_EXTENSION
 from modelpop.rendering.turning import SIDEWAYS, UP_AND_DOWN
 from modelpop.rendering.viewport import ViewportScene
+from modelpop.repositories.printer_memory import JsonPrinterMemory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from modelpop.application.discovery_service import Discovery
+    from modelpop.application.printer_ports import PrinterStatus
     from modelpop.application.repository_ports import Download
 
 from modelpop.domain.placement import settle_onto_bed
@@ -131,6 +137,7 @@ class _WindowSignals(QObject):
     model_changed = Signal(object)
     kernel_answered = Signal()
     busy_changed = Signal(bool)
+    printer_answered = Signal(object)
 
 
 class MainWindow(QMainWindow):
@@ -224,6 +231,14 @@ class MainWindow(QMainWindow):
         # set off finishes. See _on_notification.
         self._answer = ""
         self._answered_at = 0.0
+        # Which printer this is, and how that is known. Loaded from what was
+        # remembered, refreshed whenever the printer answers, and written back
+        # so a machine that is switched off next time costs nothing.
+        self._printers = KnownPrinters(profiles_beside(find_bambu_studio()))
+        self._printer_memory = JsonPrinterMemory()
+        self._known_printer = self._printer_memory.load(
+            WhichPrinter(profile=self._printer), self._printers
+        )
         # True while the lock checkboxes are being made exclusive, so their
         # own toggles do not run this again.
         self._settling_locks = False
@@ -239,6 +254,12 @@ class MainWindow(QMainWindow):
         # rather than only while the measuring tool is.
         self._viewport.interactor.installEventFilter(self)
         self._recall_printer()
+        # What was remembered goes up straight away, so the label is right
+        # before the printer has been asked anything - and says it is
+        # remembered. Asking is queued rather than called: it is a network
+        # round trip, and the window should be on screen first.
+        self._show_which_printer()
+        QTimer.singleShot(0, self._ask_the_printer_what_it_is)
 
     def _recall_printer(self) -> None:
         """Take the printer's address back out of the credential store.
@@ -1069,6 +1090,7 @@ class MainWindow(QMainWindow):
         self._signals.state_changed.connect(self._on_state_changed)
         self._signals.notified.connect(self._on_notification)
         self._signals.busy_changed.connect(self._on_busy_changed)
+        self._signals.printer_answered.connect(self._on_printer_answered)
 
         self._modelling.on_outcome(self._signals.cad_outcome.emit)
         self._modelling.on_state(self._signals.model_changed.emit)
@@ -1374,6 +1396,73 @@ class MainWindow(QMainWindow):
         elif chosen is start:
             self._view_model.send_to_printer(start_now=True, for_real=True)
 
+    def _printer_model_chosen(self, model: str) -> None:
+        """Adopt the model the user picked in Settings, or go back to automatic.
+
+        Empty means "work it out from the printer", which is not the same as
+        "no printer": what is already known stays, it simply stops being an
+        answer the user gave and goes back to being one the printer did.
+        """
+        if model == self._known_printer.chosen:
+            return
+        profile = self._printers.named(model) if model else None
+        if profile is not None:
+            self._known_printer = self._known_printer.chosen_in_settings(profile)
+        else:
+            self._known_printer = replace(self._known_printer, chosen="")
+        self._printer_memory.save(self._known_printer)
+        self._show_which_printer()
+
+    def _ask_the_printer_what_it_is(self) -> None:
+        """Find out what is actually plugged in, off the interface thread.
+
+        Quietly. This runs on a settings change and at startup, and a printer
+        that is switched off is the ordinary case rather than something worth
+        a dialog - what it costs is that the label keeps saying "last seen",
+        which is exactly what it is for.
+        """
+        connection = self._view_model.printer_connection
+        if connection.problem is not None:
+            return
+
+        def ask() -> None:
+            answered = self._view_model.printer_status(connection)
+            if answered.ok:
+                self._signals.printer_answered.emit(answered.unwrap())
+
+        self._work(ask)
+
+    def _on_printer_answered(self, status: PrinterStatus) -> None:
+        """Take what the printer said about itself.
+
+        The nozzle matters most: it is the one thing that changes without
+        anybody telling the application, and it decides what counts as a wall
+        too thin to print - 0.84 mm on a 0.4, 1.26 on a 0.6. A model code it
+        does not recognise leaves the setting standing rather than replacing a
+        real answer with a shrug.
+        """
+        self._known_printer = self._known_printer.told_by_the_printer(
+            self._printers.recognise(status.model_id),
+            nearest_nozzle(status.nozzle_mm),
+        )
+        self._printer_memory.save(self._known_printer)
+        self._show_which_printer()
+
+    def _show_which_printer(self) -> None:
+        """Put what is known on the label, and work to the printer it implies.
+
+        The label is the least of it. The build volume decides what fits, and
+        the nozzle decides what counts as a wall too thin to print - so the
+        workspace is told as well, and anything already open is re-assessed
+        against the machine that is actually there.
+        """
+        self._printer = self._known_printer.profile
+        self._scene.now_printing_with(self._known_printer)
+        reassessed = self._view_model.now_printing_with(self._printer)
+        if reassessed is not None:
+            self._on_state_changed(reassessed)
+        self._viewport.render()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(
             self._secrets,
@@ -1381,14 +1470,18 @@ class MainWindow(QMainWindow):
             self,
             self._view_model.describe_mesh_generation(),
             self._scene.describe_renderer(),
+            self._printers.all(),
+            self._known_printer.chosen,
         )
         if dialog.exec():
             self._ai_settings = dialog.settings()
             self._view_model.ai_settings = self._ai_settings
             self._view_model.printer_connection = dialog.printer_connection
             self._send_for_real = dialog.send_for_real
+            self._printer_model_chosen(dialog.printer_model)
             self.statusBar().showMessage("Settings saved.", 5000)
             self._refresh_buttons()
+            self._ask_the_printer_what_it_is()
 
     def _generate(self) -> None:
         if not self._view_model.can_generate:
