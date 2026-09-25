@@ -148,6 +148,9 @@ class FakeSlicer:
     jobs: list[SliceJob] = field(default_factory=list)
     fail_with: str = ""
     fail_only_with_supports: bool = False
+    # Refuses the plate unless it is allowed to place the model itself, which
+    # is what Bambu Studio does with a model it cannot fit where it stands.
+    needs_arranging: bool = False
     emits_gcode: bool = False
 
     def is_available(self) -> bool:
@@ -158,7 +161,9 @@ class FakeSlicer:
 
     def slice(self, job: SliceJob) -> Result[SliceReport]:
         self.jobs.append(job)
-        if self.fail_only_with_supports and job.supports is not SupportType.NONE:
+        if (self.fail_only_with_supports and job.supports is not SupportType.NONE) or (
+            self.needs_arranging and not job.auto_arrange
+        ):
             return failure(
                 "Slicing failed",
                 "One of the plate is empty or has no object fully inside it.",
@@ -731,3 +736,89 @@ class TestMeasuringTheSameThingTwice:
         workspace.adopt(first.mesh)
 
         assert len(ops.inspected) == 3
+
+
+class TestAPlateTheSlicerRefuses:
+    """ "Slicing failed: one of the plate is empty or has no object fully inside
+    it - yet the dragon is fully inside and you place him on the bed too."
+
+    A refusal about the plate is worth trying to get past rather than handing
+    over as it stands. Two things cause it and each has its own way out: tree
+    supports enlarge the footprint, and the slicer will not always accept a
+    model where ModelPop put it.
+
+    Arranging is the last resort on purpose. ModelPop centres the model itself
+    and a slicer that moves it makes the viewport a lie - measured at 28 mm off
+    centre in both axes on a box written dead centre - so it is allowed only
+    when the alternative is no G-code at all, and it is always said out loud.
+    """
+
+    def workspace(self, slicer: FakeSlicer) -> Workspace:
+        return Workspace(FakeIO(), FakeOps(), slicer, PrinterProfile.p2s())
+
+    def sliced(self, slicer: FakeSlicer, tmp_path):
+        workspace = self.workspace(slicer)
+        state = workspace.open(Path("dragon.stl")).unwrap()
+        return workspace.slice(state, tmp_path)
+
+    def test_a_plate_it_will_only_take_arranged_is_still_sliced(self, tmp_path):
+        result = self.sliced(FakeSlicer(needs_arranging=True), tmp_path)
+
+        assert result.ok, f"it gave up instead of letting the slicer place it: {result.error}"
+
+    def test_being_moved_is_said_out_loud(self, tmp_path):
+        result = self.sliced(FakeSlicer(needs_arranging=True), tmp_path)
+        warnings = " ".join(result.unwrap().last_slice.warnings)
+
+        assert "moved the model" in warnings
+        assert "where you placed it" in warnings
+
+    def test_it_is_tried_only_after_dropping_the_supports(self, tmp_path):
+        """Losing supports costs less than losing the placement."""
+        slicer = FakeSlicer(fail_only_with_supports=True)
+        workspace = self.workspace(slicer)
+        state = workspace.open(Path("dragon.stl")).unwrap()
+        state = replace(state, readiness=None)
+
+        result = workspace.slice(state, tmp_path, supports=SupportType.TREE_AUTO)
+
+        assert result.ok
+        assert not any(job.auto_arrange for job in slicer.jobs), (
+            "it let the slicer move the model when dropping supports would have done"
+        )
+
+    def test_the_model_is_left_where_it_was_put_when_nothing_objects(self, tmp_path):
+        slicer = FakeSlicer()
+        self.sliced(slicer, tmp_path)
+
+        assert [job.auto_arrange for job in slicer.jobs] == [False]
+        assert [job.auto_orient for job in slicer.jobs] == [False]
+
+    def test_a_refusal_that_arranging_cannot_fix_is_still_a_refusal(self, tmp_path):
+        result = self.sliced(
+            FakeSlicer(fail_with="One of the plate is empty or has no object fully inside it."),
+            tmp_path,
+        )
+
+        assert not result.ok
+
+    def test_a_refusal_says_where_the_model_actually_was(self, tmp_path):
+        """ "The plate is empty" is not something anybody can act on.
+
+        It arrived against a model that was plainly on the plate, so the reply
+        has to carry the two numbers that settle it: where the model was
+        written, and how much plate there was.
+        """
+        result = self.sliced(
+            FakeSlicer(fail_with="One of the plate is empty or has no object fully inside it."),
+            tmp_path,
+        )
+
+        assert "written at x" in result.error
+        assert "256 mm x 256 mm x 256 mm plate" in result.error
+
+    def test_an_unrelated_failure_is_passed_through_untouched(self, tmp_path):
+        result = self.sliced(FakeSlicer(fail_with="the profile is missing"), tmp_path)
+
+        assert not result.ok
+        assert "written at x" not in result.error

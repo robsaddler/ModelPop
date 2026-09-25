@@ -525,27 +525,55 @@ class Workspace:
 
         sliced = self._slicer.slice(job)
 
-        # Enabling supports enlarges the effective footprint, and a large model
-        # that fits without them can be refused with them. Rather than handing
-        # the user an unexplained failure, drop the supports and say so.
-        if (
-            not sliced.ok
-            and wanted is not SupportType.NONE
-            and self._is_footprint_refusal(sliced.error)
-        ):
-            retried = self._slicer.slice(replace(job, supports=SupportType.NONE))
-            if retried.ok:
-                report = replace(
-                    retried.unwrap(),
-                    warnings=(
-                        *retried.unwrap().warnings,
-                        "Supports were turned off: with them the model no longer fitted "
-                        "the build plate. Scale it down slightly if you need them.",
-                    ),
-                )
-                return success(self._with_slice(state, report))
+        # A refusal about the plate is worth trying to get past rather than
+        # handing over as it stands. Two things can cause it and each has its
+        # own way out, tried in the order that costs the user least.
+        if not sliced.ok and self._is_footprint_refusal(sliced.error):
+            # Enabling supports enlarges the effective footprint, and a model
+            # that fits without them can be refused with them.
+            if wanted is not SupportType.NONE:
+                retried = self._slicer.slice(replace(job, supports=SupportType.NONE))
+                if retried.ok:
+                    return success(
+                        self._with_slice(
+                            state,
+                            _also_warning(
+                                retried.unwrap(),
+                                "Supports were turned off: with them the model no longer "
+                                "fitted the build plate. Scale it down slightly if you "
+                                "need them.",
+                            ),
+                        )
+                    )
+
+            # Letting the slicer place it. Normally it is not allowed to -
+            # ModelPop centres the model itself, and a slicer that moves it
+            # makes the viewport a lie - but a plate it refuses outright is
+            # worse than one it rearranged, so this is the last thing tried
+            # and it says plainly that the model was moved.
+            if not job.auto_arrange:
+                rearranged = self._slicer.slice(replace(job, auto_arrange=True))
+                if rearranged.ok:
+                    return success(
+                        self._with_slice(
+                            state,
+                            _also_warning(
+                                rearranged.unwrap(),
+                                "The slicer moved the model to make it fit the plate, so "
+                                "it will not print exactly where you placed it.",
+                            ),
+                        )
+                    )
 
         if not sliced.ok:
+            if self._is_footprint_refusal(sliced.error):
+                # "One of the plate is empty or has no object fully inside it"
+                # says nothing a user can act on, and it arrived against a model
+                # that was plainly on the plate. So say where the model actually
+                # was when it was handed over, and how big the plate is: if the
+                # geometry is fine those two numbers prove it, and the problem is
+                # somewhere else.
+                return failure(sliced.error, self._where_it_stood(state.mesh))
             return sliced  # type: ignore[return-value]
         return success(self._with_slice(state, sliced.unwrap()))
 
@@ -751,6 +779,26 @@ class Workspace:
             readiness=replace(base, findings=merged),
         )
 
+    def _where_it_stood(self, mesh: Mesh | None) -> str:
+        """Where the model was on the plate, and how much plate there was.
+
+        For a refusal that says only that the plate is empty. Measured on the
+        geometry as it was written out, not as it sits in the viewport, because
+        those are different coordinates and it is the written one the slicer
+        read.
+        """
+        if mesh is None:
+            return "There was no model to place."
+        box = self._place_on_bed(mesh).bounds
+        width, depth, height = self._printer.envelope
+        return (
+            f"The model was written at x {box.min_x:.0f}-{box.max_x:.0f} mm, "
+            f"y {box.min_y:.0f}-{box.max_y:.0f} mm, {box.height.format()} tall, "
+            f"on a {width.format(places=0)} x {depth.format(places=0)} x "
+            f"{height.format(places=0)} plate. The slicer refused it there and "
+            f"would not place it itself either."
+        )
+
     @staticmethod
     def _is_footprint_refusal(message: str) -> bool:
         """Whether the slicer refused the plate because nothing fitted on it."""
@@ -825,6 +873,11 @@ class Workspace:
         return seated.translated(
             centre_x / mesh.unit.millimetres, centre_y / mesh.unit.millimetres, 0.0
         )
+
+
+def _also_warning(report: SliceReport, said: str) -> SliceReport:
+    """The same report, carrying one more thing the user should know."""
+    return replace(report, warnings=(*report.warnings, said))
 
 
 def _and_rescued(note: str, depth_mm: float) -> str:
