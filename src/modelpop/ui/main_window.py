@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -197,6 +198,9 @@ class MainWindow(QMainWindow):
         self._bringing_in_a_new_model = False
         # True between turning an object and putting it back on the plate.
         self._reseat_when_it_settles = False
+        # True while the lock checkboxes are being made exclusive, so their
+        # own toggles do not run this again.
+        self._settling_locks = False
         self._findings = QListWidget()
         self._summary = QLabel("Open a model to begin.")
         self._summary.setWordWrap(True)
@@ -303,8 +307,19 @@ class MainWindow(QMainWindow):
         panel.addTab(self._cad_panel, "CAD tools")
         panel.setFixedWidth(420)
 
+        # The viewport and the handful of controls that belong *to* it, rather
+        # than to the model. On screen rather than in a menu because they are
+        # switched while looking at the thing they change.
+        viewport_side = QVBoxLayout()
+        viewport_side.setContentsMargins(0, 0, 0, 0)
+        viewport_side.addWidget(self._viewport.interactor, stretch=1)
+        viewport_side.addLayout(self._view_controls())
+
+        held = QWidget()
+        held.setLayout(viewport_side)
+
         layout = QHBoxLayout()
-        layout.addWidget(self._viewport.interactor, stretch=1)
+        layout.addWidget(held, stretch=1)
         layout.addWidget(panel)
 
         central = QWidget()
@@ -312,6 +327,70 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready.")
+
+    def _view_controls(self) -> QHBoxLayout:
+        """The row under the viewport: what to show, and how it may be turned."""
+        row = QHBoxLayout()
+
+        self._axes_box = QCheckBox("Show X, Y, Z")
+        self._axes_box.setChecked(True)
+        self._axes_box.setToolTip("Mark the axes on the front-left corner of the plate.")
+        self._axes_box.toggled.connect(self._set_axes)
+        row.addWidget(self._axes_box)
+
+        row.addSpacing(18)
+        row.addWidget(QLabel("Lock the view:"))
+
+        # Checkboxes rather than a dial, because the useful gesture is to tick
+        # one, work, and untick it. They behave exclusively: turning a part by
+        # dragging the view is how it ends up skewed, and being locked to two
+        # planes at once means nothing.
+        self._lock_boxes: dict[str, QCheckBox] = {}
+        for plane, label, tip in (
+            ("front", "Front (X-Z)", "Looking along Y. Left and right stay left and right."),
+            ("side", "Side (Y-Z)", "Looking along X."),
+            ("top", "Top (X-Y)", "Looking down Z, at the plate."),
+        ):
+            box = QCheckBox(label)
+            box.setToolTip(f"{tip} Pans and zooms, never turns.")
+            box.toggled.connect(lambda on, p=plane: self._set_lock(p, on))
+            self._lock_boxes[plane] = box
+            row.addWidget(box)
+
+        row.addStretch(1)
+        return row
+
+    def _set_axes(self, on: bool) -> None:
+        """Show or hide the axis markers on the plate."""
+        self._scene.show_axes(on)
+        self._viewport.render()
+
+    def _set_lock(self, plane: str, on: bool) -> None:
+        """Hold the view on one plane, or let it turn freely again.
+
+        Exclusive by hand rather than by a button group, because a group that
+        enforces exclusivity will not let the last one be unticked - and
+        unticking is how you get back to turning the model about freely.
+        """
+        if self._settling_locks:
+            return
+
+        self._settling_locks = True
+        try:
+            for name, box in self._lock_boxes.items():
+                if name != plane:
+                    box.setChecked(False)
+        finally:
+            self._settling_locks = False
+
+        self._scene.lock_to(plane if on else None)
+        self._viewport.render()
+        self.statusBar().showMessage(
+            f"View locked to {plane}. It pans and zooms but will not turn."
+            if on
+            else "View unlocked.",
+            6000,
+        )
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -898,6 +977,10 @@ class MainWindow(QMainWindow):
 
         self._modelling.on_outcome(self._signals.cad_outcome.emit)
         self._modelling.on_state(self._signals.model_changed.emit)
+        # The feature tree's own busy signal. Without it the status bar only
+        # heard about the mesh workspace, so a rebuild - two seconds of OCCT -
+        # ran in silence.
+        self._modelling.on_busy(self._signals.busy_changed.emit)
         self._view_model.on_state_changed(self._signals.state_changed.emit)
         self._view_model.on_notification(self._signals.notified.emit)
         self._view_model.on_busy_changed(self._signals.busy_changed.emit)
@@ -1434,12 +1517,23 @@ class MainWindow(QMainWindow):
                 self, "ModelPop", f"{notification.message}\n\n{notification.detail}"
             )
 
-    def _on_busy_changed(self, busy: bool) -> None:
+    def _on_busy_changed(self, _busy: bool) -> None:
+        """Say what is happening, from whichever half of the app is doing it.
+
+        Two view-models work independently - the feature tree and the mesh
+        workspace - and either can be busy. Reading only one of them meant
+        repairing a million triangles, which is a minute and a half, said
+        nothing at all: people click again, and the second click is either
+        refused or applied twice.
+        """
+        self._say_what_is_happening()
+
+    def _say_what_is_happening(self) -> None:
+        """Put whatever is running in the status bar, or clear the cursor."""
+        doing = self._modelling.doing or self._view_model.doing
+        busy = self._modelling.is_busy or self._view_model.is_busy
         self.setCursor(Qt.CursorShape.WaitCursor if busy else Qt.CursorShape.ArrowCursor)
-        doing = self._modelling.doing
         if busy and doing:
-            # Named, because "nothing is happening" and "OCCT has been running
-            # for twenty seconds" look identical otherwise.
             self.statusBar().showMessage(f"{doing}...")
 
 

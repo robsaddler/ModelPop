@@ -145,6 +145,21 @@ all useful rather than one where every position is a hair's breadth from the mid
 
 ---
 
+## Which way is which, and holding the view still
+
+Under the viewport:
+
+**Show X, Y, Z** (on by default) marks the axes on the front-left corner of the plate, in the same
+red, green and blue the drag arrows use → so the arrow you are about to pull and the axis it
+runs along are obviously the same thing.
+
+**Lock the view** to **Front (X-Z)**, **Side (Y-Z)** or **Top (X-Y)**. Locked, the view pans and
+zooms but will not turn, so left stays left. Turning a part by dragging the view is how it ends up
+looking skewed → a free orbit gives an arbitrary angle and there is no way back to square
+except by eye. Untick to turn freely again; ticking one unticks the others.
+
+---
+
 ## Getting the view back
 
 **View → Look into the printer** (Home) puts the whole build volume back in frame, seen from

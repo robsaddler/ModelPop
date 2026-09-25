@@ -89,6 +89,7 @@ class WorkspaceViewModel:
         self._history = GenerationHistory()
         self._state = WorkspaceState()
         self._busy = False
+        self._doing = ""
         self._state_listeners: list[Callable[[WorkspaceState], None]] = []
         self._busy_listeners: list[Callable[[bool], None]] = []
         self._notification_listeners: list[Callable[[Notification], None]] = []
@@ -124,6 +125,11 @@ class WorkspaceViewModel:
     def state(self) -> WorkspaceState:
         """The model currently open, and what is known about it."""
         return self._state
+
+    @property
+    def doing(self) -> str:
+        """What is happening right now, for the status bar. Empty when idle."""
+        return self._doing
 
     @property
     def is_busy(self) -> bool:
@@ -295,6 +301,7 @@ class WorkspaceViewModel:
             lambda: self._workspace.open(path),
             done=f"Opened {path.name}",
             failed="Could not open the model",
+            doing=f"Opening {path.name}",
         )
 
     def repair(self) -> None:
@@ -303,6 +310,7 @@ class WorkspaceViewModel:
             lambda: self._workspace.repair(self._state),
             done="Repaired the model",
             failed="Repair failed",
+            doing="Repairing the model - a detailed one takes a minute or more",
         )
 
     def prepare_for_bed(self) -> None:
@@ -311,6 +319,7 @@ class WorkspaceViewModel:
             lambda: self._workspace.prepare_for_bed(self._state),
             done="Placed on the bed",
             failed="Could not prepare the model",
+            doing="Placing it on the bed",
         )
 
     def scale_to_fit(self, largest: Length) -> None:
@@ -319,6 +328,7 @@ class WorkspaceViewModel:
             lambda: self._workspace.scale_to_fit(self._state, largest),
             done=f"Scaled to {largest.format()}",
             failed="Could not scale the model",
+            doing=f"Scaling to {largest.format()}",
         )
 
     def simplify(self, target_triangles: int) -> None:
@@ -327,6 +337,7 @@ class WorkspaceViewModel:
             lambda: self._workspace.decimate(self._state, target_triangles),
             done=f"Simplified to about {target_triangles:,} triangles",
             failed="Could not simplify the model",
+            doing=f"Simplifying to about {target_triangles:,} triangles",
         )
 
     def save_as(self, path: Path) -> None:
@@ -362,6 +373,7 @@ class WorkspaceViewModel:
             lambda: self._workspace.rescue_detail(self._state, depth_mm),
             done="Baked the texture into the surface",
             failed="The detail could not be baked in",
+            doing="Baking the texture into the surface",
         )
 
     def slice(self, output_dir: Path, supports: SupportType | None = None) -> None:
@@ -574,18 +586,32 @@ class WorkspaceViewModel:
         done: str,
         failed: str,
         describe_success: Callable[[WorkspaceState], str] | None = None,
+        doing: str = "",
     ) -> None:
-        """Execute a task, update the state, and report what happened."""
+        """Execute a task, update the state, and report what happened.
+
+        Args:
+            task: the work.
+            done: what to say when it worked.
+            failed: what to say when it did not.
+            describe_success: a better sentence than ``done``, given the state.
+            doing: what to say *while* it is happening. Repairing a million
+                triangles is a minute and a half; a window that says nothing
+                for that long has people clicking again, and the second click
+                is either refused or applied twice.
+        """
         if self._busy:
             self._notify(Notification("Already working on something", Severity.WARNING))
             return
 
+        self._doing = doing or done
         self._set_busy(True)
 
         def work() -> None:
             try:
                 result = task()
             finally:
+                self._doing = ""
                 self._set_busy(False)
 
             if not result.ok:

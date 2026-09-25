@@ -855,3 +855,127 @@ class TestLookingIntoThePrinter:
         looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
         assert looking[2] > 0
         assert looking[0] == pytest.approx(0.0, abs=1e-6)
+
+
+class TestTheAxisMarkers:
+    """X, Y and Z on the plate, because nobody remembers which is which.
+
+    In the same red, green and blue the drag arrows use, so the arrow being
+    pulled and the axis it runs along are obviously the same thing.
+    """
+
+    def test_they_are_on_by_default(self, plotter):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        assert scene.axes_are_shown
+
+    def test_all_three_are_drawn(self, plotter):
+        ViewportScene(plotter, PrinterProfile.p2s())
+        drawn = {name for name in plotter.renderer.actors if name.startswith("axis-")}
+
+        assert {"axis-X", "axis-Y", "axis-Z"} <= drawn
+
+    def test_they_can_be_taken_away(self, plotter):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_axes(False)
+
+        assert not scene.axes_are_shown
+        assert [n for n in plotter.renderer.actors if n.startswith("axis-")] == []
+
+    def test_they_can_be_put_back(self, plotter):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_axes(False)
+        scene.show_axes(True)
+
+        assert scene.axes_are_shown
+        assert [n for n in plotter.renderer.actors if n.startswith("axis-")]
+
+    def test_switching_them_on_twice_does_not_double_them(self, plotter):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_axes(True)
+        scene.show_axes(True)
+
+        arrows = [n for n in plotter.renderer.actors if n.startswith("axis-") and "label" not in n]
+        assert len(arrows) == 3
+
+    def test_they_sit_at_a_corner_rather_than_in_the_middle(self, plotter):
+        """The middle of the plate is where the model stands."""
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        half = scene._printer.build_width.millimetres / 2
+
+        marker = plotter.renderer.actors["axis-X"]
+        assert marker.GetBounds()[0] == pytest.approx(-half, abs=1.0)
+
+    def test_they_wear_the_same_colours_as_the_drag_arrows(self, plotter):
+        from modelpop.rendering.drag_handles import AXIS_COLOURS
+
+        ViewportScene(plotter, PrinterProfile.p2s())
+        for index, label in enumerate("XYZ"):
+            drawn = plotter.renderer.actors[f"axis-{label}"].prop.color.hex_rgb
+            assert drawn.lower() == AXIS_COLOURS[index].lower()
+
+
+class TestLockingTheView:
+    """Turning a part by dragging the view is how it ends up skewed.
+
+    A trackball orbit gives an arbitrary angle and there is no way back to
+    square except by eye. Locked, the camera pans and zooms but cannot tumble.
+    """
+
+    def test_it_turns_freely_to_begin_with(self, plotter):
+        assert ViewportScene(plotter, PrinterProfile.p2s()).locked_to == ""
+
+    @pytest.mark.parametrize(
+        ("plane", "along"),
+        [("front", 1), ("side", 0), ("top", 2)],
+        ids=["front looks along Y", "side looks along X", "top looks down Z"],
+    )
+    def test_each_lock_puts_the_camera_square_on(self, plotter, plane, along):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.lock_to(plane)
+
+        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
+        # Everything but the axis being looked along is zero.
+        for axis in range(3):
+            if axis != along:
+                assert looking[axis] == pytest.approx(0.0, abs=1e-6)
+        assert abs(looking[along]) > 0
+
+    def test_locking_remembers_which_plane(self, plotter):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.lock_to("top")
+        assert scene.locked_to == "top"
+
+    def test_it_can_be_let_go_again(self, plotter):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.lock_to("front")
+        scene.lock_to(None)
+        assert scene.locked_to == ""
+
+    def test_an_unknown_plane_falls_back_to_the_front(self, plotter):
+        """Rather than leaving the camera wherever it happened to be."""
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.lock_to("sideways-ish")
+
+        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
+        assert looking[0] == pytest.approx(0.0, abs=1e-6)
+        assert looking[2] == pytest.approx(0.0, abs=1e-6)
+
+    def test_they_do_not_change_what_fitting_the_view_means(self, plotter):
+        """A marker is furniture, not content.
+
+        Counted in the scene's bounds it widens what "fit to the model" means
+        and quietly moves everything on screen - which showed up as a pick
+        through the middle of the window landing on the plate instead of the
+        part.
+        """
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.show_mesh(unit_cube(40).dropped_to_bed())
+
+        scene.show_axes(False)
+        plotter.reset_camera()
+        without = plotter.camera.parallel_scale
+
+        scene.show_axes(True)
+        plotter.reset_camera()
+
+        assert plotter.camera.parallel_scale == pytest.approx(without)

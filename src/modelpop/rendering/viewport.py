@@ -22,7 +22,7 @@ from modelpop.domain.mesh import Mesh
 from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.units import Unit
 from modelpop.presentation.sectioning import SectionPlane
-from modelpop.rendering.drag_handles import DragHandles
+from modelpop.rendering.drag_handles import AXIS_COLOURS, DragHandles
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -65,6 +65,15 @@ UNSELECTED_COLOUR = "#55677A"
 # A little air around the build volume when the view is reset, so its edges are
 # not flush against the window.
 VIEW_MARGIN = 1.06
+
+# The axis markers on the plate, as fractions of the build width. Long enough
+# to read, short enough to stay out of the way of whatever is being printed.
+AXIS_LENGTH = 0.16
+AXIS_SHAFT = 0.018
+AXIS_TIP = 0.055
+
+# Which named view holds each plane square on.
+_LOCKED_VIEWS = {"front": "front", "side": "right", "top": "top"}
 
 # How far round and how far up the resting view stands, in degrees. Dead square
 # on puts the build plate exactly edge-on - the surface everything sits on
@@ -158,11 +167,15 @@ class ViewportScene:
         # has no answer.
         self._body_actors: dict[str, Any] = {}
         self._selected_body = ""
+        self._axis_actors: dict[str, Any] = {}
+        self._axes_shown = False
+        self._locked_to = ""
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._use_parallel_projection()
         self._draw_build_volume()
         self._name_the_printer()
+        self.show_axes(True)
 
     # ----------------------------------------------------------------- scene
 
@@ -182,6 +195,105 @@ class ViewportScene:
         """
         camera = self._plotter.camera
         camera.enable_parallel_projection()
+
+    def show_axes(self, on: bool) -> None:
+        """Draw X, Y and Z on the plate, or take them away.
+
+        In the same red, green and blue the drag arrows use, so the arrow you
+        are about to pull and the axis it runs along are obviously the same
+        thing. At the front-left corner of the plate rather than its middle,
+        where they would sit inside whatever is being printed.
+        """
+        for name in list(self._axis_actors):
+            with contextlib.suppress(AttributeError, RuntimeError, ValueError):
+                self._plotter.remove_actor(self._axis_actors[name], render=False)
+            del self._axis_actors[name]
+
+        self._axes_shown = on
+        if not on:
+            return
+
+        width = self._printer.build_width.millimetres
+        depth = self._printer.build_depth.millimetres
+        length = width * AXIS_LENGTH
+        corner = np.array([-width / 2, -depth / 2, 0.0])
+
+        for index, (axis, label) in enumerate(
+            (
+                (np.array([1.0, 0.0, 0.0]), "X"),
+                (np.array([0.0, 1.0, 0.0]), "Y"),
+                (np.array([0.0, 0.0, 1.0]), "Z"),
+            )
+        ):
+            arrow = pv.Arrow(
+                start=corner,
+                direction=axis,
+                scale=length,
+                shaft_radius=AXIS_SHAFT,
+                tip_radius=AXIS_TIP,
+                tip_length=0.18,
+            )
+            marker = self._plotter.add_mesh(
+                arrow,
+                color=AXIS_COLOURS[index],
+                lighting=False,
+                name=f"axis-{label}",
+                pickable=False,
+                render=False,
+            )
+            # Kept out of the scene's bounds. A marker is furniture, not
+            # content: counted, it widens what "fit the view to the model"
+            # means and quietly moves everything on screen - which showed up
+            # as a pick through the middle of the window landing on the plate
+            # instead of the part.
+            with contextlib.suppress(AttributeError):
+                marker.SetUseBounds(False)
+            self._axis_actors[f"axis-{label}"] = marker
+            written = self._plotter.add_point_labels(
+                [corner + axis * (length * 1.12)],
+                [label],
+                text_color=AXIS_COLOURS[index],
+                font_size=14,
+                bold=True,
+                shape=None,
+                show_points=False,
+                always_visible=True,
+                name=f"axis-label-{label}",
+                render=False,
+            )
+            with contextlib.suppress(AttributeError):
+                written.SetUseBounds(False)
+            self._axis_actors[f"axis-label-{label}"] = written
+
+    @property
+    def axes_are_shown(self) -> bool:
+        """Whether the X, Y and Z markers are on the plate."""
+        return self._axes_shown
+
+    def lock_to(self, plane: str | None) -> None:
+        """Hold the view square on to one plane, or let it turn freely again.
+
+        Turning a part by dragging the view is how it ends up looking skewed:
+        a trackball orbit gives an arbitrary angle, and there is no way back to
+        square except by eye. Locked, the camera pans and zooms but cannot
+        tumble - so left and right stay left and right.
+
+        Args:
+            plane: ``front``, ``side``, ``top``, or ``None`` to unlock.
+        """
+        self._locked_to = plane or ""
+        if not plane:
+            self._plotter.enable_trackball_style()
+            return
+
+        self.set_view(_LOCKED_VIEWS.get(plane, "front"))
+        # Pans and zooms, never rotates. Which is the whole point.
+        self._plotter.enable_image_style()
+
+    @property
+    def locked_to(self) -> str:
+        """Which plane the view is held on, or empty when it turns freely."""
+        return self._locked_to
 
     def _draw_build_volume(self) -> None:
         """Draw the bed and a wireframe of the printable envelope.
