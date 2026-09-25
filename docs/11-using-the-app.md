@@ -170,6 +170,20 @@ grabbed a handle moves the part and never the view.
 
 ---
 
+## How long it took
+
+At the **right-hand end of the status bar** is a timer. It starts when anything begins working,
+ticks while it does, and freezes on the final figure when everything goes quiet - so "how long did
+that take?" is still answerable after the fact, not only while you are waiting.
+
+It counts every operation, not one kind. Repairing a million triangles is a minute and a half and a
+box is a fraction of a second; both now say so. Hover it and it names what it timed.
+
+It is added to the status bar permanently, so the messages that come and go on the left never paint
+over it.
+
+---
+
 ## Getting the view back
 
 **View → Look into the printer** (Home) puts the whole build volume back in frame, seen from

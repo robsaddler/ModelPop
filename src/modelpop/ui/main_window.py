@@ -65,6 +65,7 @@ from modelpop.ui.dialogs import (
     SettingsDialog,
 )
 from modelpop.ui.earlier_dialog import EarlierModelsDialog
+from modelpop.ui.how_long import HowLong
 from modelpop.ui.monitor_dialog import MonitorDialog
 from modelpop.ui.place_dialog import PlaceDialog
 from modelpop.ui.reconstruct_dialog import ReconstructDialog
@@ -78,10 +79,6 @@ __all__ = ["MainWindow"]
 # a click rather than an orbit. A few pixels of wobble is a steady hand, not
 # an attempt to rotate the model.
 CLICK_SLOP_PIXELS = 4
-
-# Above this, a rebuild's duration is put in the status bar. Below it the
-# number is noise; above it, it is the thing the user wants to know.
-SAY_HOW_LONG_ABOVE_SECONDS = 1.0
 
 # Readable on a dark panel. The default reds and greens are not: a blocker
 # rendered in #C0392B on #2B3038 is almost invisible, which defeats the point
@@ -327,6 +324,11 @@ class MainWindow(QMainWindow):
         central.setLayout(layout)
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
+        # At the right-hand end, where the transient messages cannot paint over
+        # it. "Repairing..." says the app is alive; only a number says whether
+        # to wait.
+        self._how_long = HowLong(self)
+        self.statusBar().addPermanentWidget(self._how_long)
         self.statusBar().showMessage("Ready.")
 
     def _view_controls(self) -> QHBoxLayout:
@@ -1479,11 +1481,9 @@ class MainWindow(QMainWindow):
         modal would overstate it.
         """
         message = f"{outcome.message}. {outcome.detail}" if outcome.detail else outcome.message
-        # How long the rebuild actually took. Without it a slow one is a
-        # complaint nobody can act on; with it, it is a number.
-        spent = self._modelling.state.rebuild_seconds
-        if not outcome.refused and spent >= SAY_HOW_LONG_ABOVE_SECONDS:
-            message = f"{message} ({spent:.1f}s)"
+        # How long it took is on the clock at the end of the status bar now,
+        # for every operation. It used to be appended here and nowhere else,
+        # so a slow download or a slow repair said nothing at all.
         self.statusBar().showMessage(message, 10000)
 
         if outcome.refused and self._drag_in_flight:
@@ -1522,6 +1522,9 @@ class MainWindow(QMainWindow):
         doing = self._modelling.doing or self._view_model.doing
         busy = self._modelling.is_busy or self._view_model.is_busy
         self.setCursor(Qt.CursorShape.WaitCursor if busy else Qt.CursorShape.ArrowCursor)
+        # The combined state of both view-models, so one job finishing while
+        # another still runs neither stops the clock nor restarts it.
+        self._how_long.busy(busy, doing)
         if busy and doing:
             self.statusBar().showMessage(f"{doing}...")
 
