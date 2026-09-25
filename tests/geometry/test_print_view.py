@@ -7,15 +7,18 @@ because a GPU-less runner dies mid-render rather than failing.
 
 import textwrap
 
+import numpy as np
 import pytest
 
-from modelpop.printing.simulate import VirtualPrint
-from modelpop.printing.toolpath import Toolpath
+from modelpop.domain.printer import PrinterProfile
+from modelpop.printing.simulate import Frame, VirtualPrint
+from modelpop.printing.toolpath import Segment, Toolpath
 from modelpop.rendering.print_view import (
     DEFAULT_COLOUR,
     FEATURE_COLOURS,
     colour_of,
     nozzle_marker,
+    onto_the_plate,
     progress_of,
     to_lines,
 )
@@ -170,3 +173,92 @@ class TestTheProgressLine:
 
     def test_an_empty_print_says_so_rather_than_lying(self):
         assert progress_of(VirtualPrint.of(Toolpath()), 0.0) == "Nothing to play."
+
+
+class TestDrawingItWhereThePlateIs:
+    """G-code speaks the machine's coordinates. The plate is drawn around zero.
+
+    "Watch it print worked but didn't put the dragon in the right place on the
+    plate - printed him semi outside one of the printer corners."
+
+    The print was right; the playback was not. Bambu's bed origin is a corner,
+    so a centred model runs from 0 to 256, while every viewport here draws the
+    plate from -128 to +128 because that is the sane convention for looking at
+    a model. Drawn straight, the toolpath lands half a bed out: over one corner
+    with two edges hanging off.
+    """
+
+    def printer(self) -> PrinterProfile:
+        return PrinterProfile.p2s()
+
+    def a_square(self, at: tuple[float, float], size: float = 20.0):
+        """Four extrusion moves round a square, in machine coordinates."""
+        x, y = at
+        half = size / 2
+        corners = [
+            (x - half, y - half, 0.2),
+            (x + half, y - half, 0.2),
+            (x + half, y + half, 0.2),
+            (x - half, y + half, 0.2),
+        ]
+        return tuple(
+            Segment(
+                start=corners[i],
+                end=corners[(i + 1) % 4],
+                extrudes=True,
+                layer=0,
+                feature="outer wall",
+            )
+            for i in range(4)
+        )
+
+    def test_a_model_printed_dead_centre_is_drawn_dead_centre(self):
+        printer = self.printer()
+        middle = printer.bed_centre
+        drawn = to_lines(self.a_square(middle), onto_the_plate(printer)).points
+
+        assert abs(float(drawn[:, 0].mean())) < 1e-6
+        assert abs(float(drawn[:, 1].mean())) < 1e-6
+
+    def test_without_the_offset_it_lands_a_half_bed_out(self):
+        """The bug, stated as a measurement."""
+        printer = self.printer()
+        drawn = to_lines(self.a_square(printer.bed_centre)).points
+        half = printer.build_width.millimetres / 2
+
+        assert float(drawn[:, 0].mean()) == pytest.approx(half)
+        assert float(drawn[:, 1].mean()) == pytest.approx(half)
+
+    def test_it_stays_on_the_plate_that_is_drawn(self):
+        printer = self.printer()
+        half_wide = printer.build_width.millimetres / 2
+        half_deep = printer.build_depth.millimetres / 2
+        drawn = to_lines(self.a_square(printer.bed_centre), onto_the_plate(printer)).points
+
+        assert (abs(drawn[:, 0]) <= half_wide).all()
+        assert (abs(drawn[:, 1]) <= half_deep).all()
+
+    def test_a_model_printed_off_centre_is_drawn_off_centre(self):
+        """It has to tell the truth, not merely centre everything.
+
+        The slicer really can put a model somewhere other than the middle, and
+        seeing that is the whole reason to watch a print before starting it.
+        """
+        printer = self.printer()
+        centre_x, centre_y = printer.bed_centre
+        drawn = to_lines(
+            self.a_square((centre_x - 28.0, centre_y - 28.0)), onto_the_plate(printer)
+        ).points
+
+        assert float(drawn[:, 0].mean()) == pytest.approx(-28.0)
+        assert float(drawn[:, 1].mean()) == pytest.approx(-28.0)
+
+    def test_the_nozzle_moves_with_the_work(self):
+        """A head drawn half a bed from its own toolpath is worse than none."""
+        printer = self.printer()
+        centre_x, centre_y = printer.bed_centre
+        frame = Frame(seconds=0.0, position=(centre_x, centre_y, 5.0), layer=0, segment=0)
+
+        here = np.asarray(nozzle_marker(frame, offset=onto_the_plate(printer)).center)
+        assert here[0] == pytest.approx(0.0)
+        assert here[1] == pytest.approx(0.0)

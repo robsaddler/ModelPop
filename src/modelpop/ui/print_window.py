@@ -38,6 +38,7 @@ from modelpop.printing.simulate import VirtualPrint
 from modelpop.rendering.print_view import (
     NOZZLE_COLOUR,
     nozzle_marker,
+    onto_the_plate,
     progress_of,
     to_lines,
 )
@@ -103,6 +104,11 @@ class PrintWindow(QDialog):
 
         self._plotter = QtInteractor(self)
         self._scene = ViewportScene(self._plotter, self._printer)
+        # G-code speaks the machine's coordinates, whose origin is a corner of
+        # the bed; the plate above is drawn centred on the origin. Without this
+        # the toolpath lands half a bed out, over one corner with two edges off
+        # the plate - which is precisely how it was reported.
+        self._onto_the_plate = onto_the_plate(self._printer)
         layout.addWidget(self._plotter.interactor, stretch=1)
 
         self._caption = QLabel(self._play.describe())
@@ -219,7 +225,7 @@ class PrintWindow(QDialog):
             laid = self._play.extruded_by(moment)
             if laid:
                 self._toolpath_actor = self._plotter.add_mesh(
-                    to_lines(laid),
+                    to_lines(laid, self._onto_the_plate),
                     name="toolpath",
                     scalars="feature",
                     rgb=True,
@@ -232,7 +238,7 @@ class PrintWindow(QDialog):
         self._nozzle_actor = None
         if self._show_nozzle.isChecked():
             self._nozzle_actor = self._plotter.add_mesh(
-                nozzle_marker(frame),
+                nozzle_marker(frame, offset=self._onto_the_plate),
                 name="nozzle",
                 color=NOZZLE_COLOUR,
                 reset_camera=False,

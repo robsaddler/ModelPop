@@ -235,6 +235,19 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    state, so the same geometry is the same object and anything rebuilt is a new one. A drag clears
    the guard, because the actor is standing where it was dragged rather than where the model says.
 
+25. **`--arrange 1` moves the model, and `--orient 1` turns it.** ModelPop centres a model before
+   writing it out, and then used to invite Bambu Studio to place it again. Measured on a 40x30x20
+   box written dead centre at (128, 128): with arranging on it printed centred at (100, 100) - 28 mm
+   out in both axes; with it off, at (128, 128) exactly. On a large model that is the difference
+   between the middle of the plate and hanging over a corner. Note the 3MF's object transform says
+   (128, 128) either way, so **judge it by the G-code, not the project file**. Both default off now.
+26. **G-code is in the machine's coordinates; every viewport here draws the plate around zero.**
+   Bambu's bed origin is a *corner*, so a centred model runs 0..256 while the plate is drawn
+   -128..+128. The print playback drew the toolpath straight and it landed half a bed out, over one
+   corner with two edges off the plate - reported, reasonably, as the model being printed in the
+   wrong place. The print was correct throughout. `print_view.onto_the_plate` is the conversion, and
+   the nozzle marker takes it too or the head floats away from its own work.
+
 ## Style
 
 Type hints everywhere, `mypy --strict`. `ruff` for lint and format. Dataclasses (frozen where they are

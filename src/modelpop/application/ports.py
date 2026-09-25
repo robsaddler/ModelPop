@@ -104,8 +104,23 @@ class SliceJob:
     output_dir: Path
     supports: SupportType = SupportType.NONE
     support_style: SupportStyle = SupportStyle.DEFAULT
-    auto_orient: bool = True
-    auto_arrange: bool = True
+
+    auto_orient: bool = False
+    """Whether the slicer may turn the model to suit itself.
+
+    Off, because the user turned it on purpose. Standing a model up is a step
+    in the feature tree, it undoes, and it is often the whole point - letting
+    the slicer overrule it silently would make the viewport a lie."""
+
+    auto_arrange: bool = False
+    """Whether the slicer may move the model about the plate.
+
+    Off, because ModelPop has already centred it - and because the slicer's
+    idea of a good arrangement is not ours. Measured on a 40x30x20 box written
+    dead centre at (128, 128): with arranging on it printed at (100, 100),
+    twenty-eight millimetres out in both directions. On a model the size of the
+    dragon that is the difference between the middle of the plate and hanging
+    off a corner, which is exactly how it was reported."""
     plate: int = 0
     """Which plate to slice; ``0`` means every plate."""
 

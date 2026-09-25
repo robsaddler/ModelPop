@@ -23,6 +23,9 @@ import numpy as np
 import pyvista as pv
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from modelpop.domain.printer import PrinterProfile
     from modelpop.printing.simulate import Frame, VirtualPrint
     from modelpop.printing.toolpath import Segment
 
@@ -32,6 +35,7 @@ __all__ = [
     "NOZZLE_COLOUR",
     "colour_of",
     "nozzle_marker",
+    "onto_the_plate",
     "progress_of",
     "to_lines",
 ]
@@ -80,13 +84,42 @@ def colour_of(feature: str) -> str:
     return FEATURE_COLOURS[best] if best else DEFAULT_COLOUR
 
 
-def to_lines(segments: tuple[Segment, ...]) -> pv.PolyData:
+def onto_the_plate(printer: PrinterProfile) -> NDArray[np.float64]:
+    """What to add to a G-code position to put it where the plate is drawn.
+
+    G-code is in the machine's own coordinates, whose origin is a **corner** of
+    the bed: a centred model runs from 0 to 256. Every viewport in this
+    application draws the plate centred on the origin instead, from -128 to
+    +128, because that is the sane convention for looking at a model and it is
+    what the printer is drawn around.
+
+    Drawn without this the toolpath is shifted by half a bed in each direction
+    and sits over one corner with two edges hanging off, which is exactly how
+    it was reported: "didn't put the dragon in the right place on the plate,
+    printed him semi outside one of the printer corners". The *print* was
+    correct throughout; only the playback of it was not.
+
+    The exact inverse of the offset applied when a model is written out for
+    slicing - see ``Workspace._place_on_bed``.
+    """
+    centre_x, centre_y = printer.bed_centre
+    return np.array([-centre_x, -centre_y, 0.0])
+
+
+def to_lines(
+    segments: tuple[Segment, ...], offset: NDArray[np.float64] | None = None
+) -> pv.PolyData:
     """Turn extrusion moves into drawable lines.
 
     Every segment becomes a two-point line, with a scalar naming its feature so
     the viewport can colour it. Built in one array rather than per segment:
     appending a hundred thousand times is the difference between a scrub that
     drags and one that does not.
+
+    Args:
+        segments: the extrusion moves to draw.
+        offset: added to every point, to carry machine coordinates over to
+            where the plate is drawn. See :func:`onto_the_plate`.
     """
     if not segments:
         return pv.PolyData()
@@ -102,6 +135,9 @@ def to_lines(segments: tuple[Segment, ...]) -> pv.PolyData:
     connectivity[:, 0] = 2
     connectivity[:, 1] = np.arange(0, count * 2, 2)
     connectivity[:, 2] = connectivity[:, 1] + 1
+
+    if offset is not None:
+        points += offset
 
     poly = pv.PolyData()
     poly.points = points
@@ -137,14 +173,22 @@ def _rgb(hex_colour: str) -> tuple[int, int, int]:
     return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
 
 
-def nozzle_marker(frame: Frame, size: float = 3.0) -> pv.PolyData:
+def nozzle_marker(
+    frame: Frame, size: float = 3.0, offset: NDArray[np.float64] | None = None
+) -> pv.PolyData:
     """A small cone where the nozzle is, pointing down at the work.
 
     A marker rather than a model of the toolhead. The useful information is
     where material is being placed right now, and a detailed hotend would
     obscure exactly the part the user is trying to watch.
+
+    Takes the same ``offset`` as :func:`to_lines`, and must: a head drawn in
+    machine coordinates over a toolpath drawn on the plate would float half a
+    bed away from the work it is supposed to be doing.
     """
     x, y, z = frame.position
+    if offset is not None:
+        x, y, z = float(x + offset[0]), float(y + offset[1]), float(z + offset[2])
     return pv.Cone(
         center=(x, y, z + size),
         direction=(0.0, 0.0, -1.0),
