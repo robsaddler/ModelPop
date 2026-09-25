@@ -153,13 +153,20 @@ Under the viewport:
 red, green and blue the drag arrows use → so the arrow you are about to pull and the axis it
 runs along are obviously the same thing.
 
-**Hold still: X, Y, Z.** Each holds one axis, so the view cannot turn about it. Tick **X and Y
-together** and only Z is left: the view spins round the plate and the horizon never rolls, however
-far you drag → which is what "turn it left without skewing it" means. Hold Z alone and it tips
-but will not spin. Hold all three and it will not turn at all.
+**The view turns like a turntable.** Drag sideways to spin the plate round, up and down to raise
+and lower your eye. It stays level: there is no third direction to tip it into, so it cannot come
+out skewed, and it will not go over the top and leave the model upside down.
 
-Panning and zooming are unchanged whatever is held, and the drag handles keep working → a drag
-that grabbed a handle moves the part and never the view.
+**Hold the view: Left/right, Up/down.** Each stops that drag doing anything. Hold **Up/down** to
+spin round the plate at one fixed height; hold **Left/right** to raise and lower without the plate
+turning under you. Hold both and it will not turn at all.
+
+They are named after the drag rather than the axis it turns about, deliberately. An earlier version
+offered X, Y and Z, and five people testing it guessed: "rotate about Z" and "drag left and right"
+are the same thing, and nobody should have to translate between them to look at their model.
+
+Panning and zooming are unchanged whatever is held, and the drag handles still win → a drag that
+grabbed a handle moves the part and never the view.
 
 ---
 

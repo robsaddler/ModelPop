@@ -23,7 +23,7 @@ from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.units import Unit
 from modelpop.presentation.sectioning import SectionPlane
 from modelpop.rendering.drag_handles import AXIS_COLOURS, DragHandles
-from modelpop.rendering.turning import LockedTurning
+from modelpop.rendering.turning import Turning
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -168,7 +168,7 @@ class ViewportScene:
         self._selected_body = ""
         self._axis_actors: dict[str, Any] = {}
         self._axes_shown = False
-        self._turning = LockedTurning(plotter)
+        self._turning = Turning(plotter)
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._use_parallel_projection()
@@ -269,28 +269,28 @@ class ViewportScene:
         """Whether the X, Y and Z markers are on the plate."""
         return self._axes_shown
 
-    def lock_axis(self, axis: str, held: bool) -> None:
-        """Forbid the view turning about one axis, or allow it again.
+    def hold_turning(self, direction: str, held: bool) -> None:
+        """Stop one drag direction turning the view, or let it go again.
 
-        A lock holds an axis *still*. Lock X and Y together and only Z is
-        left, which is a turntable: the view spins round the plate and the
-        horizon never rolls however far the drag goes. Lock nothing and it
-        behaves as it always did.
+        Named after the drag rather than the axis it turns about, which is the
+        whole point. An earlier version offered X, Y and Z; five people testing
+        it could not map those onto what their hand was doing, and every one of
+        them guessed.
 
         Args:
-            axis: ``X``, ``Y`` or ``Z``.
-            held: whether that axis is held still.
+            direction: ``left-right`` or ``up-down``.
+            held: whether that drag does nothing.
         """
-        self._turning.lock(axis, held)
+        self._turning.hold(direction, held)
 
     def drag_the_view_by(self, across: int, up: int) -> None:
-        """Turn the view as a drag of this size would, minus what is locked."""
+        """Turn the view as a drag of this size would, minus what is held."""
         self._turning.drag_by(across, up)
 
     @property
-    def locked_axes(self) -> frozenset[str]:
-        """Which axes the view may not turn about."""
-        return self._turning.locked
+    def turning_held(self) -> frozenset[str]:
+        """Which drag directions do nothing."""
+        return self._turning.held
 
     def _draw_build_volume(self) -> None:
         """Draw the bed and a wireframe of the printable envelope.

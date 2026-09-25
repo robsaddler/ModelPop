@@ -40,6 +40,7 @@ from modelpop.generation import edit_by_description
 from modelpop.presentation.modelling_view_model import ModellingViewModel, Outcome
 from modelpop.presentation.workspace_view_model import Notification, WorkspaceViewModel
 from modelpop.projects import EXTENSION as PROJECT_EXTENSION
+from modelpop.rendering.turning import SIDEWAYS, UP_AND_DOWN
 from modelpop.rendering.viewport import ViewportScene
 
 if TYPE_CHECKING:
@@ -339,25 +340,21 @@ class MainWindow(QMainWindow):
         row.addWidget(self._axes_box)
 
         row.addSpacing(18)
-        row.addWidget(QLabel("Hold still:"))
+        row.addWidget(QLabel("Hold the view:"))
 
-        # Independent, not exclusive. A lock holds one axis still, so the
-        # useful combinations are several at once: X and Y together leave only
-        # Z, which is a turntable and is what "turn it left without skewing
-        # it" actually means.
+        # Named after the drag, not the axis it turns about. An earlier version
+        # offered X, Y and Z and five people testing it guessed - "rotate about
+        # Z" and "drag left and right" are the same thing, and nobody should
+        # have to translate between them to look at their model.
         self._lock_boxes: dict[str, QCheckBox] = {}
-        for axis, tip in (
-            ("X", "The view will not tip over the red axis."),
-            ("Y", "The view will not tip over the green axis."),
-            ("Z", "The view will not spin round the blue axis."),
+        for direction, label, tip in (
+            (SIDEWAYS, "Left/right", "Dragging sideways will not spin it round."),
+            (UP_AND_DOWN, "Up/down", "Dragging up and down will not raise or lower the eye."),
         ):
-            box = QCheckBox(axis)
-            box.setToolTip(
-                f"{tip} Hold X and Y together to spin round the plate without tilting. "
-                "Panning and zooming are unchanged."
-            )
-            box.toggled.connect(lambda on, a=axis: self._set_lock(a, on))
-            self._lock_boxes[axis] = box
+            box = QCheckBox(label)
+            box.setToolTip(f"{tip} Panning and zooming are unchanged.")
+            box.toggled.connect(lambda on, d=direction: self._set_lock(d, on))
+            self._lock_boxes[direction] = box
             row.addWidget(box)
 
         row.addStretch(1)
@@ -368,23 +365,20 @@ class MainWindow(QMainWindow):
         self._scene.show_axes(on)
         self._viewport.render()
 
-    def _set_lock(self, axis: str, held: bool) -> None:
-        """Hold one axis still, or let it go.
-
-        Independent: every combination means something. All three held is the
-        one that means nothing, and it simply stops the view turning.
-        """
-        self._scene.lock_axis(axis, held)
+    def _set_lock(self, direction: str, held: bool) -> None:
+        """Hold one drag direction still, or let it go."""
+        self._scene.hold_turning(direction, held)
         self._viewport.render()
 
-        locked = sorted(self._scene.locked_axes)
-        if not locked:
-            said = "The view turns freely."
-        elif len(locked) == 3:
-            said = "Every axis is held. The view will not turn at all."
+        stuck = self._scene.turning_held
+        if not stuck:
+            said = "The view turns freely. It stays level either way."
+        elif len(stuck) == len(self._lock_boxes):
+            said = "Both directions are held. The view will not turn."
+        elif SIDEWAYS in stuck:
+            said = "Dragging sideways is held. Up and down still raises and lowers the eye."
         else:
-            free = [a for a in "XYZ" if a not in locked]
-            said = f"Holding {', '.join(locked)} still. The view turns about {', '.join(free)}."
+            said = "Dragging up and down is held. Sideways still spins it round."
         self.statusBar().showMessage(said, 6000)
 
     def _build_menu(self) -> None:

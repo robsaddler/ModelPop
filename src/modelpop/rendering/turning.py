@@ -1,18 +1,20 @@
-"""Turning the view, with any axis held still.
+"""Turning the view, in the terms the mouse is held in.
 
-Dragging a trackball view gives an arbitrary angle: you meant to spin the part
-left a little and it arrives tilted, with no way back to square except by eye.
+The view turns like a turntable: dragging sideways spins the plate round,
+dragging up and down raises and lowers the eye, and the horizon never rolls.
+A trackball - what this used to do, and what VTK does by default - adds a third
+freedom nobody asked for, and it is the one that arrives as "I tried to turn it
+left and now it is skewed".
 
-A lock **forbids** turning about the axis it names. Lock X and Y together and
-only Z is left, which is a turntable - the view spins round the plate and the
-horizon never rolls, however far the drag goes. Lock nothing and it behaves as
-it always did. Panning and zooming are untouched throughout.
+Either drag direction can be held still. **Named after the drag, not after the
+axis**, which is the whole point: a first attempt offered X, Y and Z, and five
+people testing it could not map those onto what their hand was doing. Holding
+"up and down" is a sentence about the mouse; holding Y is a puzzle about the
+world, and nobody should have to solve one to look at their model.
 
-The arithmetic is deliberately plain. A drag asks for two turns: sideways about
-the world's upright axis, and up-and-down about whichever way the camera calls
-right. Each is projected off the locked axes before it is applied, so what is
-locked simply cannot appear in the result - rather than being applied and then
-corrected, which is how a view ends up creeping.
+The arithmetic stays in world terms underneath, because that is what keeps the
+horizon level: sideways turns about the world's upright axis rather than about
+whatever the camera currently calls up, so it cannot accumulate roll.
 """
 
 from __future__ import annotations
@@ -23,47 +25,36 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from numpy.typing import NDArray
 
-__all__ = ["AXES", "LockedTurning", "allowed_axis", "turned_about"]
+__all__ = ["SIDEWAYS", "UP_AND_DOWN", "Turning", "turned_about"]
+
+SIDEWAYS = "left-right"
+UP_AND_DOWN = "up-down"
+
+DIRECTIONS = (SIDEWAYS, UP_AND_DOWN)
 
 # How far the view turns per pixel dragged. Fast enough to be useful, slow
 # enough to stop where you meant.
 DEGREES_PER_PIXEL = 0.4
 
-AXES: dict[str, NDArray[np.float64]] = {
-    "X": np.array([1.0, 0.0, 0.0]),
-    "Y": np.array([0.0, 1.0, 0.0]),
-    "Z": np.array([0.0, 0.0, 1.0]),
-}
-
 # Below this a drag is a twitch rather than a turn.
 LEAST_PIXELS = 1
 
-# Below this, what is left of a rotation axis after the locked directions are
-# taken out of it is numerical dust rather than an instruction.
-LEAST_AXIS = 1e-6
+# How close to straight up or straight down the eye may get. Going over the top
+# turns the model upside down and swaps which way the mouse works, which reads
+# as the view having broken.
+NEAREST_THE_POLE = 4.0
+
+_UPRIGHT = np.array([0.0, 0.0, 1.0])
 
 
-def allowed_axis(wanted: NDArray[np.float64], locked: Iterable[str]) -> NDArray[np.float64] | None:
-    """What is left of a rotation axis once the locked directions are removed.
-
-    ``None`` when nothing is left - a sideways drag with Z locked asks for
-    exactly the turn that is forbidden, and the honest answer is that the view
-    does not move.
-    """
-    remaining = np.array(wanted, dtype=np.float64)
-    for name in locked:
-        axis = AXES.get(name.upper()[:1])
-        if axis is not None:
-            remaining = remaining - float(np.dot(remaining, axis)) * axis
-
-    length = float(np.linalg.norm(remaining))
-    if length < LEAST_AXIS:
-        return None
-    return remaining / length
+def _above_the_horizon(away: NDArray[np.float64]) -> float:
+    """How far above the plate the eye is, in degrees."""
+    length = float(np.linalg.norm(away))
+    if length < 1e-9:
+        return 0.0
+    return float(np.degrees(np.arcsin(np.clip(away[2] / length, -1.0, 1.0))))
 
 
 def turned_about(
@@ -102,43 +93,36 @@ def turned_about(
     return matrix
 
 
-class LockedTurning:
-    """Turns a view by dragging, with any world axis held still.
+class Turning:
+    """Turntable turning, with either drag direction held still.
 
-    Listens ahead of the camera controls and takes the drag away from them
-    while anything is locked, so the trackball never gets to tumble. With
-    nothing locked it does not interfere at all. Panning, the wheel and the
-    drag handles are never claimed.
+    Always listening, and ahead of the camera controls: the trackball is never
+    allowed to run, because the roll it adds is the thing being designed out.
+    Panning, the wheel and the drag handles are never claimed.
     """
 
     def __init__(self, plotter: Any) -> None:
-        """Watch a plotter's interactor. Idle until something is locked."""
+        """Watch a plotter's interactor and take its turning over."""
         self._plotter = plotter
-        self._locked: set[str] = set()
+        self._held: set[str] = set()
         self._turning = False
         self._from: tuple[int, int] | None = None
         self._observers: list[int] = []
+        self._watch()
 
     @property
-    def locked(self) -> frozenset[str]:
-        """Which axes the view may not turn about."""
-        return frozenset(self._locked)
+    def held(self) -> frozenset[str]:
+        """Which drag directions do nothing."""
+        return frozenset(self._held)
 
-    def lock(self, axis: str, held: bool) -> None:
-        """Hold one axis still, or let it go."""
-        name = (axis or "").upper()[:1]
-        if name not in AXES:
+    def hold(self, direction: str, held: bool) -> None:
+        """Stop one drag direction turning the view, or let it go again."""
+        if direction not in DIRECTIONS:
             return
         if held:
-            self._locked.add(name)
+            self._held.add(direction)
         else:
-            self._locked.discard(name)
-
-        self._turning = False
-        if self._locked:
-            self._watch()
-        else:
-            self.stop()
+            self._held.discard(direction)
 
     def stop(self) -> None:
         """Let go of the interactor."""
@@ -154,20 +138,21 @@ class LockedTurning:
         return self._plotter.iren.interactor
 
     def _watch(self) -> None:
-        """Listen, once, and ahead of the camera controls.
+        """Listen ahead of the camera controls.
 
         Below the drag handles, which sit at 10: a drag that grabbed a handle
         is moving the part and must not also turn the view.
         """
         if self._observers:
             return
-        interactor = self._interactor()
-        for event, handler in (
-            ("LeftButtonPressEvent", self._pressed),
-            ("MouseMoveEvent", self._moved),
-            ("LeftButtonReleaseEvent", self._released),
-        ):
-            self._observers.append(interactor.AddObserver(event, handler, 5.0))
+        with contextlib.suppress(AttributeError, RuntimeError):
+            interactor = self._interactor()
+            for event, handler in (
+                ("LeftButtonPressEvent", self._pressed),
+                ("MouseMoveEvent", self._moved),
+                ("LeftButtonReleaseEvent", self._released),
+            ):
+                self._observers.append(interactor.AddObserver(event, handler, 5.0))
 
     def _claim(self, interactor: Any) -> None:
         """Take this event away from the camera controls."""
@@ -177,14 +162,12 @@ class LockedTurning:
                 command.SetAbortFlag(1)
 
     def _pressed(self, interactor: Any, _event: str) -> None:
-        if not self._locked:
-            return
         self._turning = True
         self._from = tuple(interactor.GetEventPosition())
         self._claim(interactor)
 
     def _moved(self, interactor: Any, _event: str) -> None:
-        if not self._locked or not self._turning or self._from is None:
+        if not self._turning or self._from is None:
             return
         self._claim(interactor)
 
@@ -196,8 +179,6 @@ class LockedTurning:
         self.drag_by(across, up)
 
     def _released(self, interactor: Any, _event: str) -> None:
-        if not self._locked:
-            return
         self._turning = False
         self._from = None
         self._claim(interactor)
@@ -205,25 +186,17 @@ class LockedTurning:
     # -------------------------------------------------------------- the maths
 
     def drag_by(self, across: int, up: int) -> None:
-        """Turn the view as a drag of this size would, minus what is locked.
-
-        Sideways asks to spin about the world's upright axis; up and down asks
-        to tip about whichever way the camera calls right. Each is projected
-        off the locked axes first, so a forbidden turn never happens at all.
-        """
+        """Turn the view as a drag of this size would, minus what is held."""
         moved = False
 
-        for wanted, degrees in (
-            (AXES["Z"], -across * DEGREES_PER_PIXEL),
-            (self._camera_right(), -up * DEGREES_PER_PIXEL),
-        ):
-            if not degrees:
-                continue
-            axis = allowed_axis(wanted, self._locked)
-            if axis is None:
-                continue
-            self._turn(axis, degrees)
+        if across and SIDEWAYS not in self._held:
+            # About the world's upright axis, never about the camera's own -
+            # which is exactly what stops roll accumulating.
+            self._turn(_UPRIGHT, -across * DEGREES_PER_PIXEL)
             moved = True
+
+        if up and UP_AND_DOWN not in self._held:
+            moved = self._tilt(-up * DEGREES_PER_PIXEL) or moved
 
         if moved:
             self._plotter.render()
@@ -234,15 +207,42 @@ class LockedTurning:
         forward = np.array(camera.focal_point, dtype=np.float64) - np.array(
             camera.position, dtype=np.float64
         )
-        right = np.cross(forward, np.array(camera.up, dtype=np.float64))
+        right = np.cross(forward, _UPRIGHT)
         length = float(np.linalg.norm(right))
-        return AXES["X"] if length < LEAST_AXIS else right / length
+        if length < 1e-9:
+            # Looking straight down the upright axis: any horizontal direction
+            # will do, and X is as good as any.
+            return np.array([1.0, 0.0, 0.0])
+        return right / length
+
+    def _tilt(self, degrees: float) -> bool:
+        """Raise or lower the eye, stopping short of straight up or down.
+
+        The limit is checked by working out where the camera *would* end up
+        and refusing to go there, rather than by reasoning about which way a
+        positive angle turns. The first version did the reasoning and got the
+        sign backwards, so forty hard upward drags went over the top and came
+        out at seventy-nine degrees below - upside down, with the mouse
+        working backwards.
+        """
+        camera = self._plotter.camera
+        focus = np.array(camera.focal_point, dtype=np.float64)
+        position = np.array(camera.position, dtype=np.float64)
+
+        spin = turned_about(self._camera_right(), degrees, focus)
+        would_be = spin[:3, :3] @ position + spin[:3, 3]
+        if abs(_above_the_horizon(would_be - focus)) > 90.0 - NEAREST_THE_POLE:
+            return False
+
+        camera.position = tuple(would_be)
+        camera.up = tuple(spin[:3, :3] @ np.array(camera.up, dtype=np.float64))
+        return True
 
     def _turn(self, axis: NDArray[np.float64], degrees: float) -> None:
-        """Rotate the camera and its up vector about one axis.
+        """Rotate the camera about one world axis through what it looks at.
 
-        The up vector is turned rather than recomputed, which is what stops
-        the horizon rolling: it stays exactly as square as it started.
+        The up vector is turned with it rather than recomputed, so it stays
+        exactly as square to the world as it started.
         """
         camera = self._plotter.camera
         focus = np.array(camera.focal_point, dtype=np.float64)
