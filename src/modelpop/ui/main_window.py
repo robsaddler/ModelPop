@@ -113,6 +113,7 @@ class _WindowSignals(QObject):
     notified = Signal(object)
     cad_outcome = Signal(object)
     model_changed = Signal(object)
+    kernel_answered = Signal()
     busy_changed = Signal(bool)
 
 
@@ -890,6 +891,7 @@ class MainWindow(QMainWindow):
         # that is where this object lives.
         self._signals.cad_outcome.connect(self._on_cad_outcome)
         self._signals.model_changed.connect(self._on_model_changed)
+        self._signals.kernel_answered.connect(self._on_kernel_answered)
         self._signals.state_changed.connect(self._on_state_changed)
         self._signals.notified.connect(self._on_notification)
         self._signals.busy_changed.connect(self._on_busy_changed)
@@ -1362,6 +1364,22 @@ class MainWindow(QMainWindow):
             )
             return
         self._scene.show_mesh(fallback, has_problems=has_problems)  # type: ignore[arg-type]
+
+    def kernel_is_being_probed_by(self, kernel: object) -> None:
+        """Be told when the CAD kernel's availability is finally known.
+
+        Asked for on its own thread so the window is not held shut for the two
+        and a half seconds it takes; until it lands the CAD tools are greyed,
+        and this is what un-greys them.
+        """
+        starter = getattr(kernel, "start_probing", None)
+        if starter is not None:
+            starter(self._signals.kernel_answered.emit)
+
+    def _on_kernel_answered(self) -> None:
+        """The kernel said whether it is there. Offer what it allows."""
+        self._cad_panel.refresh_what_is_possible()
+        self._refresh_buttons()
 
     def _on_model_changed(self, _state: object) -> None:
         """Redraw when the scene, or which object is selected, changes.

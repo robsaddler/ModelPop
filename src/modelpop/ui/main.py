@@ -38,8 +38,14 @@ from modelpop.vision.photogrammetry import ColmapOpenMvsReconstructor
 __all__ = ["build_discovery", "build_workspace", "main"]
 
 
-def build_workspace() -> Workspace:
+def build_workspace(kernel: Build123dKernel | None = None) -> Workspace:
     """Wire the application together.
+
+    Args:
+        kernel: the CAD kernel to share. One is made if none is given, but
+            sharing matters: each one costs its own two-and-a-half second
+            probe, and two of them meant the application asked the same
+            question twice on every start.
 
     Every external dependency is optional at start-up. A missing slicer
     disables slicing, a missing API key disables generation, and everything
@@ -56,7 +62,7 @@ def build_workspace() -> Workspace:
         mesh_ops=ops,
         slicer=BambuSlicer(),
         printer=PrinterProfile.p2s(),
-        generator=CadLoopGenerator(AnthropicProvider(), Build123dKernel(), ops),
+        generator=CadLoopGenerator(AnthropicProvider(), kernel or Build123dKernel(), ops),
         gcode_verifier=ToolpathVerifier(),
         mesh_generator=TrellisCliGenerator(mesh_io, lease=card),
         # The real gateway is wired in, and sends nothing until the user
@@ -99,15 +105,29 @@ def main() -> int:
     app.setWindowIcon(icon())
 
     secrets = default_store()
+
+    # Ask whether the CAD kernel is there *now*, on its own thread, so the
+    # answer is ready by the time the window asks for it. Asked inline it costs
+    # two and a half seconds of a closed window.
+    # Started before the window is built, so the CAD panel's first question
+    # finds a probe already running and is told "not yet" instead of waiting
+    # two and a half seconds for it.
+    kernel = Build123dKernel()
+    kernel.start_probing()
+
     window = MainWindow(
-        build_workspace(),
+        build_workspace(kernel),
         lambda: build_discovery(secrets),
         ModellingSession(
-            Build123dCompiler(Build123dKernel()),
+            Build123dCompiler(kernel),
             JsonProjectStore(),
             TrimeshIO(),
         ),
     )
+    # Started once the window exists, so the answer can be delivered to it.
+    # Nothing waits for it: the CAD tools are greyed for a moment instead of
+    # the window being held shut for the whole probe.
+    window.kernel_is_being_probed_by(kernel)
     window.show()
     return app.exec()
 

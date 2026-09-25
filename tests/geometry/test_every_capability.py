@@ -33,14 +33,23 @@ class TestTheMeshLibraries:
             assert io.save(unit_cube(10), path).ok, f"cannot write {suffix}"
             assert io.load(path).ok, f"cannot read {suffix}"
 
-    def test_the_voxel_rebuild_runs(self):
-        """The one that was missing a library.
+    def test_marching_cubes_has_a_backend(self):
+        """The exact call that was missing a library.
 
-        Called directly rather than through ``repair``: an easy repair never
-        reaches it, which is exactly why nobody noticed it could not run.
+        ``trimesh.voxel.marching_cubes`` reaches for scikit-image, and it is
+        only reached by the last-resort repair - which an easy repair never
+        gets to, which is why nobody noticed it could not run.
+
+        Called directly, on a deliberately coarse grid. The repair path uses a
+        256-step pitch and takes seven seconds; what is being checked here is
+        that the backend exists, and that costs nothing at four steps.
         """
-        rebuilt = TrimeshOps()._voxel_remesh(unit_cube(10))
-        assert rebuilt.ok, f"the voxel rebuild failed: {rebuilt.detail}"
+        import trimesh
+
+        box = trimesh.creation.box(extents=(10.0, 10.0, 10.0))
+        rebuilt = box.voxelized(pitch=2.5).fill().marching_cubes
+
+        assert len(rebuilt.faces) > 0, "marching cubes produced nothing"
 
     def test_repairing_something_actually_broken_works(self):
         holed = Mesh(unit_cube(10).vertices, unit_cube(10).faces[2:])

@@ -17,6 +17,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +73,10 @@ class Build123dKernel:
         # two seconds, and neither answer changes while the app is running.
         self._available: bool | None = None
         self._described: str | None = None
+        # The probe may be running on another thread; both routes take this.
+        self._asking = threading.Lock()
+        self._probing = False
+        self._to_tell: list[Callable[[], None]] = []
 
     # ------------------------------------------------------------ availability
 
@@ -89,9 +95,65 @@ class Build123dKernel:
         they run on the interface thread, so the window could not repaint and
         the model appeared to draw wrong until it got a turn.
         """
-        if self._available is None:
-            self._available = self._probe()
-        return self._available
+        if self._available is not None:
+            return self._available
+        if self._probing:
+            # Being answered on another thread. Waiting here would hold the
+            # interface still for the whole probe, which is the thing
+            # ``start_probing`` exists to avoid - so say "not yet" and let
+            # whoever asked be told again when the answer arrives.
+            return False
+        with self._asking:
+            if self._available is None:
+                self._available = self._probe()
+            return self._available
+
+    def start_probing(self, when_known: Callable[[], None] | None = None) -> None:
+        """Begin answering ``is_available`` before anybody asks.
+
+        The probe starts an interpreter and imports OCCT - two and a half
+        seconds, measured - and the interface asks for the answer while it is
+        building the CAD panel. Done there it holds the window closed for the
+        whole of it, which is most of the wait between launching the
+        application and seeing anything.
+
+        Started here it runs while the window is being built, and nothing
+        waits for it: until it lands ``is_available`` answers "not yet", so the
+        CAD tools are greyed for a moment rather than the whole window being
+        held shut. ``when_known`` is called when the answer arrives, so
+        whatever asked early can ask again.
+
+        Args:
+            when_known: told, from the probing thread, once the answer is in.
+                It must marshal back before touching anything in the interface.
+        """
+        if self._available is not None:
+            # Already answered: whoever just asked to be told can be told now.
+            if when_known is not None:
+                when_known()
+            return
+
+        if when_known is not None:
+            self._to_tell.append(when_known)
+        if self._probing:
+            # Already running. The caller has been added to the list and will
+            # hear about it with everybody else.
+            return
+
+        self._probing = True
+
+        def ask() -> None:
+            try:
+                with self._asking:
+                    if self._available is None:
+                        self._available = self._probe()
+            finally:
+                self._probing = False
+                for listener in tuple(self._to_tell):
+                    listener()
+                self._to_tell.clear()
+
+        threading.Thread(target=ask, name="modelpop-kernel-probe", daemon=True).start()
 
     def _probe(self) -> bool:
         """Actually ask, by starting an interpreter and importing."""

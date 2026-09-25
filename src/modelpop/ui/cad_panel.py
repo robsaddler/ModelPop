@@ -661,6 +661,15 @@ class CadPanel(QWidget):
             item.setToolTip("Undone. Redo puts this back.")
             self._tree.addItem(item)
 
+    def refresh_what_is_possible(self) -> None:
+        """Offer what the kernel allows, now that it has said.
+
+        The availability of the CAD kernel is answered on another thread so
+        the window is not held shut waiting for it; everything here is greyed
+        until the answer lands, and this is what un-greys it.
+        """
+        self._show(self._view.state)
+
     def _refresh(self) -> None:
         """Enable only what the model's current state actually allows."""
         buildable = self._view.can_build and not self._view.is_busy
