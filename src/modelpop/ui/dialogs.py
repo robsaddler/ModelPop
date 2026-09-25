@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -70,6 +71,10 @@ _EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 
 # palette(mid) resolves almost to the background on a dark theme, which makes
 # explanatory text invisible - the opposite of what a hint is for.
+# Wide enough that the printer's three fields and their Forget buttons sit on
+# one line each, rather than a column so narrow it has to be tall.
+WIDE_ENOUGH = 760
+
 _HINT_STYLE = "color: #9AA5B1; font-size: 11px;"
 
 
@@ -116,16 +121,29 @@ class SettingsDialog(QDialog):
         self._graphics_status = graphics_status
 
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(WIDE_ENOUGH)
+
+        # Tabs rather than one tall column. Stacked, the seven groups came to
+        # 1,176 pixels in a 520-wide column - taller than the screen on a
+        # laptop, with no way to reach the buttons at the bottom. Grouped by
+        # what they are *about* rather than by what kind of control they are:
+        # the printer is one job, the assistant is another, and nobody
+        # configures both in the same sitting.
+        tabs = QTabWidget()
+        tabs.addTab(self._a_page(self._build_printer_group()), "Printer")
+        tabs.addTab(
+            self._a_page(self._build_key_group(), self._build_model_group()),
+            "Assistant",
+        )
+        tabs.addTab(
+            self._a_page(self._build_generation_group(), self._build_limits_group()),
+            "Making models",
+        )
+        tabs.addTab(self._a_page(self._build_sources_group()), "Finding models")
+        tabs.addTab(self._a_page(self._build_graphics_group()), "This machine")
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self._build_key_group())
-        layout.addWidget(self._build_sources_group())
-        layout.addWidget(self._build_model_group())
-        layout.addWidget(self._build_limits_group())
-        layout.addWidget(self._build_generation_group())
-        layout.addWidget(self._build_graphics_group())
-        layout.addWidget(self._build_printer_group())
+        layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -133,6 +151,25 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    @staticmethod
+    def _a_page(*groups: QWidget) -> QWidget:
+        """One tab's worth of settings, pushed to the top of the page.
+
+        The stretch matters: without it a short page spreads its one group over
+        the height of the tallest tab, and switching tabs makes everything
+        jump about.
+        """
+        page = QVBoxLayout()
+        page.setContentsMargins(12, 12, 12, 12)
+        page.setSpacing(12)
+        for group in groups:
+            page.addWidget(group)
+        page.addStretch(1)
+
+        held = QWidget()
+        held.setLayout(page)
+        return held
 
     # ------------------------------------------------------------------ build
 
@@ -249,8 +286,10 @@ class SettingsDialog(QDialog):
         form.addRow(self._send_for_real)
 
         note = QLabel(
-            "The address, serial and access code are on the printer's own network "
-            "screen. Leave the box unticked and ModelPop describes what it would "
+            "On the printer: Settings > General > LAN-Only mode. Turning it on shows "
+            "the address and the access code; the serial is under Settings > Device. "
+            "If the code reads all zeros, toggle LAN-Only off and on again. "
+            "Leave the box unticked and ModelPop describes what it would "
             "send without sending it, which is how it behaves until you say "
             "otherwise. LAN mode only: nothing goes through a Bambu account or a "
             "server on the internet. "

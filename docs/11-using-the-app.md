@@ -184,6 +184,29 @@ over it.
 
 ---
 
+## Connecting the printer
+
+**File -> Settings** opens on the **Printer** tab. Three fields, all from the printer itself:
+
+On a **P2S**: **Settings -> General -> LAN-Only mode**, and confirm. Turning it on shows the
+**address** and the **access code** on that same screen; the **serial** is under
+**Settings -> Device**. If the access code reads all zeros, toggle LAN-Only off and on again and it
+regenerates. On current firmware you may also need **Developer Mode**, which only appears in that
+menu once LAN-Only is on - it is what allows software other than Bambu Studio to talk to the
+printer.
+
+That path is the P2S's. It is *not* the X1's, which puts the same settings under a gear icon and
+Network, and following the X1 instructions on a P2S finds nothing.
+
+ModelPop is **LAN only** by design (ADR-0011): no Bambu account, no token refresh, no server in the
+middle. A printer left in cloud mode will not answer it.
+
+**Leave "Really send jobs to this printer" unticked** until you want a job to actually leave the
+machine. Until then ModelPop describes what it would send. It is the only thing the application does
+that cannot be undone from inside it.
+
+---
+
 ## Which printer it thinks you have
 
 The label at the top left of the viewport names the printer and its build volume, and says where
