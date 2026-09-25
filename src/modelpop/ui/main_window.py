@@ -186,6 +186,9 @@ class MainWindow(QMainWindow):
         self._pressed_at: QPoint | None = None
         # True between letting go of a handle and the rebuild landing.
         self._drag_in_flight = False
+        # What _draw_scene last put on screen, so one change announced twice
+        # is not drawn twice. See _draw_scene.
+        self._drawn: tuple[object, str, bool, object] | None = None
         # The scene owns the geometry; the workspace holds a copy of it for
         # readiness, slicing and export. This is the hash of the copy the scene
         # last handed over, so a mesh appearing in the workspace that the scene
@@ -626,6 +629,10 @@ class MainWindow(QMainWindow):
             return
 
         self._drag_in_flight = True
+        # The actor is standing where it was dragged to rather than where the
+        # model says, so the next draw has to run even if the geometry it is
+        # handed happens to be the same objects.
+        self._drawn = None
         self._scene.pause_dragging()
         if drag.is_a_resize:
             # A proportion rather than a command: only the session knows how
@@ -1428,8 +1435,27 @@ class MainWindow(QMainWindow):
         A model that came from the CAD tools is a scene of separate objects and
         is drawn as one; a mesh that was opened or generated is a single thing
         with no feature tree behind it, and is drawn as one actor as before.
+
+        **Skipped when it would draw exactly what is already on screen.** One
+        change reaches here more than once: the workspace announces, the scene
+        adopts the geometry back and announces in turn, and both handlers
+        redraw. Simplifying the dragon drew the same three hundred thousand
+        triangles three times over, at 0.43 s, 0.15 s and 0.13 s - all of it on
+        the interface thread, because building VTK polydata and shading normals
+        is not something a worker can do.
+
+        Compared by identity rather than by content: the meshes are frozen
+        values that live on the state, so the same geometry is the same object,
+        and a rebuild that changes anything at all makes new ones. Holding the
+        reference is also what keeps the comparison honest - an id() of a
+        collected object can be handed out again.
         """
         bodies = self._modelling.bodies
+        drawing = (bodies, self._modelling.selected, has_problems, fallback)
+        if self._drawn is not None and _the_same_scene(self._drawn, drawing):
+            return
+        self._drawn = drawing
+
         if bodies:
             self._scene.show_bodies(
                 [(body.id, body.mesh) for body in bodies],
@@ -1527,6 +1553,30 @@ class MainWindow(QMainWindow):
         self._how_long.busy(busy, doing)
         if busy and doing:
             self.statusBar().showMessage(f"{doing}...")
+            # Painted now, not when the event loop next gets a turn. This is
+            # announced from the click that starts the work, and the work is
+            # Python and numpy on a worker thread - which holds the interpreter
+            # lock often enough that the interface gets no turn for a second or
+            # more. Without this the message and the clock are *set* and never
+            # drawn, so a repair looks like a window that froze having said
+            # nothing, which is exactly how it was reported.
+            self.statusBar().repaint()
+            self._how_long.repaint()
+
+
+def _the_same_scene(
+    before: tuple[object, str, bool, object], now: tuple[object, str, bool, object]
+) -> bool:
+    """Whether two draws would put the same thing on screen.
+
+    The geometry is compared by identity and the rest by value. Identity is
+    the right test for a frozen value that is rebuilt whenever it changes, and
+    it costs nothing - content hashing a million triangles to save a redraw
+    would be its own kind of silly.
+    """
+    return (
+        before[0] is now[0] and before[1] == now[1] and before[2] == now[2] and before[3] is now[3]
+    )
 
 
 def _where_it_came_from(state: WorkspaceState) -> str:

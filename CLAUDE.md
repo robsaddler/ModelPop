@@ -219,6 +219,22 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    printer profile is set once at construction: if a profile ever becomes changeable, clear the
    cache with it.
 
+23. **A worker thread is not a free pass: Python work on one still freezes the window.** Repair and
+   Simplify both went through `BackgroundRunner` correctly and both still locked the interface -
+   measured at 0.65 s without a heartbeat during a decimation, because a worker doing Python and
+   numpy holds the interpreter lock. The status message was *set* on the click and never drawn, so
+   the window looked dead having said nothing. Announce busy **before** dispatching (it already
+   did) and **paint on the spot** - `statusBar().repaint()` - or the repaint queues behind the very
+   work it is meant to describe. C extensions that release the lock (pymeshfix) are fine: repair
+   never froze the window at all once it was told what to say.
+24. **One change reaches the viewport more than once.** The workspace announces, the scene adopts
+   the same geometry back and announces in turn, and both handlers redraw. Simplifying the dragon
+   drew it three times - 0.43 s, 0.15 s, 0.13 s - all on the interface thread, because building VTK
+   polydata and shading normals is not work a thread can take. `_draw_scene` now skips a draw that
+   would put up what is already there, compared by *identity*: the meshes are frozen values on the
+   state, so the same geometry is the same object and anything rebuilt is a new one. A drag clears
+   the guard, because the actor is standing where it was dragged rather than where the model says.
+
 ## Style
 
 Type hints everywhere, `mypy --strict`. `ruff` for lint and format. Dataclasses (frozen where they are

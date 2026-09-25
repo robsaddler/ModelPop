@@ -113,3 +113,57 @@ class TestAndNeitherAcceptsASecondGo:
         model.add_sphere(5)
 
         assert any(o.refused and "rebuilding" in o.message.lower() for o in outcomes)
+
+
+class TestItIsSaidBeforeTheWorkStarts:
+    """Not eventually. *Before*, on the thread that took the click.
+
+    "Did a Simplify and I did a Repair and both lock the UI and don't update
+    the status bar with the action being done, not the timer."
+
+    The message was being set correctly and never drawn. Announcing busy and
+    then handing the work straight to a runner leaves the repaint queued behind
+    a worker that is Python and numpy, and a worker holding the interpreter
+    lock stops the interface getting a turn just as dead as running inline
+    would. Measured on the dragon: the window went 0.65 s without a heartbeat
+    from the moment a simplify was clicked.
+
+    So the order has to hold - busy, and what it is doing, are both true before
+    the task is dispatched - and the window paints the status bar and the clock
+    on the spot. Without the first of those the second has nothing to draw.
+    """
+
+    def test_what_it_is_doing_is_known_before_the_task_runs(self):
+        seen = []
+        view = WorkspaceViewModel(Workspace(TrimeshIO(), TrimeshOps()))
+        view.adopt(cube(40))
+        view._runner = lambda work: (seen.append((view.doing, view.is_busy)), work())
+
+        view.simplify(1000)
+
+        assert seen == [("Simplifying to about 1,000 triangles", True)], (
+            "the task was dispatched before the window had anything to say"
+        )
+
+    def test_the_same_holds_for_repair(self):
+        seen = []
+        view = WorkspaceViewModel(Workspace(TrimeshIO(), TrimeshOps()))
+        view.adopt(cube(40))
+        view._runner = lambda work: (seen.append((view.doing, view.is_busy)), work())
+
+        view.repair()
+
+        assert seen[0][1] is True
+        assert seen[0][0].startswith("Repairing the model")
+
+    def test_the_busy_announcement_arrives_before_the_task_too(self):
+        """It is the announcement the window listens to, not the property."""
+        order = []
+        view = WorkspaceViewModel(Workspace(TrimeshIO(), TrimeshOps()))
+        view.adopt(cube(40))
+        view.on_busy_changed(lambda busy: order.append(f"busy={busy}"))
+        view._runner = lambda work: (order.append("dispatched"), work())
+
+        view.simplify(1000)
+
+        assert order[:2] == ["busy=True", "dispatched"], f"the order was {order}"
