@@ -270,10 +270,11 @@ class TestAModelThatArrivesWithNoScale:
         assert model.bodies[0].bounds.largest_dimension.millimetres == pytest.approx(40.0, abs=0.01)
         assert model.bodies[0].label == "Opened"
 
-    def test_a_small_but_deliberate_part_is_left_alone(self):
+    def test_a_model_a_few_millimetres_across_is_given_a_size_too(self):
+        """What a real Thingiverse download measured: 7.2 mm, 1.1M triangles."""
         model = scene()
-        model.place_mesh(cube(5), "Opened")
-        assert model.bodies[0].bounds.largest_dimension.millimetres == pytest.approx(5.0, abs=0.01)
+        model.place_mesh(Mesh(cube(40).vertices * 0.18, cube(40).faces), "Downloaded")
+        assert model.bodies[0].bounds.largest_dimension.millimetres == pytest.approx(60.0, abs=0.1)
 
     def test_a_model_far_bigger_than_the_machine_is_brought_down(self):
         model = scene()

@@ -26,10 +26,19 @@ __all__ = [
     "settle_onto_bed",
 ]
 
-# Below this a model is not a small part, it is a model with no scale at all -
-# a mesh from a picture or a photogrammetry run arrives in arbitrary units and
-# is routinely a single millimetre across.
-PRINTABLE_AT_LEAST_MM = 2.0
+# Below this a model is not a small part, it is a model with no scale at all.
+#
+# Measured on real files rather than guessed. A mesh from a picture arrives
+# about one millimetre across. Two models downloaded from Thingiverse came in
+# at 7.9 mm and 7.2 mm - and the second carries 1,132,190 triangles, which
+# nobody authors for something the size of a pea. Neither was a small part;
+# both were authored in units nobody wrote down.
+#
+# The line is drawn generously because the cost is asymmetric. A genuine 12 mm
+# part resized is one undo away and says in its own name that the size was
+# chosen; a 7 mm dragon left alone is invisible on a 256 mm plate and prints
+# as a speck.
+PRINTABLE_AT_LEAST_MM = 15.0
 
 # What to make one instead: big enough to see and to print, small enough to sit
 # on any plate. The user is expected to set the real size; this is only so the

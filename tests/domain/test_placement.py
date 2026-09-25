@@ -122,10 +122,21 @@ class TestJudgingAnArrivingModel:
     def test_an_ordinary_part_is_left_alone(self):
         assert needs_a_sensible_size(box(), 256.0) == 0.0
 
-    def test_a_small_but_printable_part_is_left_alone(self):
-        """3 mm is a deliberate little part, not a model with no scale."""
-        small = box(min_x=-1.5, max_x=1.5, min_y=-1.5, max_y=1.5, min_z=0.0, max_z=3.0)
-        assert needs_a_sensible_size(small, 256.0) == 0.0
+    def test_a_model_a_few_millimetres_across_needs_a_size(self):
+        """Measured on real downloads, not guessed.
+
+        Two models from Thingiverse arrived at 7.9 mm and 7.2 mm, the second
+        carrying 1,132,190 triangles - nobody authors that for something the
+        size of a pea. Neither was a small part; both were authored in units
+        nobody wrote down.
+        """
+        seven = box(min_x=-3.6, max_x=3.6, min_y=-2.6, max_y=2.6, min_z=0.0, max_z=7.2)
+        assert needs_a_sensible_size(seven, 256.0) == SENSIBLE_SIZE_MM
+
+    def test_an_ordinary_printable_part_is_left_alone(self):
+        """A 40 mm bracket is a 40 mm bracket."""
+        ordinary = box(min_x=-20.0, max_x=20.0, min_y=-10.0, max_y=10.0, min_z=0.0, max_z=25.0)
+        assert needs_a_sensible_size(ordinary, 256.0) == 0.0
 
     def test_a_model_exactly_filling_the_machine_is_left_alone(self):
         assert needs_a_sensible_size(box(min_x=-128.0, max_x=128.0), 256.0) == 0.0

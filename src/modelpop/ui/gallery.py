@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QSize, Qt, QThread, Signal
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QTextBrowser,
@@ -29,8 +31,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from modelpop.domain.discovery import Candidate
 from modelpop.domain.licensing import THE_CLAUSE
 from modelpop.presentation.gallery_view_model import Card, GalleryState, GalleryViewModel, Phase
+from modelpop.repositories.thumbnails import Thumbnails
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -40,6 +44,13 @@ if TYPE_CHECKING:
     from modelpop.application.repository_ports import Download
 
 __all__ = ["GalleryDialog", "LicensingDialog"]
+
+# Big enough to recognise a model by, small enough that a page of results
+# still fits on screen.
+THUMBNAIL = 96
+
+# What an empty square looks like while its picture is on its way.
+_BLANK_COLOUR = "#2F353D"
 
 _HINT_STYLE = "color: #9AA5B1; font-size: 11px;"
 _WARN_STYLE = "color: #E0A458; font-size: 11px;"
@@ -92,6 +103,17 @@ class _GallerySignals(QObject):
     """Carries the view-model's announcements back to the interface thread."""
 
     changed = Signal(object)
+    pictured = Signal(str, object)
+    """A thumbnail arrived: the result's identity, and the bytes."""
+
+    arrived = Signal(object)
+    """The download finished. Carries the ``Download``.
+
+    A signal rather than a call, because the view-model tells its caller from
+    the worker thread that did the downloading. Handing that straight to the
+    window meant closing a modal dialog and starting more work from a thread
+    that owns neither - which locks the interface.
+    """
 
 
 class GalleryDialog(QDialog):
@@ -124,7 +146,15 @@ class GalleryDialog(QDialog):
         # back, which is what makes the results appear.
         self._signals = _GallerySignals()
         self._signals.changed.connect(self._show)
+        self._signals.pictured.connect(self._put_the_picture_on)
+        self._signals.arrived.connect(self._chosen)
         self._view.on_change(self._signals.changed.emit)
+
+        # Pictures are fetched one by one on a worker and arrive as they come,
+        # so the list appears immediately and fills in rather than waiting for
+        # the slowest CDN. Held in memory only - see ``Thumbnails``.
+        self._thumbnails = Thumbnails()
+        self._wanted: set[str] = set()
 
         self.setWindowTitle("Find a model to start from")
         self.setMinimumSize(820, 560)
@@ -158,6 +188,9 @@ class GalleryDialog(QDialog):
         layout.addLayout(paste_row)
 
         self._results = QListWidget()
+        self._results.setIconSize(QSize(THUMBNAIL, THUMBNAIL))
+        # Room for the picture plus two lines of text beside it.
+        self._results.setUniformItemSizes(False)
         self._results.currentRowChanged.connect(self._view.select)
         self._results.itemDoubleClicked.connect(lambda _: self._use())
         layout.addWidget(self._results, stretch=1)
@@ -170,6 +203,12 @@ class GalleryDialog(QDialog):
         detail_area.setWidgetResizable(True)
         detail_area.setMaximumHeight(90)
         layout.addWidget(detail_area)
+
+        self._fetching = QProgressBar()
+        self._fetching.setRange(0, 100)
+        self._fetching.setVisible(False)
+        self._fetching.setTextVisible(True)
+        layout.addWidget(self._fetching)
 
         self._status = QLabel()
         self._status.setWordWrap(True)
@@ -201,9 +240,14 @@ class GalleryDialog(QDialog):
 
     def _use(self) -> None:
         if self._view.state.can_use_selection:
-            self._view.download_selected(self._into, self._chosen)
+            # An emitter, never a method. The download finishes on a worker
+            # and tells whoever asked from there; everything below touches
+            # widgets and starts more work, and neither may happen on that
+            # thread.
+            self._view.download_selected(self._into, self._signals.arrived.emit)
 
     def _chosen(self, download: Download) -> None:
+        """The download is here, on the interface thread. Hand it on."""
         if self._on_chosen is not None:
             self._on_chosen(download)
         self.accept()
@@ -224,11 +268,19 @@ class GalleryDialog(QDialog):
         self._results.blockSignals(True)
         self._results.clear()
         for card in state.cards:
-            self._results.addItem(_row_for(card))
+            item = _row_for(card)
+            item.setData(Qt.ItemDataRole.UserRole, card.candidate.identity)
+            item.setSizeHint(QSize(0, THUMBNAIL + 12))
+            already = self._thumbnails.already_have(card.candidate)
+            item.setIcon(_as_icon(already) if already else _a_blank_square())
+            self._results.addItem(item)
         if 0 <= state.selected < len(state.cards):
             self._results.setCurrentRow(state.selected)
         self._results.blockSignals(False)
 
+        self._ask_for_the_pictures(state)
+        self._fetching.setVisible(state.is_fetching)
+        self._fetching.setValue(int(state.fetching * 100) if state.is_fetching else 0)
         self._status.setText(_status_for(state))
         self._problems.setText("\n".join(state.problems))
         self._problems.setVisible(bool(state.problems))
@@ -240,6 +292,64 @@ class GalleryDialog(QDialog):
             if chosen is not None
             else ""
         )
+
+    def _ask_for_the_pictures(self, state: GalleryState) -> None:
+        """Fetch any thumbnail not already in hand, each on its own turn."""
+        for card in state.cards:
+            candidate = card.candidate
+            identity = candidate.identity
+            if identity in self._wanted or not candidate.thumbnail_url:
+                continue
+            if self._thumbnails.already_have(candidate) is not None:
+                continue
+            self._wanted.add(identity)
+
+            def fetch(one: Candidate = candidate, key: str = identity) -> None:
+                self._signals.pictured.emit(key, self._thumbnails.of(one))
+
+            _ThreadedRunner(self)(fetch)
+
+    def _put_the_picture_on(self, identity: str, picture: object) -> None:
+        """A thumbnail arrived. Find its row and paint it."""
+        if not isinstance(picture, bytes):
+            return
+        for row in range(self._results.count()):
+            item = self._results.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == identity:
+                item.setIcon(_as_icon(picture))
+                return
+
+    def closeEvent(self, event: object) -> None:  # noqa: N802
+        """Let go of the connection pool the pictures were fetched over."""
+        self._thumbnails.close()
+        super().closeEvent(event)  # type: ignore[arg-type]
+
+
+def _as_icon(picture: bytes) -> QIcon:
+    """A downloaded image as something a list can draw.
+
+    An image that will not decode gives a blank square rather than an
+    exception: it is somebody else's file, and a gallery that falls over
+    because one CDN served a broken JPEG is worse than one with a grey box.
+    """
+    image = QPixmap()
+    if not image.loadFromData(picture):
+        return _a_blank_square()
+    return QIcon(
+        image.scaled(
+            THUMBNAIL,
+            THUMBNAIL,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    )
+
+
+def _a_blank_square() -> QIcon:
+    """What a row shows until its picture arrives, or if it never does."""
+    empty = QPixmap(THUMBNAIL, THUMBNAIL)
+    empty.fill(QColor(_BLANK_COLOUR))
+    return QIcon(empty)
 
 
 def _row_for(card: Card) -> QListWidgetItem:

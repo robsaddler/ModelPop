@@ -51,6 +51,10 @@ USER_AGENT = (
 
 _TIMEOUT = 20.0
 _DOWNLOAD_TIMEOUT = 300.0
+# A thumbnail is tens of kilobytes. Well above that and it is not a
+# thumbnail, whatever the URL claimed.
+_MOST_BYTES_IN_MEMORY = 4 * 1024 * 1024
+
 _CHUNK = 64 * 1024
 
 # A response that is neither JSON nor an error we recognise. Cloudflare's
@@ -232,6 +236,37 @@ class HttpClient:
         return None
 
     # ------------------------------------------------------------ downloads
+
+    def get_bytes(self, url: str, at_most: int = _MOST_BYTES_IN_MEMORY) -> Result[bytes]:
+        """Fetch something small into memory, never to disk.
+
+        For thumbnails. A picture shown in a gallery and dropped when the
+        window closes is what a browser does; writing it to disk would be
+        caching content, which Thingiverse's API terms do not permit (ADR-0008).
+
+        Capped, because a URL from a third party is not a promise about size.
+        """
+        self._limit.wait()
+        try:
+            with self._client.stream("GET", self._url(url), timeout=_TIMEOUT) as response:
+                problem = self._problem_with(response)
+                if problem is not None:
+                    return problem
+
+                collected = bytearray()
+                for chunk in response.iter_bytes(_CHUNK):
+                    collected.extend(chunk)
+                    if len(collected) > at_most:
+                        return failure(
+                            "That image is too large to show",
+                            f"more than {at_most // 1024} KB",
+                        )
+        except httpx.HTTPError as error:
+            return failure("The image could not be fetched", str(error))
+
+        if not collected:
+            return failure("The image was empty", url)
+        return success(bytes(collected))
 
     def download(
         self,

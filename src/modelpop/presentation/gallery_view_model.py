@@ -131,6 +131,19 @@ class GalleryState:
 
     unconfigured: tuple[str, ...] = ()
 
+    fetching: float = -1.0
+    """How far a download has got, 0 to 1. Negative when nothing is downloading.
+
+    A model can be tens of megabytes over somebody else's CDN, and a window
+    that says "Downloading..." for a minute with nothing moving is
+    indistinguishable from one that has hung.
+    """
+
+    @property
+    def is_fetching(self) -> bool:
+        """Whether a download is in flight."""
+        return self.fetching >= 0.0
+
     @property
     def has_results(self) -> bool:
         """Whether there is anything to click."""
@@ -248,17 +261,29 @@ class GalleryViewModel:
         if chosen is None:
             return
 
+        def moved(fraction: float) -> None:
+            # Announced as it goes, not just at the end: the file comes over
+            # somebody else's CDN and can take a minute, and a window that
+            # says "Downloading..." with nothing moving looks hung.
+            self._set(
+                replace(
+                    self._state,
+                    fetching=fraction,
+                    message=f"Downloading {chosen.title}... {fraction * 100:.0f}%",
+                )
+            )
+
         def work() -> None:
-            outcome = self._discovery.fetch(chosen.candidate, into)
+            outcome = self._discovery.fetch(chosen.candidate, into, moved)
             if not outcome.ok:
-                self._set(replace(self._state, message=outcome.error))
+                self._set(replace(self._state, fetching=-1.0, message=outcome.error))
                 return
             download = outcome.unwrap()
-            self._set(replace(self._state, message=f"Downloaded {chosen.title}."))
+            self._set(replace(self._state, fetching=-1.0, message=f"Downloaded {chosen.title}."))
             if then is not None:
                 then(download)
 
-        self._set(replace(self._state, message=f"Downloading {chosen.title}..."))
+        self._set(replace(self._state, fetching=0.0, message=f"Downloading {chosen.title}..."))
         self._runner(work)
 
     def paste_link(self, url: str) -> None:
