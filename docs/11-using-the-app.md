@@ -215,6 +215,35 @@ on the same model.
 
 ---
 
+## Pushing and pulling a face
+
+**View -> Push/pull a face** (Ctrl+U) is SketchUp's push/pull. Point at a flat face: it lights up in
+amber with an arrow showing which way it will go. Drag it out to add material, drag it in to take
+material away. The status bar counts the millimetres as you go, and the result joins the feature
+tree, so it undoes in one step and reads back as a sentence.
+
+It moves along the face's **own normal**, not along an axis. That is what makes it read the same
+whichever way the part has been turned, and it is the whole difference between push/pull and a move.
+
+A flat surface on a solid is many triangles, so the ones lying in the same plane as the one under
+the cursor are gathered and drawn as a single sheet. The two sides of a thin plate are parallel but
+are not the same face, and it knows the difference.
+
+**It works on parts with a feature tree**, not on an imported or generated mesh. Pushing a face of a
+mesh would mean rebuilding geometry the kernel never made, with nowhere in the tree to record it -
+so rather than something that looks live and springs back, it says so.
+
+Push/pull and the drag handles are mutually exclusive: both want the left button, and two tools
+fighting over it is worse than either being unavailable. Turning one on turns the other off.
+
+The face is remembered by **a point on it**. Faces have no identity that survives a rebuild - the
+tree is rebuilt from nothing every time - so the point you clicked is what finds it again, and on
+the next rebuild the face nearest that point is the one that moves. Move something underneath it far
+enough and the wrong face is picked; that is the trade every kernel this size makes, and the
+alternative is a constraint solver.
+
+---
+
 ## Which way up to print it
 
 **Lay it down to print**, on the right-click menu, turns the object to the way up that overhangs

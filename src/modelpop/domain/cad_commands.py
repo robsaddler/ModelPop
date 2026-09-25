@@ -51,6 +51,7 @@ __all__ = [
     "Move",
     "PlaceMesh",
     "Plane",
+    "PushPull",
     "Repeat",
     "RepeatAround",
     "Revolve",
@@ -75,6 +76,12 @@ MIN_MM = 0.01
 MAX_RADIUS_MM = 200.0
 
 MAX_TEXT = 80
+
+
+# Below this a push or pull is a slip of the hand, not an instruction. A
+# hundredth of a millimetre is well under a layer and under anything a nozzle
+# could lay down.
+LEAST_PUSH_MM = 0.01
 
 
 def _clamp(value: float, low: float = MIN_MM, high: float = MAX_MM) -> float:
@@ -693,6 +700,68 @@ class Extrude(Command):
 
 
 @dataclass(frozen=True, slots=True)
+class PushPull(Command):
+    """Take hold of one face and move it, thickening or thinning the part.
+
+    SketchUp's push/pull, and the operation people mean when they say they want
+    to model rather than to configure. Everything else in this vocabulary makes
+    a shape from numbers; this one changes a shape that already exists by
+    pointing at part of it.
+
+    **The face is named by a point on it**, which is the pragmatic answer to a
+    genuinely hard problem. Faces have no stable identity across a rebuild -
+    the tree is rebuilt from nothing every time, so there is no index, no name
+    and no handle that survives an earlier feature changing. A point does
+    survive, because it is in the same millimetres as everything else, and on
+    the next rebuild the face nearest it is the face that was meant. That is
+    not perfect and is not pretending to be: move something underneath it far
+    enough and the wrong face is picked. It is the trade every kernel of this
+    size makes, and the alternative is a constraint solver.
+
+    ``distance`` is signed along the face's own outward normal: positive pulls
+    material out, negative pushes it in. Which way that is on screen is
+    therefore decided by the face, not by the axis, which is what makes it
+    read the same whichever way the part has been turned.
+    """
+
+    at: tuple[float, float, float]
+    """A point on the face to take hold of, in millimetres."""
+
+    distance: float
+    """How far to move it, along its own normal. Negative pushes in."""
+
+    def __post_init__(self) -> None:
+        """Keep the point and the distance inside what a kernel can survive."""
+        object.__setattr__(
+            self,
+            "at",
+            tuple(_clamp(value, -MAX_MM, MAX_MM) for value in tuple(self.at)[:3]),
+        )
+        object.__setattr__(self, "distance", _clamp(self.distance, -MAX_MM, MAX_MM))
+
+    @property
+    def name(self) -> str:
+        """The feature name recorded in the document."""
+        return "push-pull"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """Everything needed to rebuild this feature."""
+        return {"at": list(self.at), "distance": self.distance}
+
+    def describe(self) -> str:
+        """A line for the feature tree."""
+        verb = "Pull" if self.distance >= 0 else "Push"
+        x, y, z = self.at
+        return f"{verb} the face at ({x:g}, {y:g}, {z:g}) by {abs(self.distance):g} mm"
+
+    @property
+    def does_anything(self) -> bool:
+        """Whether this is a move at all rather than a twitch."""
+        return abs(self.distance) >= LEAST_PUSH_MM
+
+
+@dataclass(frozen=True, slots=True)
 class Mirror(Command):
     """Reflect the part and keep both halves.
 
@@ -1187,6 +1256,7 @@ _BY_NAME: dict[str, Any] = {
     "sweep": Sweep,
     "loft": Loft,
     "text-on-surface": TextOnSurface,
+    "push-pull": PushPull,
 }
 
 
@@ -1215,6 +1285,9 @@ def _construct(factory: Any, parameters: dict[str, Any]) -> Command:
     if factory is Hollow:
         opening = parameters.get("opening")
         return Hollow(parameters["wall_thickness"], Face(opening) if opening else None)
+    if factory is PushPull:
+        at = tuple(float(value) for value in parameters["at"])
+        return PushPull(at, float(parameters["distance"]))  # type: ignore[arg-type]
     if factory is PlaceMesh:
         return PlaceMesh(str(parameters["source"]), str(parameters.get("note", "")))
     if factory is ScaleTo:

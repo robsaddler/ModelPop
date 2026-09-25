@@ -33,6 +33,7 @@ from modelpop.domain.cad_commands import (
     Mirror,
     Move,
     Plane,
+    PushPull,
     Repeat,
     RepeatAround,
     Revolve,
@@ -441,6 +442,13 @@ class ModellingViewModel:
     def rotate(self, degrees: float, axis: str = "Z") -> None:
         """Turn the part about an axis."""
         self._apply(Rotate(degrees, axis))
+
+    def push_pull(self, at: tuple[float, float, float], distance: float) -> None:
+        """Move one face of the selected object along its own normal."""
+        pull = PushPull(at, distance)
+        if not pull.does_anything:
+            return
+        self._apply(pull)
 
     def lay_it_down(self) -> None:
         """Turn the selected object to the way up that overhangs least."""

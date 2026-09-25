@@ -88,6 +88,9 @@ __all__ = ["MainWindow"]
 # an attempt to rotate the model.
 CLICK_SLOP_PIXELS = 4
 
+# Below this a push or pull is a slip of the hand rather than an instruction.
+LEAST_PULL_MM = 0.05
+
 # How much room the side panel starts with, and the least it may be dragged to.
 # The CAD tools need a shade over 600 to show a row without cutting the end off
 # it; below the minimum the panel scrolls rather than losing anything.
@@ -590,6 +593,17 @@ class MainWindow(QMainWindow):
         self._drag_action.toggled.connect(self._set_dragging)
         view_menu.addAction(self._drag_action)
 
+        self._pull_action = QAction("P&ush/pull a face", self)
+        self._pull_action.setCheckable(True)
+        self._pull_action.setShortcut(QKeySequence("Ctrl+U"))
+        self._pull_action.setToolTip(
+            "Point at a flat face and drag it in or out, the way SketchUp does. "
+            "It moves along its own normal, so it reads the same whichever way "
+            "the part is turned."
+        )
+        self._pull_action.toggled.connect(self._set_pulling)
+        view_menu.addAction(self._pull_action)
+
     # -------------------------------------------------------------- measuring
 
     def _set_measuring(self, on: bool) -> None:
@@ -658,6 +672,9 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if self._pull_action.isChecked():
+            self._pull_action.setChecked(False)
+
         if not self._scene.start_dragging(self._dragged, self._dragging):
             self._drag_action.setChecked(False)
             self.statusBar().showMessage("There is nothing on the plate to drag.")
@@ -668,6 +685,59 @@ class MainWindow(QMainWindow):
             "Drag an arrow to move the part, or a ring to turn it. "
             "Each drag joins the feature tree and undoes."
         )
+
+    def _set_pulling(self, on: bool) -> None:
+        """Turn push/pull on or off.
+
+        Only on a part with a feature tree. Pushing a face of an imported mesh
+        would mean rebuilding geometry the kernel never made, and there is
+        nowhere in the tree to record it - so rather than something that looks
+        live and springs back, it says why.
+        """
+        if not on:
+            self._scene.stop_pulling_faces()
+            self._viewport.render()
+            self.statusBar().showMessage("Push/pull is off.")
+            return
+
+        if self._modelling.state.is_empty or self._modelling.is_a_whole_mesh:
+            self._pull_action.setChecked(False)
+            QMessageBox.information(
+                self,
+                "ModelPop",
+                "Push/pull works on a part with a feature tree.\n\n"
+                "Start one in the CAD tools tab, or describe what you want. An "
+                "opened or generated mesh has no faces the kernel can take hold of.",
+            )
+            return
+
+        # One at a time: both claim the left button, and two tools fighting
+        # over it is worse than either being unavailable.
+        if self._drag_action.isChecked():
+            self._drag_action.setChecked(False)
+
+        if not self._scene.start_pulling_faces(self._pulled, self._pulling):
+            self._pull_action.setChecked(False)
+            self.statusBar().showMessage("There is nothing on the plate to push or pull.")
+            return
+
+        self._viewport.render()
+        self.statusBar().showMessage(
+            "Point at a flat face, then drag it in or out. Each pull joins the feature "
+            "tree and undoes."
+        )
+
+    def _pulling(self, distance: float) -> None:
+        """Say how far the face has moved, while it is still moving."""
+        verb = "Pulling out" if distance >= 0 else "Pushing in"
+        self.statusBar().showMessage(f"{verb} {abs(distance):.2f} mm")
+
+    def _pulled(self, at: tuple[float, float, float], distance: float) -> None:
+        """Turn a released pull into a command on the bus."""
+        if abs(distance) < LEAST_PULL_MM:
+            self.statusBar().showMessage("That pull did not move anything.")
+            return
+        self._modelling.push_pull(at, distance)
 
     def _dragging(self, matrix: object) -> None:
         """Say how far the part has moved, while it is still moving.

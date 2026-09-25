@@ -39,6 +39,7 @@ from modelpop.domain.cad_commands import (
     Mirror,
     Move,
     Plane,
+    PushPull,
     Repeat,
     RepeatAround,
     Revolve,
@@ -331,6 +332,8 @@ def _fragment_for(command: Command, *, first: bool, copy: str = "") -> str | Non
             return _scale_fragment(command)
         case Mirror():
             return _mirror_fragment(command)
+        case PushPull():
+            return _push_pull_fragment(command)
         case TextOnSurface():
             return _text_fragment(command)
         case _:
@@ -608,6 +611,35 @@ def _scale_fragment(command: ScaleTo) -> str:
         "_bbox = result.bounding_box()\n"
         "_factor = _target / max(_bbox.size.Z, 1e-6)\n"
         "result = scale(result, by=_factor)"
+    )
+
+
+def _push_pull_fragment(command: PushPull) -> str | None:
+    """Take hold of the face nearest a point and move it along its own normal.
+
+    Nearest by *centre*, which is the honest version of a hard problem: faces
+    have no identity that survives a rebuild, so the point the user clicked is
+    what identifies it next time round. Picking by centre rather than by the
+    click point itself matters on a long face - two faces can both be close to
+    a click near a shared edge, and the one whose middle is nearest is the one
+    that was being looked at.
+
+    Pulling adds the extruded face to the solid and pushing subtracts it, so
+    both end as an ordinary boolean rather than as a special case in the
+    kernel. ``extrude`` runs along the face's own normal, which is what makes
+    this read the same whichever way the part has been turned.
+    """
+    if not command.does_anything:
+        return None
+    x, y, z = command.at
+    joins = "+" if command.distance > 0 else "-"
+    return "\n".join(
+        (
+            f"_at = Vector({x}, {y}, {z})",
+            "_face = sorted(result.faces(), key=lambda f: (f.center() - _at).length)[0]",
+            f"_moved = extrude(_face, amount={command.distance})",
+            f"result = result {joins} _moved",
+        )
     )
 
 

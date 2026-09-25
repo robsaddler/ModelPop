@@ -24,6 +24,7 @@ from modelpop.domain.units import Unit
 from modelpop.domain.which_printer import WhichPrinter
 from modelpop.presentation.sectioning import SectionPlane
 from modelpop.rendering.drag_handles import AXIS_COLOURS, DragHandles
+from modelpop.rendering.face_pull import FacePull
 from modelpop.rendering.turning import Turning
 
 if TYPE_CHECKING:
@@ -166,6 +167,7 @@ class ViewportScene:
         self._locator: Any = None
         self._measure_actors: list[Any] = []
         self._drag_widget: Any = None
+        self._face_pull: FacePull | None = None
         # One actor per object in the scene, by body id. A scene drawn as a
         # single mesh cannot be clicked on: "which of these did I point at"
         # has no answer.
@@ -454,6 +456,54 @@ class ViewportScene:
         if self._drag_widget is not None:
             with contextlib.suppress(AttributeError, RuntimeError, ValueError):
                 self._drag_widget.attach(self._model_actor, self._polydata.bounds)
+
+    def start_pulling_faces(
+        self,
+        on_release: Callable[[tuple[float, float, float], float], None],
+        on_move: Callable[[float], None] | None = None,
+    ) -> bool:
+        """Let faces be taken hold of and moved - push/pull.
+
+        Mutually exclusive with the drag handles, which move the whole object:
+        both claim the left button at the same priority, and having them fight
+        over it would make whichever answered first look like the bug.
+        """
+        if self._polydata is None:
+            return False
+        self.stop_dragging()
+        self.stop_pulling_faces()
+        try:
+            self._face_pull = FacePull(
+                self._plotter, self.pick_at, self._drawn_geometry, on_release, on_move
+            )
+        except (AttributeError, TypeError, RuntimeError):
+            self._face_pull = None
+            return False
+        return True
+
+    def stop_pulling_faces(self) -> None:
+        """Put the push/pull tool away."""
+        tool = self._face_pull
+        self._face_pull = None
+        if tool is not None:
+            with contextlib.suppress(AttributeError, RuntimeError):
+                tool.stop()
+
+    @property
+    def is_pulling_a_face(self) -> bool:
+        """Whether a face is being moved right now."""
+        return self._face_pull is not None and bool(self._face_pull.is_pulling)
+
+    def _drawn_geometry(self) -> tuple[Any, Any] | None:
+        """The vertices and triangles currently on screen, for face picking."""
+        if self._polydata is None or self._polydata.n_cells == 0:
+            return None
+        with contextlib.suppress(AttributeError, ValueError):
+            return (
+                np.asarray(self._polydata.points, dtype=np.float64),
+                np.asarray(self._polydata.faces).reshape(-1, 4)[:, 1:],
+            )
+        return None
 
     def body_being_dragged(self) -> str:
         """Which object the drag handles are bolted to, if any.
