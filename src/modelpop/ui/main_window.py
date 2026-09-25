@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QStatusBar,
     QTabWidget,
     QVBoxLayout,
@@ -79,6 +80,16 @@ __all__ = ["MainWindow"]
 # a click rather than an orbit. A few pixels of wobble is a steady hand, not
 # an attempt to rotate the model.
 CLICK_SLOP_PIXELS = 4
+
+# How much room the side panel starts with, and the least it may be dragged to.
+# The CAD tools need a shade over 600 to show a row without cutting the end off
+# it; below the minimum the panel scrolls rather than losing anything.
+PANEL_WIDTH = 640
+PANEL_LEAST_WIDTH = 300
+
+# Quiet enough to sit under the viewport without competing with it, readable
+# enough to be read.
+_HOW_TO_STYLE = "color: #8A94A0; font-size: 11px;"
 
 # Readable on a dark panel. The default reds and greens are not: a blocker
 # rendered in #C0392B on #2B3038 is almost invisible, which defeats the point
@@ -306,7 +317,13 @@ class MainWindow(QMainWindow):
         self._cad_panel = CadPanel(self._modelling)
         self._cad_panel.place_requested.connect(self._open_place_panel)
         panel.addTab(self._cad_panel, "CAD tools")
-        panel.setFixedWidth(420)
+        # Wide enough for the CAD tools to fit, and **draggable**. It was
+        # pinned at 420 while the tools needed 624, so 200 pixels of every row
+        # hung off the edge with no scrollbar to reach them - "In a row" was
+        # given 48 pixels of the 81 its label takes. A fixed width is also the
+        # wrong call on its own: how much room the tools deserve against the
+        # viewport is the user's judgement, and it changes with the job.
+        panel.setMinimumWidth(PANEL_LEAST_WIDTH)
 
         # The viewport and the handful of controls that belong *to* it, rather
         # than to the model. On screen rather than in a menu because they are
@@ -319,9 +336,17 @@ class MainWindow(QMainWindow):
         held = QWidget()
         held.setLayout(viewport_side)
 
+        divide = QSplitter(Qt.Orientation.Horizontal)
+        divide.addWidget(held)
+        divide.addWidget(panel)
+        divide.setStretchFactor(0, 1)
+        divide.setStretchFactor(1, 0)
+        divide.setChildrenCollapsible(False)
+        divide.setSizes([1, PANEL_WIDTH])
+
         layout = QHBoxLayout()
-        layout.addWidget(held, stretch=1)
-        layout.addWidget(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addWidget(divide)
 
         central = QWidget()
         central.setLayout(layout)
@@ -363,6 +388,17 @@ class MainWindow(QMainWindow):
             row.addWidget(box)
 
         row.addStretch(1)
+
+        # Said on screen rather than left to be discovered, because it was not:
+        # "how do I not rotate the viewport but move the camera up/down? When I
+        # zoom in, I can't then drag down from the head to see the feet."
+        how = QLabel("Drag turns · Shift+drag slides · wheel zooms")
+        how.setStyleSheet(_HOW_TO_STYLE)
+        how.setToolTip(
+            "Hold Shift and drag to move the view without turning it - which is "
+            "how you get from the head of a tall model down to its feet."
+        )
+        row.addWidget(how)
         return row
 
     def _set_axes(self, on: bool) -> None:

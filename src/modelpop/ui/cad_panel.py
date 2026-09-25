@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -83,15 +84,38 @@ _FACE_CHOICES = [
 
 
 def _number(
-    value: float, low: float = 0.1, high: float = 500.0, step: float = 1.0
+    value: float,
+    low: float = 0.1,
+    high: float = 500.0,
+    step: float = 1.0,
+    says: str = "",
 ) -> QDoubleSpinBox:
-    """A spin box with sane bounds, because every one here is a millimetre."""
+    """A spin box with sane bounds, because every one here is a millimetre.
+
+    ``says`` puts what the number *means* inside the box - "40.00 mm wide"
+    rather than "40.00 mm" sitting in a row of three identical boxes with
+    nothing to tell them apart. It was reported as unreadable and it was: the
+    box row offered width, depth and height as three of the same thing.
+    """
     box = QDoubleSpinBox()
     box.setRange(low, high)
     box.setSingleStep(step)
     box.setValue(value)
-    box.setSuffix(" mm")
+    box.setSuffix(f" mm {says}" if says else " mm")
     return box
+
+
+def _a_row(*widgets: QWidget) -> QWidget:
+    """Several controls that read as one instruction, on one line."""
+    line = QHBoxLayout()
+    line.setContentsMargins(0, 0, 0, 0)
+    line.setSpacing(6)
+    for widget in widgets:
+        line.addWidget(widget)
+    line.addStretch(1)
+    held = QWidget()
+    held.setLayout(line)
+    return held
 
 
 class TextDialog(QDialog):
@@ -223,39 +247,67 @@ class CadPanel(QWidget):
     # ------------------------------------------------------------------ build
 
     def _build(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        """Lay the tools out, inside something that can be scrolled.
 
-        layout.addWidget(self._build_shapes())
-        layout.addWidget(self._build_operations())
-        layout.addWidget(self._build_describe())
-        layout.addWidget(self._build_tree(), stretch=1)
+        The scroll area is not decoration. Squeezed narrower than its rows
+        need, a plain panel does not shrink them - it hangs them off its edge
+        where nothing can reach them, which is how the buttons on the right of
+        every row came to be invisible. Inside this, a panel that will not fit
+        gets a scrollbar and keeps every control reachable.
+        """
+        inside = QVBoxLayout()
+        inside.setContentsMargins(8, 8, 8, 8)
+        inside.setSpacing(10)
+
+        inside.addWidget(self._build_shapes())
+        inside.addWidget(self._build_operations())
+        inside.addWidget(self._build_describe())
+        inside.addWidget(self._build_tree(), stretch=1)
 
         self._status = QLabel()
         self._status.setWordWrap(True)
         self._status.setStyleSheet(_HINT_STYLE)
-        layout.addWidget(self._status)
+        inside.addWidget(self._status)
+
+        held = QWidget()
+        held.setLayout(inside)
+
+        scroll = QScrollArea()
+        scroll.setWidget(held)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
 
     def _build_shapes(self) -> QGroupBox:
+        """One shape per row, each number saying what it is.
+
+        This was three identical "40.00 mm" boxes in a line, then a cylinder's
+        radius and height and a sphere's radius sharing the next - and it read
+        as a wall of numbers with no way to tell which was which. Every row now
+        names its shape on the left and every box says what it measures.
+        """
         group = QGroupBox("Start a shape")
-        rows = QVBoxLayout(group)
+        form = QFormLayout(group)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
 
         # Built before the buttons that read them, because each button captures
-        # them in a lambda. Added to the layout further down, where they belong
-        # on screen.
-        self._at_x = _number(0.0, -500.0, 500.0)
-        self._at_y = _number(0.0, -500.0, 500.0)
-        self._at_z = _number(0.0, -500.0, 500.0)
-        self._cut = QCheckBox("cut it out")
+        # them in a lambda.
+        self._at_x = _number(0.0, -500.0, 500.0, says="across")
+        self._at_y = _number(0.0, -500.0, 500.0, says="back")
+        self._at_z = _number(0.0, -500.0, 500.0, says="up")
+        self._cut = QCheckBox("Cut it out instead of adding it")
         self._cut.setToolTip("Remove this shape from the part instead of adding it")
 
-        box_row = QHBoxLayout()
-        self._box_w = _number(40.0)
-        self._box_d = _number(40.0)
-        self._box_h = _number(40.0)
-        for field in (self._box_w, self._box_d, self._box_h):
-            box_row.addWidget(field)
-        add_box = QPushButton("Box")
+        self._box_w = _number(40.0, says="wide")
+        self._box_d = _number(40.0, says="deep")
+        self._box_h = _number(40.0, says="tall")
+        add_box = QPushButton("Add")
         add_box.clicked.connect(
             lambda: self._view.add_box(
                 self._box_w.value(),
@@ -265,15 +317,11 @@ class CadPanel(QWidget):
                 cut=self._cut.isChecked(),
             )
         )
-        box_row.addWidget(add_box)
-        rows.addLayout(box_row)
+        form.addRow("Box", _a_row(self._box_w, self._box_d, self._box_h, add_box))
 
-        round_row = QHBoxLayout()
-        self._cyl_r = _number(15.0)
-        self._cyl_h = _number(30.0)
-        round_row.addWidget(self._cyl_r)
-        round_row.addWidget(self._cyl_h)
-        add_cyl = QPushButton("Cylinder")
+        self._cyl_r = _number(15.0, says="across")
+        self._cyl_h = _number(30.0, says="tall")
+        add_cyl = QPushButton("Add")
         add_cyl.clicked.connect(
             lambda: self._view.add_cylinder(
                 self._cyl_r.value(),
@@ -282,25 +330,19 @@ class CadPanel(QWidget):
                 cut=self._cut.isChecked(),
             )
         )
-        round_row.addWidget(add_cyl)
+        form.addRow("Cylinder", _a_row(self._cyl_r, self._cyl_h, add_cyl))
 
-        self._sphere_r = _number(20.0)
-        round_row.addWidget(self._sphere_r)
-        add_sphere = QPushButton("Sphere")
+        self._sphere_r = _number(20.0, says="across")
+        add_sphere = QPushButton("Add")
         add_sphere.clicked.connect(
             lambda: self._view.add_sphere(
                 self._sphere_r.value(), self._placement(), cut=self._cut.isChecked()
             )
         )
-        round_row.addWidget(add_sphere)
-        rows.addLayout(round_row)
+        form.addRow("Sphere", _a_row(self._sphere_r, add_sphere))
 
-        place_row = QHBoxLayout()
-        place_row.addWidget(QLabel("at"))
-        for field in (self._at_x, self._at_y, self._at_z):
-            place_row.addWidget(field)
-        place_row.addWidget(self._cut)
-        rows.addLayout(place_row)
+        form.addRow("Put it", _a_row(self._at_x, self._at_y, self._at_z))
+        form.addRow("", self._cut)
 
         note = QLabel(
             "A second shape is added to the first, not put in its place. Tick "
@@ -308,107 +350,91 @@ class CadPanel(QWidget):
         )
         note.setWordWrap(True)
         note.setStyleSheet(_HINT_STYLE)
-        rows.addWidget(note)
+        form.addRow(note)
         return group
 
     def _build_operations(self) -> QGroupBox:
-        # Titled with whatever is in hand, because "Change it" does not say
-        # what *it* is once there is more than one object on the plate - which
-        # was asked, in exactly those words.
+        """One operation per row, named on the left.
+
+        Titled with whatever is in hand, because "Change it" does not say what
+        *it* is once there is more than one object on the plate - which was
+        asked, in exactly those words.
+
+        The rows were packed as tightly as they would go and read as fragments:
+        "Make 4 apart 20.00 mm across" is not a sentence anybody can parse, and
+        Text and Profile were sitting on the resize row purely because there
+        was space. Eight controls on one line also pushed the panel wider than
+        the window gave it, so the buttons on the right were simply cut off -
+        measured at 244 pixels of overflow, with "In a row" getting 48 of the
+        81 it needs.
+        """
         group = QGroupBox("Change it")
         self._change_group = group
-        rows = QVBoxLayout(group)
+        form = QFormLayout(group)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
 
-        blend_row = QHBoxLayout()
         self._blend_size = _number(2.0, 0.1, 200.0, 0.5)
-        blend_row.addWidget(self._blend_size)
-
         self._blend_edges = QComboBox()
         for label, _ in _EDGE_CHOICES:
             self._blend_edges.addItem(label)
-        blend_row.addWidget(self._blend_edges)
-
         self._fillet_button = QPushButton("Round")
         self._fillet_button.clicked.connect(
             lambda: self._view.fillet(self._blend_size.value(), self._chosen_edges())
         )
-        blend_row.addWidget(self._fillet_button)
-
         self._chamfer_button = QPushButton("Bevel")
         self._chamfer_button.clicked.connect(
             lambda: self._view.chamfer(self._blend_size.value(), self._chosen_edges())
         )
-        blend_row.addWidget(self._chamfer_button)
-        rows.addLayout(blend_row)
+        form.addRow(
+            "Edges",
+            _a_row(self._blend_size, self._blend_edges, self._fillet_button, self._chamfer_button),
+        )
 
-        hollow_row = QHBoxLayout()
-        self._wall = _number(2.0, 0.4, 50.0, 0.2)
-        hollow_row.addWidget(QLabel("Wall"))
-        hollow_row.addWidget(self._wall)
-
+        self._wall = _number(2.0, 0.4, 50.0, 0.2, says="thick")
         self._opening = QComboBox()
         self._opening.addItem("Sealed")
         for label, _ in _FACE_CHOICES:
             self._opening.addItem(f"Open at the {label.lower()}")
-        hollow_row.addWidget(self._opening)
-
         self._hollow_button = QPushButton("Hollow")
         self._hollow_button.clicked.connect(self._hollow)
-        hollow_row.addWidget(self._hollow_button)
-        rows.addLayout(hollow_row)
+        form.addRow("Walls", _a_row(self._wall, self._opening, self._hollow_button))
 
-        size_row = QHBoxLayout()
-        self._target = _number(150.0, 1.0, 1000.0, 5.0)
-        size_row.addWidget(QLabel("Make it"))
-        size_row.addWidget(self._target)
-        size_row.addWidget(QLabel("tall"))
-
+        self._target = _number(150.0, 1.0, 1000.0, 5.0, says="tall")
         self._scale_button = QPushButton("Resize")
         self._scale_button.clicked.connect(
             lambda: self._view.scale_to(Length.mm(self._target.value()))
         )
-        size_row.addWidget(self._scale_button)
+        form.addRow("Size", _a_row(self._target, self._scale_button))
 
-        self._text_button = QPushButton("Text...")
-        self._text_button.clicked.connect(self._add_text)
-        size_row.addWidget(self._text_button)
-
-        repeat_row = QHBoxLayout()
         self._copies = QSpinBox()
         self._copies.setRange(2, MAX_COPIES)
         self._copies.setValue(4)
-        repeat_row.addWidget(QLabel("Make"))
-        repeat_row.addWidget(self._copies)
-
-        self._spacing = _number(20.0, -500.0, 500.0, 1.0)
-        repeat_row.addWidget(QLabel("apart"))
-        repeat_row.addWidget(self._spacing)
-
+        self._copies.setSuffix(" copies")
+        self._spacing = _number(20.0, -500.0, 500.0, 1.0, says="apart")
         self._direction = QComboBox()
         for label, _ in _DIRECTION_CHOICES:
             self._direction.addItem(label)
-        repeat_row.addWidget(self._direction)
-
         self._repeat_button = QPushButton("In a row")
         self._repeat_button.setToolTip(
             "Copy the last shape added - a row of mounting holes is one hole and this"
         )
         self._repeat_button.clicked.connect(self._repeat)
-        repeat_row.addWidget(self._repeat_button)
-
+        form.addRow("Copies", _a_row(self._copies, self._spacing, self._direction))
         self._ring_button = QPushButton("In a ring")
         self._ring_button.setToolTip(
             "Space copies of the last shape evenly round the centre - a bolt circle"
         )
         self._ring_button.clicked.connect(lambda: self._view.repeat_around(self._copies.value()))
-        repeat_row.addWidget(self._ring_button)
+        form.addRow("", _a_row(self._repeat_button, self._ring_button))
 
         self._mirror_button = QPushButton("Mirror")
         self._mirror_button.setToolTip("Reflect the whole part left to right and keep both halves")
         self._mirror_button.clicked.connect(lambda: self._view.mirror())
-        repeat_row.addWidget(self._mirror_button)
-        rows.addLayout(repeat_row)
-
+        self._text_button = QPushButton("Text...")
+        self._text_button.clicked.connect(self._add_text)
         self._outline_button = QPushButton("Profile...")
         self._outline_button.setToolTip(
             "Draw a closed profile and give it thickness, spin it round, push "
@@ -416,8 +442,10 @@ class CadPanel(QWidget):
             "nameplate, a vase, a knob, a grab handle, a tapered pot"
         )
         self._outline_button.clicked.connect(self._add_outline)
-        size_row.addWidget(self._outline_button)
-        rows.addLayout(size_row)
+        form.addRow(
+            "Add to it",
+            _a_row(self._mirror_button, self._text_button, self._outline_button),
+        )
 
         return group
 

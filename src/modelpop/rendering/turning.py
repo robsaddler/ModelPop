@@ -98,7 +98,9 @@ class Turning:
 
     Always listening, and ahead of the camera controls: the trackball is never
     allowed to run, because the roll it adds is the thing being designed out.
-    Panning, the wheel and the drag handles are never claimed.
+    Panning, the wheel and the drag handles are never claimed: a drag with
+    Shift held slides the view instead, which is how you move down a tall
+    model without turning it round.
     """
 
     def __init__(self, plotter: Any) -> None:
@@ -162,6 +164,21 @@ class Turning:
                 command.SetAbortFlag(1)
 
     def _pressed(self, interactor: Any, _event: str) -> None:
+        """Take the drag, unless it was asked for as a pan.
+
+        Shift is left alone so the camera controls underneath can slide the
+        view. Claiming every left-button drag is what "any drag rotates
+        everything" was: zoomed in on a model's head, there was no way to move
+        down to its feet without turning it round first.
+
+        Decided once, on the press. Reaching for Shift halfway through a turn
+        should not silently become a pan.
+        """
+        if interactor.GetShiftKey():
+            self._turning = False
+            self._from = None
+            return
+
         self._turning = True
         self._from = tuple(interactor.GetEventPosition())
         self._claim(interactor)
@@ -179,6 +196,10 @@ class Turning:
         self.drag_by(across, up)
 
     def _released(self, interactor: Any, _event: str) -> None:
+        if not self._turning:
+            # A pan, which the camera controls are seeing through to their own
+            # release. Claiming it here would leave them mid-drag.
+            return
         self._turning = False
         self._from = None
         self._claim(interactor)

@@ -21,7 +21,7 @@ from modelpop.domain import Length, Mesh, Unit
 from modelpop.domain.printer import PrinterProfile
 from modelpop.presentation.sectioning import Axis, SectionPlane
 from modelpop.rendering import NO_RENDERER, ViewportScene, renderer_in, to_polydata
-from modelpop.rendering.turning import SIDEWAYS, UP_AND_DOWN
+from modelpop.rendering.turning import SIDEWAYS, UP_AND_DOWN, Turning
 
 from .strategies import unit_cube
 
@@ -1083,3 +1083,76 @@ class TestHoldingADragDirection:
         scene = self.scene(plotter)
         scene.hold_turning("diagonally", True)
         assert scene.turning_held == frozenset()
+
+
+class TestSlidingTheViewInstead:
+    """Shift is left to the camera controls, so a drag can move rather than turn.
+
+    "How do I not rotate the viewport but move the camera up/down on the Z
+    axis? When I zoom in, I can't then drag down from the head to see the feet.
+    Any drag rotates everything?"
+
+    It did. Turning claimed every left-button press, including the one the
+    interactor style would have panned with, so there was no way to travel
+    along a tall model without spinning it round first. The press now looks at
+    Shift and stands aside.
+
+    Driven at ``Turning`` directly rather than through real mouse events: what
+    is being asserted is that the press is *not* taken, and an event nobody
+    claims is exactly what cannot be seen from the outside.
+    """
+
+    def turning(self, plotter) -> Turning:
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.look_into_the_printer()
+        return scene._turning
+
+    def test_a_plain_press_is_taken(self, plotter):
+        turning = self.turning(plotter)
+        turning._pressed(_Pressing(shift=False), "LeftButtonPressEvent")
+
+        assert turning._turning, "a plain drag no longer turns the view"
+
+    def test_a_press_with_shift_is_left_alone(self, plotter):
+        turning = self.turning(plotter)
+        turning._pressed(_Pressing(shift=True), "LeftButtonPressEvent")
+
+        assert not turning._turning, "Shift+drag was claimed as a turn, so the view cannot be slid"
+
+    def test_a_shift_drag_moves_nothing_by_itself(self, plotter):
+        """The camera controls underneath do the sliding, not this."""
+        turning = self.turning(plotter)
+        before = tuple(plotter.camera.position)
+
+        turning._pressed(_Pressing(shift=True), "LeftButtonPressEvent")
+        turning._moved(_Pressing(shift=True, at=(100, 300)), "MouseMoveEvent")
+
+        assert tuple(plotter.camera.position) == before
+
+    def test_letting_go_of_a_shift_drag_is_left_alone_too(self, plotter):
+        """Claiming the release would leave the camera controls mid-drag."""
+        turning = self.turning(plotter)
+        turning._pressed(_Pressing(shift=True), "LeftButtonPressEvent")
+        release = _Pressing(shift=True)
+        turning._released(release, "LeftButtonReleaseEvent")
+
+        assert release.claimed == 0, "the release was taken from the camera controls"
+
+
+class _Pressing:
+    """Just enough of an interactor to press a button at a point."""
+
+    def __init__(self, shift: bool = False, at: tuple[int, int] = (200, 200)) -> None:
+        self._shift = shift
+        self._at = at
+        self.claimed = 0
+
+    def GetShiftKey(self) -> int:  # noqa: N802 - VTK's spelling
+        return 1 if self._shift else 0
+
+    def GetEventPosition(self) -> tuple[int, int]:  # noqa: N802
+        return self._at
+
+    def GetCommand(self, _tag):  # noqa: N802
+        self.claimed += 1
+        return
