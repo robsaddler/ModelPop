@@ -258,6 +258,19 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    pixels of click slop ends as a click. A miss now keeps what is in hand, and a drag selects
    whatever the handles are bolted to before applying anything.
 
+28. **The Bambu CLI does not follow `inherits`, and its profiles are a chain.** The leaf for a P2S
+   with a 0.4 nozzle holds barely a dozen settings and has **no `printable_area` at all** - the bed
+   is on a parent shared across the range. Handed the leaf, the CLI falls back to a default plate
+   and then refuses a model that is plainly on the bed. The error names none of this: "one of the
+   plate is empty or has no object fully inside it", for a part sitting dead centre. Measured: the
+   ceiling was exactly **143 mm** on either axis, 144 failed, independent of the other axis and of
+   height. The start G-code is on the same parent, so **every slice went out without bed levelling
+   (G29) or a bed temperature (M140)** - 1,473 lines of start sequence missing. `BambuSlicer` now
+   folds the chain flat and writes the whole profile beside the run. Two dead ends worth not
+   repeating: it is not `extruder_clearance_radius` (2 x 72 = 144 is a coincidence; overriding it
+   changes nothing) and not `wrapping_exclude_area` (that is at y 235-256 and the models were
+   nowhere near it).
+
 ## Style
 
 Type hints everywhere, `mypy --strict`. `ruff` for lint and format. Dataclasses (frozen where they are

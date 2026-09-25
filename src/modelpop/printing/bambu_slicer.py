@@ -210,9 +210,36 @@ class BambuSlicer:
         # directory of its own and delete it afterwards.
         workdir = Path(tempfile.mkdtemp(prefix="modelpop-slice-"))
         try:
-            return self._run(job, machine, process, workdir)
+            return self._run(job, self._flattened(machine, workdir), process, workdir)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    def _flattened(self, machine: Path, workdir: Path) -> Path:
+        """The machine profile with its parents folded in, written out whole.
+
+        **The CLI does not follow ``inherits``.** Bambu's own profiles are a
+        chain - the leaf for a P2S with a 0.4 nozzle holds barely a dozen
+        settings, and the bed lives on a parent shared across the range - so
+        handing the CLI the leaf hands it a profile with no ``printable_area``
+        in it at all, and it falls back to a default plate far smaller than the
+        printer.
+
+        The symptom is nothing like the cause. Slicing refuses "one of the
+        plate is empty or has no object fully inside it" for a model sitting
+        dead centre on a 256 mm bed, with no hint that the bed it is being
+        measured against is not the one on screen. Measured: the ceiling is
+        exactly 143 mm on either axis - 144 fails - whatever the other axis and
+        the height are doing. Flattened, the same 238 x 194 mm model slices.
+
+        Written beside the run rather than back into Bambu's own directory,
+        which is under Program Files and not ours to edit.
+        """
+        flattened = _with_parents_folded_in(machine)
+        if flattened is None:
+            return machine
+        written = workdir / "machine.json"
+        written.write_text(json.dumps(flattened), encoding="utf-8")
+        return written
 
     def _run(
         self, job: SliceJob, machine: Path, process: Path, workdir: Path
@@ -349,3 +376,33 @@ def find_bambu_studio() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def _with_parents_folded_in(profile: Path) -> dict[str, Any] | None:
+    """One Bambu profile with everything it inherits merged into it.
+
+    Nearest wins, and ``inherits`` itself is dropped so nothing downstream goes
+    looking for a parent that is no longer needed. Depth-limited and
+    cycle-guarded, because a profile that inherits from itself would otherwise
+    take the application down rather than a print job.
+
+    ``None`` when the chain cannot be read at all, which leaves the caller
+    passing the original file - no worse off than before this existed.
+    """
+    try:
+        folded = _fold(profile.stem, {f.stem: f for f in profile.parent.glob("*.json")})
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not folded:
+        return None
+    folded.pop("inherits", None)
+    return folded
+
+
+def _fold(stem: str, files: dict[str, Path], seen: tuple[str, ...] = ()) -> dict[str, Any]:
+    """A profile and its ancestors, oldest first so the leaf wins."""
+    if stem in seen or stem not in files:
+        return {}
+    settings: dict[str, Any] = json.loads(files[stem].read_text(encoding="utf-8"))
+    parent = _fold(str(settings.get("inherits", "")), files, (*seen, stem))
+    return {**parent, **settings}
