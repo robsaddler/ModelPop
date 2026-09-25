@@ -685,6 +685,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(drag.describe())
             return
 
+        # The handles are bolted to one object and drawn around it, so that is
+        # what they move - whatever the rest of the interface thinks is in hand.
+        # Belt and braces against the trap above: a drag that visibly moved
+        # something and is then refused for having no subject is the worst
+        # possible answer, and this makes it unreachable rather than unlikely.
+        on = self._scene.body_being_dragged()
+        if on and on != self._modelling.selected:
+            self._modelling.select(on)
+
         self._drag_in_flight = True
         # The actor is standing where it was dragged to rather than where the
         # model says, so the next draw has to run even if the geometry it is
@@ -995,8 +1004,25 @@ class MainWindow(QMainWindow):
         return wide / logical if wide else 1.0
 
     def _select_at(self, x: float, y: float) -> None:
-        """Pick up whatever was clicked, or put everything down."""
-        self._modelling.select(self._body_at(x, y) or "")
+        """Pick up whatever was clicked. A miss changes nothing.
+
+        It used to put everything down, and that one line is what "every time I
+        put handles on the dragon and try to move it, it snaps back" was made
+        of. Clicking past the model is the commonest thing in the world - an
+        orbit that moved less than the four pixels of click slop ends as a
+        click - and it left the scene with nothing selected while the drag
+        handles stayed exactly where they were, full brightness, still
+        grabbable. Dragging one then moved the part on screen and was refused
+        on release with "Nothing is selected", so it sprang back. And it stayed
+        broken until something was clicked again, which is the "every time".
+
+        Nothing in this application wants a selection of nothing: the toolbar,
+        the handles and the scene menu all act on the thing in hand. So a miss
+        keeps what was already in hand.
+        """
+        body = self._body_at(x, y)
+        if body:
+            self._modelling.select(body)
 
     def _offer_the_scene_menu(self, x: float, y: float, at: QPoint) -> None:
         """Select what was right-clicked and ask what to do with it."""

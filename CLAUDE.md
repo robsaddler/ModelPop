@@ -248,6 +248,16 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    wrong place. The print was correct throughout. `print_view.onto_the_plate` is the conversion, and
    the nozzle marker takes it too or the head floats away from its own work.
 
+27. **A click that hit nothing used to deselect everything, and the drag handles stayed live.**
+   One line - `select(self._body_at(x, y) or "")` - and it is the whole of "every time I put handles
+   on the dragon and try to move it or make it bigger, it snaps back". With nothing in hand the
+   handles were still drawn, still full brightness, still grabbable: a drag moved the part on screen
+   and was refused on release with "Nothing is selected", so it sprang back. It stayed broken until
+   something was clicked again, and *clicking a handle counts as a miss*, so trying again made it
+   worse. Clicking past the model is not rare either - an orbit that travels less than the four
+   pixels of click slop ends as a click. A miss now keeps what is in hand, and a drag selects
+   whatever the handles are bolted to before applying anything.
+
 ## Style
 
 Type hints everywhere, `mypy --strict`. `ruff` for lint and format. Dataclasses (frozen where they are

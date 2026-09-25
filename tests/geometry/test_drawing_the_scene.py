@@ -103,3 +103,130 @@ class TestDrawingTheSceneOnce:
             assert len(drawn) == 1
         finally:
             window.close()
+
+
+class TestWhatAClickPutsInHand:
+    """Clicking past the model must not put down what is in hand.
+
+    "Why is it every time I put handles on the dragon and try to move it or
+    make it bigger, it snaps back to where it was!"
+
+    One line did that. A click that hit nothing deselected everything, and the
+    drag handles stayed exactly where they were - full brightness, still
+    grabbable, still bolted to the part. Dragging one then moved the part on
+    screen and was refused on release with "Nothing is selected", so it sprang
+    back to where it started. And it stayed that way until something was
+    clicked again, which is the "every time".
+
+    Clicking past the model is not rare. An orbit that travels less than the
+    four pixels of click slop ends as a click, so it happens constantly.
+
+    Marked ``renders``: picking needs a real viewport (CLAUDE.md, trap 8).
+    """
+
+    def window(self, app):
+        from modelpop.application.modelling import ModellingSession
+        from modelpop.application.workspace import Workspace
+        from modelpop.mesh import TrimeshIO, TrimeshOps
+        from modelpop.ui.main_window import MainWindow
+
+        return MainWindow(
+            Workspace(TrimeshIO(), TrimeshOps()),
+            None,
+            ModellingSession(mesh_io=TrimeshIO()),
+        )
+
+    def with_a_part(self, app):
+        import os
+        import time
+
+        import numpy as np
+        import trimesh
+        from PySide6.QtWidgets import QApplication
+
+        from modelpop.domain.mesh import Mesh
+
+        if os.environ.get("QT_QPA_PLATFORM", "offscreen") == "offscreen":
+            pytest.skip(
+                "needs a real window system: an embedded VTK render window gets "
+                "no surface, and therefore no size, under Qt's offscreen "
+                "platform, so nothing can be picked. Run it with "
+                "QT_QPA_PLATFORM=windows pytest -m renders"
+            )
+
+        window = self.window(app)
+        # Shown, and given a size: an embedded VTK window with no surface picks
+        # nothing at all, and a test that cannot pick proves nothing.
+        window.resize(1100, 850)
+        window.show()
+        QApplication.processEvents()
+
+        shape = trimesh.creation.box(extents=(20.0, 20.0, 20.0))
+        window._modelling.place_mesh(
+            Mesh(np.asarray(shape.vertices), np.asarray(shape.faces, np.int32)), "a part"
+        )
+        until = time.monotonic() + 8.0
+        while time.monotonic() < until and not window._modelling.bodies:
+            QApplication.processEvents()
+            time.sleep(0.01)
+        for _ in range(50):
+            QApplication.processEvents()
+        return window
+
+    def where_the_part_is(self, window) -> tuple[float, float]:
+        """The part's centre, as a point in the viewport widget.
+
+        Asked of VTK's own projection rather than assumed to be the middle of
+        the widget: the resting view looks into a 256 mm printer from slightly
+        above, so a part standing on the plate sits well below centre. Aiming at
+        the middle and getting nothing is a test measuring its own arithmetic.
+
+        Two conversions, both easy to get wrong. VTK counts rows from the
+        bottom and Qt from the top; and this display scales at 150%, so VTK
+        speaks in device pixels where Qt mouse events are logical ones
+        (CLAUDE.md, trap 11).
+        """
+        import vtk
+
+        box = window._modelling.bodies[0].bounds
+        centre = (
+            (box.min_x + box.max_x) / 2,
+            (box.min_y + box.max_y) / 2,
+            (box.min_z + box.max_z) / 2,
+        )
+        at = vtk.vtkCoordinate()
+        at.SetCoordinateSystemToWorld()
+        at.SetValue(*centre)
+        x, y = at.GetComputedDoubleDisplayValue(window._viewport.renderer)
+        ratio = window._device_ratio()
+        return x / ratio, window._viewport.interactor.height() - y / ratio
+
+    @pytest.mark.renders
+    def test_a_click_that_hits_nothing_keeps_what_is_in_hand(self, app):
+        window = self.with_a_part(app)
+        try:
+            assert window._modelling.selected, "nothing was in hand to begin with"
+            in_hand = window._modelling.selected
+
+            # Far off in the corner of the viewport, where the part is not.
+            window._select_at(2.0, 2.0)
+
+            assert window._modelling.selected == in_hand
+        finally:
+            window.close()
+
+    @pytest.mark.renders
+    def test_a_click_that_hits_a_part_picks_it_up(self, app):
+        """Keeping the selection on a miss must not cost selecting on a hit."""
+        window = self.with_a_part(app)
+        try:
+            window._modelling.select("")
+            assert not window._modelling.selected
+
+            window._scene.frame_model()
+            window._viewport.render()
+            window._select_at(*self.where_the_part_is(window))
+
+            assert window._modelling.selected == "body-1"
+        finally:
+            window.close()

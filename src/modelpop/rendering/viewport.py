@@ -438,6 +438,20 @@ class ViewportScene:
             with contextlib.suppress(AttributeError, RuntimeError, ValueError):
                 self._drag_widget.attach(self._model_actor, self._polydata.bounds)
 
+    def body_being_dragged(self) -> str:
+        """Which object the drag handles are bolted to, if any.
+
+        Asked by name rather than assumed from the selection, because the two
+        can differ: with nothing selected the handles still attach to whatever
+        is on the plate, and what they are drawn around is what they move.
+        """
+        if self._drag_widget is None or self._model_actor is None:
+            return ""
+        for body, actor in self._body_actors.items():
+            if actor is self._model_actor:
+                return body
+        return ""
+
     def body_at(self, x: float, y: float) -> str | None:
         """Which object is under a point on screen, if any.
 
