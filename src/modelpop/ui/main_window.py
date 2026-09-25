@@ -833,6 +833,13 @@ class MainWindow(QMainWindow):
         self._thicken_here_action = self._scene_menu.addAction("&Thicken thin walls")
         self._thicken_here_action.triggered.connect(self._view_model.thicken)
 
+        self._lay_down_action = self._scene_menu.addAction("&Lay it down to print")
+        self._lay_down_action.setToolTip(
+            "Turn it to the way up that overhangs least, among the ways it can actually "
+            "stand. Less overhang means fewer supports to tear off afterwards."
+        )
+        self._lay_down_action.triggered.connect(self._modelling.lay_it_down)
+
         self._simplify_here_action = self._scene_menu.addAction("&Simplify it")
         self._simplify_here_action.triggered.connect(
             lambda: self._view_model.simplify(DEFAULT_TRIANGLE_BUDGET)
@@ -899,6 +906,9 @@ class MainWindow(QMainWindow):
 
         self._repair_here_action.setEnabled(a_mesh and self._view_model.can_repair)
         self._thicken_here_action.setEnabled(a_mesh and self._view_model.can_thicken)
+        self._lay_down_action.setEnabled(
+            bool(self._modelling.selected) and not self._modelling.is_busy
+        )
         self._simplify_here_action.setEnabled(a_mesh)
 
     def _open_resize_panel(self) -> None:

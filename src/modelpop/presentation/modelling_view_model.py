@@ -442,6 +442,10 @@ class ModellingViewModel:
         """Turn the part about an axis."""
         self._apply(Rotate(degrees, axis))
 
+    def lay_it_down(self) -> None:
+        """Turn the selected object to the way up that overhangs least."""
+        self._run("Lay it down to print", self._session.lay_it_down)
+
     def scale_to(self, height: Length) -> None:
         """Resize so the part is a stated height."""
         self._apply(ScaleTo(height))

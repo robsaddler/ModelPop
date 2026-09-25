@@ -85,6 +85,9 @@ class PrintWindow(QDialog):
         self._play = VirtualPrint.read(gcode)
         self._printer = printer or PrinterProfile.p2s()
         self._speed = _SPEEDS[0]
+        # Where playback has got to, in slider steps, kept as a float. See
+        # _advance: a tick is a fraction of a step on any print worth watching.
+        self._at = 0.0
         self._drawn_upto = -1
         self._toolpath_actor: Any = None
         self._nozzle_actor: Any = None
@@ -180,24 +183,43 @@ class PrintWindow(QDialog):
         self._speed_button.setText(f"{int(self._speed)}x")
 
     def _advance(self) -> None:
+        """Move playback on by one tick's worth of print time.
+
+        The position is kept as a float and only rounded when it reaches the
+        slider. That is the whole fix for "changing print speed seems to have
+        no effect": a tick of a four-hour print is 0.07 of a slider step at
+        30x and 0.28 at 120x, and truncating either to an integer gives zero.
+        The floor of one step per tick then made every speed identical -
+        measured, on a four-hour print all three came to exactly 1, and on a
+        twelve-hour print so did 600x. Only a print under about twenty minutes
+        ever showed a difference, which is not what anybody watches.
+        """
         if not self._play.can_play:
             self._ticker.stop()
             return
-        step = self._speed * (_PLAY_MS / 1000.0) / self._play.total_seconds * _STEPS
-        nxt = self._slider.value() + max(1, int(step))
-        if nxt >= _STEPS:
+
+        self._at += self._speed * (_PLAY_MS / 1000.0) / self._play.total_seconds * _STEPS
+        if self._at >= _STEPS:
             self._seek(_STEPS)
             self._ticker.stop()
             self._play_button.setText("Play")
             return
-        self._slider.setValue(nxt)
+        self._slider.setValue(int(self._at))
 
     def _seek(self, step: int) -> None:
+        self._at = float(step)
         self._slider.setValue(step)
         self._draw()
 
-    def _slider_moved(self, _: int) -> None:
-        """Schedule a redraw rather than doing one per event."""
+    def _slider_moved(self, value: int) -> None:
+        """Schedule a redraw rather than doing one per event.
+
+        Dragged by hand, the slider is the truth and the running position has
+        to follow it - otherwise playback carries on from where it had got to
+        and the scrub is undone a tick later.
+        """
+        if abs(value - self._at) >= 1.0:
+            self._at = float(value)
         self._progress.setText(progress_of(self._play, self._seconds()))
         self._redraw.start()
 

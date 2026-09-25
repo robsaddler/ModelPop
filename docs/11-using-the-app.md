@@ -184,6 +184,29 @@ over it.
 
 ---
 
+## Which way up to print it
+
+**Lay it down to print**, on the right-click menu, turns the object to the way up that overhangs
+least. Overhanging surface is what needs supports, and supports are what make a print slow, wasteful
+and scarred where they are torn off.
+
+It only considers ways the model can actually *stand*. The candidates are the faces of its convex
+hull - the positions it would come to rest in if you put it down - and each is scored both on how
+much would overhang and on how broad a base it would sit on. That second number is not a detail: on
+the dragon, the orientation with the very least overhang balances it upside down on three hundredths
+of a square millimetre. It would fall over before the first layer finished.
+
+The turns join the feature tree, so this undoes in one step and reads back as a sentence. It is put
+back down on the plate afterwards, because turning happens about the origin and would otherwise
+leave it buried or hovering.
+
+It will tell you when there is nothing to gain rather than moving the model for the sake of it. The
+dragon is one of those: lying on its side it already overhangs 21%, the best it can steadily manage
+is 20%, and it says so and leaves it alone. A T-shaped bracket standing upright goes from 12% to
+nothing at all.
+
+---
+
 ## When the walls are too thin
 
 The readiness panel warns when the thinnest wall is below what the nozzle can lay down - two

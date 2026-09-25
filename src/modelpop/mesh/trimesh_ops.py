@@ -16,6 +16,7 @@ import numpy as np
 import trimesh
 
 from modelpop.domain.mesh import Mesh
+from modelpop.domain.orienting import Resting
 from modelpop.domain.readiness import MeshFacts
 from modelpop.domain.result import Result, failure, success
 from modelpop.domain.units import Length, Unit
@@ -198,6 +199,17 @@ class TrimeshOps:
             return 0.0
 
     # ------------------------------------------------------------- processing
+
+    def best_resting_place(self, mesh: Mesh) -> Resting | None:
+        """Which way up this model would overhang least. See `mesh.orienting`."""
+        from modelpop.mesh.orienting import best_resting_place
+
+        try:
+            return best_resting_place(mesh)
+        except Exception:
+            # A hull that will not compute is a reason to offer nothing, not a
+            # reason to take the application down.
+            return None
 
     def thicken(self, mesh: Mesh, by: Length) -> Result[Mesh]:
         """Grow every surface outwards by a distance, thickening thin walls.

@@ -26,13 +26,14 @@ from modelpop.application.cad_ports import Part, SolidMeasurements
 from modelpop.domain.cad_commands import Move, PlaceMesh, Rotate, ScaleTo, command_from
 from modelpop.domain.commands import FIRST_BODY, CommandBus, Document, DocumentHistory, Origin
 from modelpop.domain.mesh import Mesh
+from modelpop.domain.placement import settle_onto_bed
 from modelpop.domain.result import Failure, Result, failure, success
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from modelpop.application.cad_ports import FeatureCompiler
-    from modelpop.application.ports import MeshIO
+    from modelpop.application.ports import MeshIO, MeshOps
     from modelpop.application.project_ports import ProjectStore
     from modelpop.domain.commands import Command, Feature
     from modelpop.domain.mesh import BoundingBox, Mesh
@@ -230,6 +231,7 @@ class ModellingSession:
         compiler: FeatureCompiler | None = None,
         projects: ProjectStore | None = None,
         mesh_io: MeshIO | None = None,
+        mesh_ops: MeshOps | None = None,
     ) -> None:
         """Wire the session to a compiler and a place to keep projects.
 
@@ -240,10 +242,13 @@ class ModellingSession:
             projects: reads and writes project files.
             mesh_io: writes the colour parts out. Optional: without it they can
                 still be built and looked at, just not saved.
+            mesh_ops: measures geometry. Optional: without it the tree can
+                still be edited, it just cannot be asked which way up to print.
         """
         self._compiler = compiler
         self._projects = projects
         self._io = mesh_io
+        self._ops = mesh_ops
         self._bus = CommandBus()
         self._state = ModelState()
         # Which object the toolbar acts on. A maker adds a shape and expects
@@ -581,6 +586,42 @@ class ModellingSession:
         return self._compiler.script_for(self._bus.document)
 
     # ------------------------------------------------------------- internal
+
+    def lay_it_down(self) -> Result[ModelState]:
+        """Turn the selected object to the way up that overhangs least.
+
+        The turns join the feature tree like any other, so this undoes in the
+        same way a drag on a ring does, reads back as a sentence and rebuilds
+        from nothing. There is no separate "auto-orient" state to get out of
+        sync with the model.
+        """
+        body = self._state.body(self._selected)
+        if body is None:
+            return failure("Nothing is selected", "Click the object you want to turn first.")
+        if self._ops is None:
+            return failure(
+                "The geometry tools are unavailable",
+                "Which way up to print cannot be worked out without them.",
+            )
+
+        found = self._ops.best_resting_place(body.mesh)
+        if found is None:
+            return failure("There is nothing to turn", "This object has no surface to measure.")
+        if not found.is_worth_it:
+            return failure("It is already the best way up", found.describe())
+
+        for turn in found.turns:
+            applied = self.apply(turn, body=self._selected)
+            if not applied.ok:
+                return applied
+        # Turned in the air, so it has to come back down. A model rotated about
+        # the origin ends up buried in the plate or hovering over it, and either
+        # is the thing that was complained about the first time this happened:
+        # "you always sink them half way through the print plate".
+        turned = self._state.body(self._selected)
+        if turned is None:
+            return success(self._state)
+        return self.apply(settle_onto_bed(turned.bounds), body=self._selected)
 
     def _rebuild(self) -> Result[ModelState]:
         """Replay the whole scene and adopt the result.

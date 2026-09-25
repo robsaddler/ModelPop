@@ -122,6 +122,7 @@ def main() -> int:
             Build123dCompiler(kernel),
             JsonProjectStore(),
             TrimeshIO(),
+            TrimeshOps(),
         ),
     )
     # Started once the window exists, so the answer can be delivered to it.

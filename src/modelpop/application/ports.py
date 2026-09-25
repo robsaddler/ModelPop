@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from modelpop.domain.mesh import Mesh
+from modelpop.domain.orienting import Resting
 from modelpop.domain.printer import PrinterProfile, SupportStyle, SupportType
 from modelpop.domain.readiness import Finding, MeshFacts
 from modelpop.domain.result import Result
@@ -76,6 +77,14 @@ class MeshOps(Protocol):
 
     def normalise(self, mesh: Mesh) -> Mesh:
         """Merge duplicate vertices, drop degenerate faces and tiny islands."""
+        ...
+
+    def best_resting_place(self, mesh: Mesh) -> Resting | None:
+        """Which way up this model would overhang least.
+
+        Among the ways it can actually stand, not every way it could be
+        turned. ``None`` when there is nothing to measure.
+        """
         ...
 
     def thicken(self, mesh: Mesh, by: Length) -> Result[Mesh]:
