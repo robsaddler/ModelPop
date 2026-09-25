@@ -23,6 +23,7 @@ from modelpop.domain.printer import PrinterProfile
 from modelpop.domain.units import Unit
 from modelpop.presentation.sectioning import SectionPlane
 from modelpop.rendering.drag_handles import AXIS_COLOURS, DragHandles
+from modelpop.rendering.turning import LockedTurning
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -72,8 +73,6 @@ AXIS_LENGTH = 0.16
 AXIS_SHAFT = 0.018
 AXIS_TIP = 0.055
 
-# Which named view holds each plane square on.
-_LOCKED_VIEWS = {"front": "front", "side": "right", "top": "top"}
 
 # How far round and how far up the resting view stands, in degrees. Dead square
 # on puts the build plate exactly edge-on - the surface everything sits on
@@ -169,7 +168,7 @@ class ViewportScene:
         self._selected_body = ""
         self._axis_actors: dict[str, Any] = {}
         self._axes_shown = False
-        self._locked_to = ""
+        self._turning = LockedTurning(plotter)
         self._polydata: pv.PolyData | None = None
         self._plotter.set_background(BACKGROUND_BOTTOM, top=BACKGROUND_TOP)
         self._use_parallel_projection()
@@ -270,30 +269,28 @@ class ViewportScene:
         """Whether the X, Y and Z markers are on the plate."""
         return self._axes_shown
 
-    def lock_to(self, plane: str | None) -> None:
-        """Hold the view square on to one plane, or let it turn freely again.
+    def lock_axis(self, axis: str, held: bool) -> None:
+        """Forbid the view turning about one axis, or allow it again.
 
-        Turning a part by dragging the view is how it ends up looking skewed:
-        a trackball orbit gives an arbitrary angle, and there is no way back to
-        square except by eye. Locked, the camera pans and zooms but cannot
-        tumble - so left and right stay left and right.
+        A lock holds an axis *still*. Lock X and Y together and only Z is
+        left, which is a turntable: the view spins round the plate and the
+        horizon never rolls however far the drag goes. Lock nothing and it
+        behaves as it always did.
 
         Args:
-            plane: ``front``, ``side``, ``top``, or ``None`` to unlock.
+            axis: ``X``, ``Y`` or ``Z``.
+            held: whether that axis is held still.
         """
-        self._locked_to = plane or ""
-        if not plane:
-            self._plotter.enable_trackball_style()
-            return
+        self._turning.lock(axis, held)
 
-        self.set_view(_LOCKED_VIEWS.get(plane, "front"))
-        # Pans and zooms, never rotates. Which is the whole point.
-        self._plotter.enable_image_style()
+    def drag_the_view_by(self, across: int, up: int) -> None:
+        """Turn the view as a drag of this size would, minus what is locked."""
+        self._turning.drag_by(across, up)
 
     @property
-    def locked_to(self) -> str:
-        """Which plane the view is held on, or empty when it turns freely."""
-        return self._locked_to
+    def locked_axes(self) -> frozenset[str]:
+        """Which axes the view may not turn about."""
+        return self._turning.locked
 
     def _draw_build_volume(self) -> None:
         """Draw the bed and a wireframe of the printable envelope.

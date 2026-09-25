@@ -339,22 +339,25 @@ class MainWindow(QMainWindow):
         row.addWidget(self._axes_box)
 
         row.addSpacing(18)
-        row.addWidget(QLabel("Lock the view:"))
+        row.addWidget(QLabel("Hold still:"))
 
-        # Checkboxes rather than a dial, because the useful gesture is to tick
-        # one, work, and untick it. They behave exclusively: turning a part by
-        # dragging the view is how it ends up skewed, and being locked to two
-        # planes at once means nothing.
+        # Independent, not exclusive. A lock holds one axis still, so the
+        # useful combinations are several at once: X and Y together leave only
+        # Z, which is a turntable and is what "turn it left without skewing
+        # it" actually means.
         self._lock_boxes: dict[str, QCheckBox] = {}
-        for plane, label, tip in (
-            ("front", "Front (X-Z)", "Looking along Y. Left and right stay left and right."),
-            ("side", "Side (Y-Z)", "Looking along X."),
-            ("top", "Top (X-Y)", "Looking down Z, at the plate."),
+        for axis, tip in (
+            ("X", "The view will not tip over the red axis."),
+            ("Y", "The view will not tip over the green axis."),
+            ("Z", "The view will not spin round the blue axis."),
         ):
-            box = QCheckBox(label)
-            box.setToolTip(f"{tip} Pans and zooms, never turns.")
-            box.toggled.connect(lambda on, p=plane: self._set_lock(p, on))
-            self._lock_boxes[plane] = box
+            box = QCheckBox(axis)
+            box.setToolTip(
+                f"{tip} Hold X and Y together to spin round the plate without tilting. "
+                "Panning and zooming are unchanged."
+            )
+            box.toggled.connect(lambda on, a=axis: self._set_lock(a, on))
+            self._lock_boxes[axis] = box
             row.addWidget(box)
 
         row.addStretch(1)
@@ -365,32 +368,24 @@ class MainWindow(QMainWindow):
         self._scene.show_axes(on)
         self._viewport.render()
 
-    def _set_lock(self, plane: str, on: bool) -> None:
-        """Hold the view on one plane, or let it turn freely again.
+    def _set_lock(self, axis: str, held: bool) -> None:
+        """Hold one axis still, or let it go.
 
-        Exclusive by hand rather than by a button group, because a group that
-        enforces exclusivity will not let the last one be unticked - and
-        unticking is how you get back to turning the model about freely.
+        Independent: every combination means something. All three held is the
+        one that means nothing, and it simply stops the view turning.
         """
-        if self._settling_locks:
-            return
-
-        self._settling_locks = True
-        try:
-            for name, box in self._lock_boxes.items():
-                if name != plane:
-                    box.setChecked(False)
-        finally:
-            self._settling_locks = False
-
-        self._scene.lock_to(plane if on else None)
+        self._scene.lock_axis(axis, held)
         self._viewport.render()
-        self.statusBar().showMessage(
-            f"View locked to {plane}. It pans and zooms but will not turn."
-            if on
-            else "View unlocked.",
-            6000,
-        )
+
+        locked = sorted(self._scene.locked_axes)
+        if not locked:
+            said = "The view turns freely."
+        elif len(locked) == 3:
+            said = "Every axis is held. The view will not turn at all."
+        else:
+            free = [a for a in "XYZ" if a not in locked]
+            said = f"Holding {', '.join(locked)} still. The view turns about {', '.join(free)}."
+        self.statusBar().showMessage(said, 6000)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")

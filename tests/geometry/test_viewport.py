@@ -21,6 +21,7 @@ from modelpop.domain import Length, Mesh, Unit
 from modelpop.domain.printer import PrinterProfile
 from modelpop.presentation.sectioning import Axis, SectionPlane
 from modelpop.rendering import NO_RENDERER, ViewportScene, renderer_in, to_polydata
+from modelpop.rendering.turning import allowed_axis
 
 from .strategies import unit_cube
 
@@ -913,53 +914,6 @@ class TestTheAxisMarkers:
             drawn = plotter.renderer.actors[f"axis-{label}"].prop.color.hex_rgb
             assert drawn.lower() == AXIS_COLOURS[index].lower()
 
-
-class TestLockingTheView:
-    """Turning a part by dragging the view is how it ends up skewed.
-
-    A trackball orbit gives an arbitrary angle and there is no way back to
-    square except by eye. Locked, the camera pans and zooms but cannot tumble.
-    """
-
-    def test_it_turns_freely_to_begin_with(self, plotter):
-        assert ViewportScene(plotter, PrinterProfile.p2s()).locked_to == ""
-
-    @pytest.mark.parametrize(
-        ("plane", "along"),
-        [("front", 1), ("side", 0), ("top", 2)],
-        ids=["front looks along Y", "side looks along X", "top looks down Z"],
-    )
-    def test_each_lock_puts_the_camera_square_on(self, plotter, plane, along):
-        scene = ViewportScene(plotter, PrinterProfile.p2s())
-        scene.lock_to(plane)
-
-        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
-        # Everything but the axis being looked along is zero.
-        for axis in range(3):
-            if axis != along:
-                assert looking[axis] == pytest.approx(0.0, abs=1e-6)
-        assert abs(looking[along]) > 0
-
-    def test_locking_remembers_which_plane(self, plotter):
-        scene = ViewportScene(plotter, PrinterProfile.p2s())
-        scene.lock_to("top")
-        assert scene.locked_to == "top"
-
-    def test_it_can_be_let_go_again(self, plotter):
-        scene = ViewportScene(plotter, PrinterProfile.p2s())
-        scene.lock_to("front")
-        scene.lock_to(None)
-        assert scene.locked_to == ""
-
-    def test_an_unknown_plane_falls_back_to_the_front(self, plotter):
-        """Rather than leaving the camera wherever it happened to be."""
-        scene = ViewportScene(plotter, PrinterProfile.p2s())
-        scene.lock_to("sideways-ish")
-
-        looking = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
-        assert looking[0] == pytest.approx(0.0, abs=1e-6)
-        assert looking[2] == pytest.approx(0.0, abs=1e-6)
-
     def test_they_do_not_change_what_fitting_the_view_means(self, plotter):
         """A marker is furniture, not content.
 
@@ -979,3 +933,123 @@ class TestLockingTheView:
         plotter.reset_camera()
 
         assert plotter.camera.parallel_scale == pytest.approx(without)
+
+
+class TestHoldingAnAxisStill:
+    """A lock forbids turning about the axis it names.
+
+    Built first as "stop it turning at all", which answered the wrong
+    question - asked straight back why locking an axis would not let the view
+    turn about that axis, and then: "I described it the other way around, so
+    locking prevents movement in that axis."
+
+    Which is the better design. Hold X and Y together and only Z is left: the
+    view spins round the plate and the horizon never rolls, which is what
+    "turn it left without skewing it" actually means.
+    """
+
+    def scene(self, plotter) -> ViewportScene:
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+        scene.look_into_the_printer()
+        return scene
+
+    def azimuth(self, plotter) -> float:
+        away = np.array(plotter.camera.position) - np.array(plotter.camera.focal_point)
+        return float(np.degrees(np.arctan2(away[0], -away[1])))
+
+    def test_nothing_is_held_to_begin_with(self, plotter):
+        assert ViewportScene(plotter, PrinterProfile.p2s()).locked_axes == frozenset()
+
+    def test_a_free_view_turns_sideways(self, plotter):
+        scene = self.scene(plotter)
+        before = self.azimuth(plotter)
+        scene.drag_the_view_by(120, 0)
+
+        assert abs(self.azimuth(plotter) - before) > 10.0
+
+    def test_holding_z_stops_it_spinning(self, plotter):
+        scene = self.scene(plotter)
+        scene.lock_axis("Z", True)
+        before = self.azimuth(plotter)
+        scene.drag_the_view_by(120, 0)
+
+        assert self.azimuth(plotter) == pytest.approx(before, abs=1e-6)
+
+    def test_holding_z_still_lets_it_tip(self, plotter):
+        """A lock forbids one axis, not turning altogether."""
+        scene = self.scene(plotter)
+        scene.lock_axis("Z", True)
+        before = plotter.camera.position[2]
+        scene.drag_the_view_by(0, 80)
+
+        assert plotter.camera.position[2] != pytest.approx(before)
+
+    def test_holding_x_and_y_gives_a_turntable(self, plotter):
+        scene = self.scene(plotter)
+        scene.lock_axis("X", True)
+        scene.lock_axis("Y", True)
+        before = self.azimuth(plotter)
+        height = plotter.camera.position[2]
+
+        scene.drag_the_view_by(150, 60)
+
+        assert abs(self.azimuth(plotter) - before) > 10.0, "it did not spin"
+        assert plotter.camera.position[2] == pytest.approx(height), "it tilted"
+
+    def test_a_turntable_never_rolls_the_horizon(self, plotter):
+        """However far the drag goes. This is the skew being complained about."""
+        scene = self.scene(plotter)
+        scene.lock_axis("X", True)
+        scene.lock_axis("Y", True)
+
+        for _ in range(12):
+            scene.drag_the_view_by(90, 45)
+
+        assert np.asarray(plotter.camera.up) == pytest.approx([0.0, 0.0, 1.0], abs=1e-6)
+
+    def test_holding_everything_stops_it_turning(self, plotter):
+        scene = self.scene(plotter)
+        for axis in "XYZ":
+            scene.lock_axis(axis, True)
+        before = np.array(plotter.camera.position)
+
+        scene.drag_the_view_by(120, 90)
+
+        assert np.asarray(plotter.camera.position) == pytest.approx(before)
+
+    def test_a_lock_can_be_let_go(self, plotter):
+        scene = self.scene(plotter)
+        scene.lock_axis("Z", True)
+        scene.lock_axis("Z", False)
+        before = self.azimuth(plotter)
+
+        scene.drag_the_view_by(120, 0)
+        assert abs(self.azimuth(plotter) - before) > 10.0
+
+    def test_an_axis_it_does_not_know_is_ignored(self, plotter):
+        scene = self.scene(plotter)
+        scene.lock_axis("sideways", True)
+        assert scene.locked_axes == frozenset()
+
+
+class TestWhatALockLeavesOfATurn:
+    """The projection, on its own, with no camera anywhere near it."""
+
+    def test_an_unlocked_turn_survives_whole(self):
+        left = allowed_axis(np.array([0.0, 0.0, 1.0]), [])
+        assert left == pytest.approx([0.0, 0.0, 1.0])
+
+    def test_a_turn_about_a_locked_axis_is_refused(self):
+        assert allowed_axis(np.array([0.0, 0.0, 1.0]), ["Z"]) is None
+
+    def test_a_turn_across_a_locked_axis_keeps_what_is_left(self):
+        """A drag rarely asks for exactly one axis; what remains still turns."""
+        left = allowed_axis(np.array([1.0, 0.0, 1.0]), ["Z"])
+        assert left == pytest.approx([1.0, 0.0, 0.0])
+
+    def test_two_locks_leave_only_the_third(self):
+        left = allowed_axis(np.array([0.4, 0.5, 1.0]), ["X", "Y"])
+        assert left == pytest.approx([0.0, 0.0, 1.0])
+
+    def test_three_locks_leave_nothing(self):
+        assert allowed_axis(np.array([1.0, 1.0, 1.0]), ["X", "Y", "Z"]) is None
