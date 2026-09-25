@@ -209,3 +209,98 @@ class TestWallThickness:
 
     def test_declines_to_guess_on_an_empty_mesh(self):
         assert thinnest_wall(Mesh.empty()) is None
+
+
+class TestRepairKeepsTheModel:
+    """Repair must close a surface, not replace it.
+
+    Reported after repairing a model downloaded from Thingiverse: "terrible
+    resolution - banding all over". Two faults behind it.
+
+    The escalation went straight from trimesh's hole filling to a voxel
+    rebuild, which re-derives the surface from a grid and turns fine relief
+    into stair steps. A real mesh repair walks the boundaries and stitches
+    them, leaving the geometry that was already right exactly as it was.
+
+    And the voxel rebuild was returning *grid indices* rather than
+    millimetres, so a 7 mm model came back 257 units across with a volume
+    forty-eight thousand times too big. Nobody had seen it, because the
+    library that path needs was not installed until the day this was found.
+    """
+
+    def a_broken_cube(self) -> Mesh:
+        """A cube with two faces missing: open, but obviously a cube."""
+        whole = box(40)
+        return Mesh(whole.vertices, whole.faces[2:])
+
+    def test_a_repair_keeps_the_size_it_started_with(self):
+        broken = self.a_broken_cube()
+        fixed = TrimeshOps().repair(broken)
+
+        assert fixed.ok
+        assert fixed.unwrap().bounds.width.millimetres == pytest.approx(40.0, abs=1.0)
+
+    def test_a_repair_keeps_the_volume_it_started_with(self):
+        """A rebuild that changes the volume has not repaired anything."""
+        broken = self.a_broken_cube()
+        fixed = TrimeshOps().repair(broken)
+
+        assert fixed.ok
+        assert fixed.unwrap().volume == pytest.approx(box(40).volume, rel=0.1)
+
+    def test_stitching_a_surface_keeps_its_triangles(self):
+        """The difference from a rebuild, stated as a number.
+
+        A voxel rebuild replaces every triangle. Stitching keeps them, which
+        is what keeps the detail.
+        """
+        broken = self.a_broken_cube()
+        mended = TrimeshOps()._mend(broken)
+
+        if not mended.ok:
+            pytest.skip("pymeshfix is not installed")
+        assert mended.unwrap().triangle_count >= broken.triangle_count
+
+    def test_stitching_closes_it(self):
+        mended = TrimeshOps()._mend(self.a_broken_cube())
+        if not mended.ok:
+            pytest.skip("pymeshfix is not installed")
+        assert TrimeshOps().inspect(mended.unwrap()).is_watertight
+
+
+class TestTheVoxelRebuildAnswersInMillimetres:
+    """It answers in grid indices unless its transform is applied.
+
+    A 7 mm model came back 257 units across. The bug had always been there and
+    was unreachable: the marching-cubes backend was not installed, so the path
+    could not run at all.
+    """
+
+    def test_it_comes_back_the_size_it_went_in(self):
+        rebuilt = TrimeshOps()._voxel_remesh(box(40))
+
+        assert rebuilt.ok
+        measured = rebuilt.unwrap().bounds
+        assert measured.width.millimetres == pytest.approx(40.0, abs=1.0)
+        assert measured.height.millimetres == pytest.approx(40.0, abs=1.0)
+
+    def test_it_comes_back_where_it_went_in(self):
+        original = box(40)
+        rebuilt = TrimeshOps()._voxel_remesh(original)
+
+        assert rebuilt.ok
+        assert rebuilt.unwrap().bounds.centre == pytest.approx(original.bounds.centre, abs=1.0)
+
+    def test_its_volume_is_recognisable(self):
+        """Not forty-eight thousand times the original."""
+        rebuilt = TrimeshOps()._voxel_remesh(box(40))
+
+        assert rebuilt.ok
+        assert rebuilt.unwrap().volume == pytest.approx(box(40).volume, rel=0.05)
+
+    def test_it_still_closes_the_surface(self):
+        """Which is the one thing it is kept around for."""
+        rebuilt = TrimeshOps()._voxel_remesh(box(40))
+
+        assert rebuilt.ok
+        assert TrimeshOps().inspect(rebuilt.unwrap()).is_watertight

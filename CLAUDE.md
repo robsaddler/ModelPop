@@ -173,7 +173,17 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    triangle model came back as 290,000 separate pieces with 871,000 holes. Welding is lossless -
    it joins points already in the same place - and on that model took it from 1,738 pieces to 1.
    The CAD kernel's STL reader already did this; `TrimeshIO.load` did not.
-17. **`pytest -m renders` exits 127 after every test passes.** VTK teardown takes the process down
+17. **`trimesh`'s `marching_cubes` answers in grid indices, not millimetres.** Apply the voxel
+   grid's own `transform` to the result. Without it a 7 mm model comes back 257 units across with
+   a volume forty-eight thousand times too big. The bug sat in `_voxel_remesh` from the day it was
+   written and was *unreachable* - the marching-cubes backend was not installed, so the path could
+   not run. Installing scikit-image exposed it immediately, in front of the user.
+18. **Repair stitches, it does not rebuild.** `pymeshfix` walks the open boundaries and closes
+   them, keeping every triangle and the exact volume; the voxel remesh re-derives the surface from
+   a grid and turns fine relief into visible banding. On a 1,132,190 triangle model: stitched in
+   13 s with 1,132,182 triangles and the volume unchanged. Voxel is the last resort, never the
+   first move.
+19. **`pytest -m renders` exits 127 after every test passes.** VTK teardown takes the process down
    once the run is over. Confirmed pre-existing and independent of any one test file, so judge that
    run by its reported results, not its exit code.
 
