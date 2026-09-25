@@ -182,6 +182,12 @@ class ViewportScene:
         self._draw_build_volume()
         self._name_the_printer()
         self.show_axes(True)
+        # Framed before anybody sees it. VTK's default camera sits two
+        # millimetres from the origin with a parallel scale of 1, so a window
+        # that is never told otherwise opens zoomed a hundred and eighty times
+        # too far into the middle of the plate, and nothing on screen explains
+        # why. Measured: scale 1 at startup against 181 once framed.
+        self.look_into_the_printer()
 
     # ----------------------------------------------------------------- scene
 
@@ -354,6 +360,12 @@ class ViewportScene:
         if changed_size:
             self._draw_build_volume()
             self.show_axes(self._axes_shown)
+            if self._model_actor is None:
+                # A different printer is a different bed, so a view framed for
+                # the old one is framed for nothing. Only with an empty plate:
+                # re-aiming the camera while somebody is working on a part
+                # would be the application taking the view off them.
+                self.look_into_the_printer()
         self._name_the_printer()
 
     def show_mesh(self, mesh: Mesh | None, *, has_problems: bool = False) -> None:

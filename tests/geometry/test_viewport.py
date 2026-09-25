@@ -1156,3 +1156,71 @@ class _Pressing:
     def GetCommand(self, _tag):  # noqa: N802
         self.claimed += 1
         return
+
+
+class TestItOpensFramedOnThePrinter:
+    """A new window must show the printer, not the inside of the plate.
+
+    "When app starts, we're zoomed right into plate. Should start using the
+    Look into Printer view."
+
+    VTK's default camera sits two millimetres from the origin with a parallel
+    scale of 1. A scene that is never told otherwise opens about a hundred and
+    eighty times too far in, staring at the middle of a build plate with
+    nothing on screen to explain why - measured at scale 1 against the 181 the
+    framed view uses.
+    """
+
+    def test_a_new_scene_is_already_framed(self, plotter):
+        scene = ViewportScene(plotter, PrinterProfile.p2s())
+
+        assert plotter.camera.parallel_scale > 100.0, (
+            f"it opened at a parallel scale of {plotter.camera.parallel_scale:.0f}"
+        )
+        assert scene is not None
+
+    def test_it_opens_where_looking_in_would_put_it(self, plotter):
+        """Not merely somewhere sensible - the same place as the Home view."""
+        ViewportScene(plotter, PrinterProfile.p2s())
+        opened = (
+            tuple(plotter.camera.position),
+            tuple(plotter.camera.focal_point),
+            plotter.camera.parallel_scale,
+        )
+
+        ViewportScene(plotter, PrinterProfile.p2s()).look_into_the_printer()
+        homed = (
+            tuple(plotter.camera.position),
+            tuple(plotter.camera.focal_point),
+            plotter.camera.parallel_scale,
+        )
+
+        assert opened[1] == pytest.approx(homed[1], abs=1e-6)
+        assert opened[2] == pytest.approx(homed[2], rel=1e-6)
+        assert opened[0] == pytest.approx(homed[0], rel=1e-6)
+
+    def test_it_looks_at_the_middle_of_the_build_volume(self, plotter):
+        ViewportScene(plotter, PrinterProfile.p2s())
+        focus = plotter.camera.focal_point
+
+        assert focus[0] == pytest.approx(0.0, abs=1e-6)
+        assert focus[1] == pytest.approx(0.0, abs=1e-6)
+        assert focus[2] == pytest.approx(128.0, abs=1.0), "it is not looking at the middle"
+
+    def test_a_smaller_printer_is_framed_more_closely(self, plotter):
+        """The framing follows the bed, so an A1 mini does not open tiny."""
+        from modelpop.domain.units import Length
+
+        mini = PrinterProfile(
+            model="Bambu Lab A1 mini",
+            build_width=Length.mm(180),
+            build_depth=Length.mm(180),
+            build_height=Length.mm(180),
+        )
+        ViewportScene(plotter, mini)
+        small = plotter.camera.parallel_scale
+
+        ViewportScene(plotter, PrinterProfile.p2s())
+        large = plotter.camera.parallel_scale
+
+        assert small < large, f"the mini framed at {small:.0f}, the P2S at {large:.0f}"
