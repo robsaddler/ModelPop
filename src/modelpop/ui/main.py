@@ -32,6 +32,7 @@ from modelpop.repositories import (
     ThingiverseRepository,
 )
 from modelpop.ui.branding import claim_the_taskbar, icon
+from modelpop.ui.keeps_its_size import KeepsItsSize
 from modelpop.ui.main_window import MainWindow
 from modelpop.vision.photogrammetry import ColmapOpenMvsReconstructor
 
@@ -104,6 +105,14 @@ def main() -> int:
     app.setApplicationName("ModelPop")
     app.setWindowIcon(icon())
 
+    # Set explicitly rather than left as whatever Qt resolved, so there is a
+    # font to put *back*. Windows waking from sleep re-enumerates the displays
+    # and Qt re-resolves its scaling against whichever reading arrives first;
+    # get that wrong and the whole interface comes back tiny. Held here and
+    # restored on every screen change - see KeepsItsSize.
+    app.setFont(app.font())
+    keep_its_size = KeepsItsSize(app)
+
     secrets = default_store()
 
     # Ask whether the CAD kernel is there *now*, on its own thread, so the
@@ -130,6 +139,10 @@ def main() -> int:
     # the window being held shut for the whole probe.
     window.kernel_is_being_probed_by(kernel)
     window.show()
+    # Held to the end of the run. A watcher nobody keeps a reference to is
+    # collected, its connections go with it, and the display can then change
+    # unnoticed - which is trap 6 wearing a different hat.
+    keep_its_size.restore()
     return app.exec()
 
 

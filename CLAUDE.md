@@ -278,6 +278,16 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    changes nothing) and not `wrapping_exclude_area` (that is at y 235-256 and the models were
    nowhere near it).
 
+29. **Qt resolves its scaling once, and waking from sleep makes it resolve again.** This display
+   reports a *logical* 96 DPI with all the scaling carried by a device pixel ratio of 2.0, so a
+   reading taken while Windows is still re-enumerating displays lays every widget that has no
+   explicit font out at half size - the whole interface comes back tiny and nothing about it looks
+   like the application. Nothing can make Qt get it right first time, so 
+   remembers the font the interface started at and puts it back on every screen signal *and* on the
+   application coming back to the front - the one event certain to follow a resume. Re-applying the
+   font is only half: a style sheet size is resolved at polish time and is not worked out again, so
+   every top-level window is unpolished and repolished too.
+
 ## Style
 
 Type hints everywhere, `mypy --strict`. `ruff` for lint and format. Dataclasses (frozen where they are
