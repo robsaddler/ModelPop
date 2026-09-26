@@ -111,10 +111,10 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
 
 1. **Windows path length breaks `pip`.** Keep the project and its venv at a short path.
    Related and hit repeatedly: **bash here eats backslashes in heredocs and runs backticks inside
-   double quotes**, so a Python snippet written through `bash -c "..."` loses `
-` and silently
-   drops anything in backticks. Use the Write/Edit tools for any text containing an escape or a
-   backtick - this has now cost four separate corrections.
+   double quotes**, so a Python snippet written through the shell loses its escape sequences and
+   silently drops anything in backticks. Use the Write/Edit tools for any text containing an escape
+   or a backtick - this has now cost five separate corrections, the last of them to this very
+   paragraph, which was written through a heredoc and came out broken.
 2. `vtkOBBTree.IntersectWithLine(p1, p2, points, None)` **segfaults.** Use `vtkCellLocator` with the
    full argument list — and it is far faster anyway.
 3. `pyvista.Plotter.render()` off-screen does not block, so frame timing there is meaningless
