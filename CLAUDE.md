@@ -110,6 +110,11 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
 ## Traps already paid for — do not rediscover these
 
 1. **Windows path length breaks `pip`.** Keep the project and its venv at a short path.
+   Related and hit repeatedly: **bash here eats backslashes in heredocs and runs backticks inside
+   double quotes**, so a Python snippet written through `bash -c "..."` loses `
+` and silently
+   drops anything in backticks. Use the Write/Edit tools for any text containing an escape or a
+   backtick - this has now cost four separate corrections.
 2. `vtkOBBTree.IntersectWithLine(p1, p2, points, None)` **segfaults.** Use `vtkCellLocator` with the
    full argument list — and it is far faster anyway.
 3. `pyvista.Plotter.render()` off-screen does not block, so frame timing there is meaningless
@@ -282,7 +287,7 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    reports a *logical* 96 DPI with all the scaling carried by a device pixel ratio of 2.0, so a
    reading taken while Windows is still re-enumerating displays lays every widget that has no
    explicit font out at half size - the whole interface comes back tiny and nothing about it looks
-   like the application. Nothing can make Qt get it right first time, so 
+   like the application. Nothing can make Qt get it right first time, so `ui/keeps_its_size.py`
    remembers the font the interface started at and puts it back on every screen signal *and* on the
    application coming back to the front - the one event certain to follow a resume. Re-applying the
    font is only half: a style sheet size is resolved at polish time and is not worked out again, so
