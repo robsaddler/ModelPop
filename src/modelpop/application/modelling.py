@@ -24,6 +24,9 @@ from typing import TYPE_CHECKING
 
 from modelpop.application.cad_ports import Part, SolidMeasurements
 from modelpop.domain.cad_commands import (
+    CreateBox,
+    CreateCylinder,
+    CreateSphere,
     Hollow,
     Mirror,
     Move,
@@ -825,6 +828,8 @@ def _replay_on_a_mesh(
             return mesh.turned(command.degrees, command.axis), ""
         case ScaleTo():
             return mesh.scaled_to_height(command.height), ""
+        case CreateBox() | CreateCylinder() | CreateSphere() if ops is not None:
+            return _boolean_on_a_mesh(mesh, command, ops)
         case Hollow() if ops is not None:
             hollowed = ops.hollow(mesh, Length.mm(command.wall_thickness))
             return (hollowed.unwrap(), "") if hollowed.ok else (mesh, hollowed.error)
@@ -835,6 +840,33 @@ def _replay_on_a_mesh(
             return mesh, ""
         case _:
             return mesh, command.describe()
+
+
+def _boolean_on_a_mesh(
+    mesh: Mesh, shape: CreateBox | CreateCylinder | CreateSphere, ops: MeshOps
+) -> tuple[Mesh, str]:
+    """Cut a primitive out of a mesh, or join one onto it.
+
+    The operation that turns a downloaded model from something you can only
+    look at into something you can change: punch a hole through it, flatten a
+    base off it, add a mounting boss to it. None of that needs a kernel or a
+    feature history - it needs two closed surfaces and an exact boolean, and
+    manifold3d is exactly that.
+
+    The primitive is built as triangles rather than compiled through OCCT,
+    which is both faster and the only thing that would work: the other side of
+    the boolean has no faces for a kernel to reason about. Built by the mesh
+    adapter, because this layer may not import a geometry library - the
+    import-linter contract caught exactly that and was right to.
+    """
+    cutter = ops.solid_for(shape, mesh.unit)
+    combined = ops.difference(mesh, cutter) if shape.cut else ops.union(mesh, cutter)
+    if not combined.ok:
+        return mesh, combined.error
+    out = combined.unwrap()
+    if out.is_empty:
+        return mesh, f"{shape.describe()} would leave nothing behind"
+    return out, ""
 
 
 def _measure_a_mesh(mesh: Mesh) -> SolidMeasurements:

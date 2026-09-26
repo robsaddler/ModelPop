@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 import trimesh
 
+from modelpop.domain.cad_commands import CreateBox, CreateCylinder, CreateSphere
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.orienting import Resting
 from modelpop.domain.readiness import MeshFacts
@@ -261,6 +262,40 @@ class TrimeshOps:
                 "growing the surface that far made it fold through itself.",
             )
         return success(_from_trimesh(grown, mesh.unit))
+
+    def solid_for(
+        self, shape: CreateBox | CreateCylinder | CreateSphere, unit: Unit = Unit.MILLIMETRE
+    ) -> Mesh:
+        """One of the primitives, as triangles, where the command says it is.
+
+        Built at the origin and moved, which is the convention the whole
+        vocabulary uses - so a box cut out of a mesh lands exactly where the
+        same box cut out of a compiled solid would.
+
+        Here rather than in the application layer because building it needs a
+        geometry library, and that layer is not allowed one. Sixty-four sides
+        on a cylinder: fine enough that a drilled hole is round to well under a
+        layer, coarse enough to stay cheap.
+        """
+        scale = unit.millimetres
+        match shape:
+            case CreateBox():
+                built = trimesh.creation.box(
+                    extents=(shape.width / scale, shape.depth / scale, shape.height / scale)
+                )
+            case CreateCylinder():
+                built = trimesh.creation.cylinder(
+                    radius=shape.radius / scale, height=shape.height / scale, sections=64
+                )
+            case CreateSphere():
+                built = trimesh.creation.icosphere(subdivisions=3, radius=shape.radius / scale)
+
+        built.apply_translation([shape.x / scale, shape.y / scale, shape.z / scale])
+        return Mesh(
+            np.asarray(built.vertices, dtype=np.float64),
+            np.asarray(built.faces, dtype=np.int32),
+            unit,
+        )
 
     def hollow(self, mesh: Mesh, wall: Length) -> Result[Mesh]:
         """Take the middle out, leaving a wall of the given thickness.

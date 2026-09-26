@@ -256,6 +256,43 @@ on the same model.
 
 ---
 
+## Editing a model you downloaded
+
+A model from Thingiverse is an STL: triangles, and nothing else. No faces, no edges, no history -
+which is why the person who published it can still edit theirs and you cannot edit yours. They kept
+the file it was built from.
+
+That does not mean nothing can be done to it. In the **CAD tools** tab, the *Start a shape* rows have
+a **Put it** choice with three options, and two of them act on the model you have selected:
+
+- **cut out of the selected object** - drill a hole through it, take a slot out of it, flatten a base
+  off it with a big box.
+- **joined onto the selected object** - add a boss, a tab, a bracket, a mounting lug.
+- **as a new object** - the default: a separate thing standing beside it on the plate.
+
+Cutting and joining work on *anything*, downloaded or generated, because they need two closed
+surfaces and an exact boolean rather than a kernel. The result joins the feature tree and undoes in
+one step like everything else.
+
+**Hollow** and **Mirror** work on a downloaded model too. Hollowing is the one to reach for first:
+they arrive solid all the way through, and a 2 mm wall took 78% of the volume out of a test model
+without changing the outside by more than a hundredth of a millimetre.
+
+**Round and bevel do not work on one**, and will say so. Those have to name an edge, and a mesh has
+no edges in that sense - every triangle boundary is one, and there are a million of them on a real
+download.
+
+### Why not convert it to a CAD model?
+
+It can be done and it is not worth it, which is worth knowing rather than wondering about. OCCT will
+sew triangles into a solid, and a twelve-triangle box converts instantly and even fillets to exactly
+the right volume. But it produces **one face per triangle**: that box comes out with 12 faces and 18
+edges where the real thing has 6 and 12, a real download would take about three minutes and arrive
+with 1.1 million faces, and an L-bracket of a hundred triangles crashed the process outright on the
+fillet. It is a CAD solid in name only. Mesh operations are the route.
+
+---
+
 ## Pushing and pulling a face
 
 **View -> Push/pull a face** (Ctrl+U) is SketchUp's push/pull. Point at a flat face: it lights up in

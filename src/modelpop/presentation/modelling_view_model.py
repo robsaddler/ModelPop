@@ -380,11 +380,12 @@ class ModellingViewModel:
         at: tuple[float, float, float] = (0.0, 0.0, 0.0),
         *,
         cut: bool = False,
+        onto_the_selected: bool = False,
     ) -> None:
         """Add a rectangular block, or cut a pocket into the selected object."""
         self._apply(
             CreateBox(width, depth, height, *self._on_the_bed(at, height, cut), cut=cut),
-            body=self._for_a_shape(cut),
+            body=self._for_a_shape(cut, onto_the_selected=onto_the_selected),
         )
 
     def add_cylinder(
@@ -394,11 +395,12 @@ class ModellingViewModel:
         at: tuple[float, float, float] = (0.0, 0.0, 0.0),
         *,
         cut: bool = False,
+        onto_the_selected: bool = False,
     ) -> None:
         """Add a cylinder, or drill a hole through the selected object."""
         self._apply(
             CreateCylinder(radius, height, *self._on_the_bed(at, height, cut), cut=cut),
-            body=self._for_a_shape(cut),
+            body=self._for_a_shape(cut, onto_the_selected=onto_the_selected),
         )
 
     def add_sphere(
@@ -407,11 +409,12 @@ class ModellingViewModel:
         at: tuple[float, float, float] = (0.0, 0.0, 0.0),
         *,
         cut: bool = False,
+        onto_the_selected: bool = False,
     ) -> None:
         """Add a sphere, or scoop one out of the selected object."""
         self._apply(
             CreateSphere(radius, *self._on_the_bed(at, radius * 2, cut), cut=cut),
-            body=self._for_a_shape(cut),
+            body=self._for_a_shape(cut, onto_the_selected=onto_the_selected),
         )
 
     def drill(self, diameter: float, depth: float, at: tuple[float, float] = (0.0, 0.0)) -> None:
@@ -775,15 +778,22 @@ class ModellingViewModel:
             return at
         return (at[0], at[1], height / 2)
 
-    def _for_a_shape(self, cut: bool) -> str | None:
+    def _for_a_shape(self, cut: bool, *, onto_the_selected: bool = False) -> str | None:
         """Which object a new shape belongs to.
 
         A cut takes material out of the thing you have selected, so it joins
-        that object. A shape that adds material is a *new* object - that is
-        what a maker means by adding a cube to the scene, and unioning it into
-        whatever happened to be selected is what made two shapes inseparable.
+        that object. A shape that adds material is a *new* object by default -
+        that is what a maker means by adding a cube to the scene, and unioning
+        it into whatever happened to be selected is what made two shapes
+        inseparable.
+
+        ``onto_the_selected`` is the third case and the one that makes a
+        downloaded model editable: a boss, a tab, a bracket joined *onto* what
+        is already there rather than standing beside it. Asked for explicitly
+        rather than guessed from what is selected, because a hidden mode that
+        changes what a button does is worse than a third choice on screen.
         """
-        if cut:
+        if cut or onto_the_selected:
             return None  # the selected object
         return self._session.start_a_new_body()
 

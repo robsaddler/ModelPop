@@ -15,12 +15,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from modelpop.domain.cad_commands import CreateBox, CreateCylinder, CreateSphere
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.orienting import Resting
 from modelpop.domain.printer import PrinterProfile, SupportStyle, SupportType
 from modelpop.domain.readiness import Finding, MeshFacts
 from modelpop.domain.result import Result
-from modelpop.domain.units import Length
+from modelpop.domain.units import Length, Unit
 
 __all__ = [
     "GcodeVerifier",
@@ -85,6 +86,12 @@ class MeshOps(Protocol):
         Among the ways it can actually stand, not every way it could be
         turned. ``None`` when there is nothing to measure.
         """
+        ...
+
+    def solid_for(
+        self, shape: CreateBox | CreateCylinder | CreateSphere, unit: Unit = Unit.MILLIMETRE
+    ) -> Mesh:
+        """One of the primitives, as triangles, where the command says it is."""
         ...
 
     def hollow(self, mesh: Mesh, wall: Length) -> Result[Mesh]:

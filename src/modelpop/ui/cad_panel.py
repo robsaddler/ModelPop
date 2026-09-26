@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -301,8 +300,25 @@ class CadPanel(QWidget):
         self._at_x = _number(0.0, -500.0, 500.0, says="across")
         self._at_y = _number(0.0, -500.0, 500.0, says="back")
         self._at_z = _number(0.0, -500.0, 500.0, says="up")
-        self._cut = QCheckBox("Cut it out instead of adding it")
-        self._cut.setToolTip("Remove this shape from the part instead of adding it")
+        # Three explicit choices rather than a checkbox and a hidden rule.
+        # Joining a shape *onto* what is already there is what makes a
+        # downloaded model editable - a boss, a tab, a flattened base - and it
+        # is not something anybody would guess a tick box did.
+        self._what_to_do = QComboBox()
+        for label, hint in (
+            ("as a new object", "Put it on the plate beside what is already there."),
+            ("cut out of the selected object", "Take this shape out of the selected object."),
+            ("joined onto the selected object", "Add this shape to the selected object."),
+        ):
+            self._what_to_do.addItem(label)
+            self._what_to_do.setItemData(
+                self._what_to_do.count() - 1, hint, Qt.ItemDataRole.ToolTipRole
+            )
+        self._what_to_do.setToolTip(
+            "Cutting and joining both work on a downloaded or generated model, "
+            "which is how one is edited: it has no faces to round, but it can "
+            "have holes cut through it and shapes added to it."
+        )
 
         self._box_w = _number(40.0, says="wide")
         self._box_d = _number(40.0, says="deep")
@@ -314,7 +330,7 @@ class CadPanel(QWidget):
                 self._box_d.value(),
                 self._box_h.value(),
                 self._placement(),
-                cut=self._cut.isChecked(),
+                **self._how(),
             )
         )
         form.addRow("Box", _a_row(self._box_w, self._box_d, self._box_h, add_box))
@@ -327,7 +343,7 @@ class CadPanel(QWidget):
                 self._cyl_r.value(),
                 self._cyl_h.value(),
                 self._placement(),
-                cut=self._cut.isChecked(),
+                **self._how(),
             )
         )
         form.addRow("Cylinder", _a_row(self._cyl_r, self._cyl_h, add_cyl))
@@ -335,14 +351,12 @@ class CadPanel(QWidget):
         self._sphere_r = _number(20.0, says="across")
         add_sphere = QPushButton("Add")
         add_sphere.clicked.connect(
-            lambda: self._view.add_sphere(
-                self._sphere_r.value(), self._placement(), cut=self._cut.isChecked()
-            )
+            lambda: self._view.add_sphere(self._sphere_r.value(), self._placement(), **self._how())
         )
         form.addRow("Sphere", _a_row(self._sphere_r, add_sphere))
 
         form.addRow("Put it", _a_row(self._at_x, self._at_y, self._at_z))
-        form.addRow("", self._cut)
+        form.addRow("Put it", self._what_to_do)
 
         note = QLabel(
             "A second shape is added to the first, not put in its place. Tick "
@@ -530,6 +544,11 @@ class CadPanel(QWidget):
         return group
 
     # --------------------------------------------------------------- commands
+
+    def _how(self) -> dict[str, bool]:
+        """What the chosen row means to the view-model."""
+        chosen = self._what_to_do.currentIndex()
+        return {"cut": chosen == 1, "onto_the_selected": chosen == 2}
 
     def _placement(self) -> tuple[float, float, float]:
         """Where the next shape goes, measured from the centre of the part."""

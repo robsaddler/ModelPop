@@ -199,3 +199,127 @@ class TestTheAdapterOnItsOwn:
 
     def test_a_plane_it_does_not_know_is_refused(self):
         assert not TrimeshOps().mirrored(as_downloaded(), "sideways").ok
+
+
+class TestCuttingAndJoiningShapes:
+    """The operation that makes a downloaded model editable at all.
+
+    Punch a hole through it, flatten a base off it, add a mounting boss to it.
+    None of that needs a kernel or a history - it needs two closed surfaces and
+    an exact boolean, and manifold3d is exactly that.
+
+    The primitive is built as triangles by the mesh adapter rather than
+    compiled through OCCT. That is not only faster, it is the only thing that
+    would work: the other side of the boolean has no faces for a kernel to
+    reason about. It also has to live in the adapter, because the application
+    layer may not import a geometry library - the import-linter contract caught
+    that and was right to.
+    """
+
+    def test_a_hole_can_be_drilled_through_it(self):
+        from modelpop.domain.cad_commands import CreateCylinder
+
+        session = a_scene()
+        before = session.state.body("body-1").mesh.volume
+
+        drilled = session.apply(CreateCylinder(6.0, 100.0, 0.0, 0.0, 25.0, cut=True), body="body-1")
+
+        assert drilled.ok, drilled.error
+        assert session.state.body("body-1").mesh.volume < before
+
+    def test_what_is_left_is_still_a_solid(self):
+        """A model with a hole in it still has to slice."""
+        from modelpop.domain.cad_commands import CreateCylinder
+
+        session = a_scene()
+        session.apply(CreateCylinder(6.0, 100.0, 0.0, 0.0, 25.0, cut=True), body="body-1")
+
+        facts = TrimeshOps().inspect(session.state.body("body-1").mesh, measure_walls=False)
+        assert facts.is_watertight
+
+    def test_a_shape_can_be_joined_onto_it(self):
+        from modelpop.domain.cad_commands import CreateBox
+
+        session = a_scene()
+        before = session.state.body("body-1").mesh.volume
+
+        joined = session.apply(CreateBox(12.0, 12.0, 40.0, 30.0, 0.0, 25.0), body="body-1")
+
+        assert joined.ok, joined.error
+        assert session.state.body("body-1").mesh.volume > before
+
+    def test_both_join_the_tree_and_undo(self):
+        from modelpop.domain.cad_commands import CreateCylinder
+
+        session = a_scene()
+        solid = session.state.body("body-1").mesh.volume
+
+        session.apply(CreateCylinder(6.0, 100.0, 0.0, 0.0, 25.0, cut=True), body="body-1")
+        assert [f.name for f in session.state.document.active_features] == [
+            "place-mesh",
+            "create-cylinder",
+        ]
+
+        assert session.undo().ok
+        assert session.state.body("body-1").mesh.volume == pytest.approx(solid)
+
+    def test_a_cut_that_would_take_everything_is_refused(self):
+        """Not applied, leaving nothing on the plate and no way back."""
+        from modelpop.domain.cad_commands import CreateBox
+
+        session = a_scene()
+        before = session.state.body("body-1").mesh.volume
+
+        outcome = session.apply(CreateBox(500.0, 500.0, 500.0, cut=True), body="body-1")
+
+        assert not outcome.ok
+        assert session.state.body("body-1").mesh.volume == pytest.approx(before)
+
+    def test_the_cutter_lands_where_the_command_says(self):
+        """Same convention as the compiled path: built at the origin and moved.
+
+        A hole 20 mm off to one side has to be 20 mm off to one side, or the
+        same command means two different things depending on what it is cutting.
+        """
+        from modelpop.domain.cad_commands import CreateCylinder
+
+        ops = TrimeshOps()
+        drill = ops.solid_for(CreateCylinder(5.0, 40.0, 20.0, 0.0, 0.0, cut=True))
+
+        centre = drill.bounds
+        assert (centre.min_x + centre.max_x) / 2 == pytest.approx(20.0, abs=0.01)
+        assert (centre.min_y + centre.max_y) / 2 == pytest.approx(0.0, abs=0.01)
+
+
+class TestTheThreeWayChoice:
+    """Where a new shape goes is asked, not guessed.
+
+    Cutting and joining act on the selected object; a plain add makes a new
+    one. A hidden rule that changed what a button did depending on what was
+    selected would be worse than a third row on screen.
+    """
+
+    def view(self):
+        from modelpop.presentation.modelling_view_model import ModellingViewModel
+
+        made = ModellingViewModel(ModellingSession(mesh_io=TrimeshIO(), mesh_ops=TrimeshOps()))
+        made.place_mesh(as_downloaded(), "downloaded")
+        return made
+
+    def test_cutting_acts_on_the_selected_object(self):
+        made = self.view()
+        before = made.selected_body.mesh.volume
+
+        made.add_cylinder(6.0, 100.0, (0.0, 0.0, 25.0), cut=True)
+
+        assert len(made.bodies) == 1
+        assert made.selected_body.mesh.volume < before
+
+    def test_joining_acts_on_the_selected_object(self):
+        made = self.view()
+        before = made.selected_body.mesh.volume
+
+        made.add_box(12.0, 12.0, 40.0, (30.0, 0.0, 25.0), onto_the_selected=True)
+
+        assert len(made.bodies) == 1
+        assert made.selected_body.mesh.volume > before
