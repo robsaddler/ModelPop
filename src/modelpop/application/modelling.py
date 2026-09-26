@@ -23,11 +23,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modelpop.application.cad_ports import Part, SolidMeasurements
-from modelpop.domain.cad_commands import Move, PlaceMesh, Rotate, ScaleTo, command_from
+from modelpop.domain.cad_commands import (
+    Hollow,
+    Mirror,
+    Move,
+    PlaceMesh,
+    Rotate,
+    ScaleTo,
+    command_from,
+)
 from modelpop.domain.commands import FIRST_BODY, CommandBus, Document, DocumentHistory, Origin
 from modelpop.domain.mesh import Mesh
 from modelpop.domain.placement import settle_onto_bed
 from modelpop.domain.result import Failure, Result, failure, success
+from modelpop.domain.units import Length
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -738,7 +747,7 @@ class ModellingSession:
 
         mesh = loaded.unwrap()
         for feature in features[1:]:
-            mesh, refused = _replay_on_a_mesh(mesh, command_from(feature))
+            mesh, refused = _replay_on_a_mesh(mesh, command_from(feature), self._ops)
             if refused:
                 return failure(
                     f"{refused} cannot be done to {document.label_for(body)}", MESH_LIMIT
@@ -755,9 +764,11 @@ class ModellingSession:
 
 
 MESH_LIMIT = (
-    "A model that arrived whole has no shape to work from - only triangles. It "
-    "can be moved, turned, resized, copied and deleted; rounding, hollowing and "
-    "the rest need a part built from shapes."
+    "A model that arrived whole is only triangles - no faces and no edges, which "
+    "is what a downloaded STL is and why the person who published it can still "
+    "edit theirs. It can be moved, turned, resized, hollowed, mirrored, repaired, "
+    "simplified and thickened. Rounding and bevelling cannot be done to it: those "
+    "have to name an edge, and every triangle boundary here is one."
 )
 
 
@@ -789,13 +800,23 @@ def _only(document: Document, bodies: Sequence[str]) -> Document:
     return replace(document, features=tuple(f for f in document.features if f.body in wanted))
 
 
-def _replay_on_a_mesh(mesh: Mesh, command: Command | None) -> tuple[Mesh, str]:
+def _replay_on_a_mesh(
+    mesh: Mesh, command: Command | None, ops: MeshOps | None = None
+) -> tuple[Mesh, str]:
     """Apply one recorded step to a mesh, or say it cannot be.
 
-    Only the steps that are pure arithmetic on points. Everything else needs
-    the shape a mesh does not have, and refusing by name is far better than
-    silently leaving it out - the tree would then describe something the
-    geometry is not.
+    A downloaded or generated model is triangles and nothing else - no faces,
+    no edges, no history. That is not a shortcoming of this application; it is
+    what an STL *is*, and it is why the person who published it can still edit
+    theirs and you cannot edit yours: they kept the file it was built from.
+
+    It does not follow that nothing can be done to it. Moving, turning and
+    resizing are arithmetic on points. Hollowing and mirroring are arithmetic
+    plus a boolean, and manifold3d is exact at those. What genuinely needs the
+    shape a mesh has not got is filleting, chamfering and anything that has to
+    name an edge - so those are still refused, by name, rather than silently
+    dropped, because a tree that lists a step the geometry does not have is a
+    tree that lies.
     """
     match command:
         case Move():
@@ -804,6 +825,12 @@ def _replay_on_a_mesh(mesh: Mesh, command: Command | None) -> tuple[Mesh, str]:
             return mesh.turned(command.degrees, command.axis), ""
         case ScaleTo():
             return mesh.scaled_to_height(command.height), ""
+        case Hollow() if ops is not None:
+            hollowed = ops.hollow(mesh, Length.mm(command.wall_thickness))
+            return (hollowed.unwrap(), "") if hollowed.ok else (mesh, hollowed.error)
+        case Mirror() if ops is not None:
+            both = ops.mirrored(mesh, command.plane.name, keep_original=command.keep_original)
+            return (both.unwrap(), "") if both.ok else (mesh, both.error)
         case None:
             return mesh, ""
         case _:

@@ -87,6 +87,16 @@ class MeshOps(Protocol):
         """
         ...
 
+    def hollow(self, mesh: Mesh, wall: Length) -> Result[Mesh]:
+        """Take the middle out, leaving a wall of the given thickness."""
+        ...
+
+    def mirrored(
+        self, mesh: Mesh, across: str = "YZ", *, keep_original: bool = True
+    ) -> Result[Mesh]:
+        """Reflect the mesh in a plane through the origin."""
+        ...
+
     def thicken(self, mesh: Mesh, by: Length) -> Result[Mesh]:
         """Grow every surface outwards, so a thin wall becomes a thicker one.
 
