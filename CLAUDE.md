@@ -292,6 +292,20 @@ same seam. `tests/geometry/test_thread_affinity.py` now asserts the rule rather 
    application coming back to the front - the one event certain to follow a resume. Re-applying the
    font is only half: a style sheet size is resolved at polish time and is not worked out again, so
    every top-level window is unpolished and repolished too.
+30. **Do not convert a mesh to a B-rep to make it editable.** It was measured rather than assumed,
+   and the measurement is decisive. OCCT's sewing *works* — a 12-triangle box converts instantly and
+   fillets to exactly the right volume, which is the surprising part — but it produces **one face
+   per triangle**: that box comes back with 12 faces and 18 edges where the real thing has 6 and 12,
+   a 1.1M-triangle download would take about three minutes and arrive with 1.1M faces, and an
+   L-bracket of a hundred triangles **segfaulted the process** on the fillet. It is a CAD solid in
+   name only, and "round all edges" on one is meaningless because every triangle boundary is an
+   edge. Mesh operations are the route: hollow, mirror and boolean against a primitive all work
+   directly on triangles through manifold3d, exactly and in milliseconds.
+31. **Every new capability has to be tried against a *mesh*, not only against a box.** Push/pull,
+   thickening and auto-orienting each shipped working on CAD parts and refusing meshes — and a mesh
+   is what arrives from Thingiverse, from a photograph and from generation, which is every starting
+   point this application offers. It was reported as "what is the point of a generated mesh being a
+   starting point if I can never manipulate it", and that was fair.
 
 ## Style
 
